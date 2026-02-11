@@ -314,7 +314,7 @@ onBeforeUnmount(() => {
 </template>
 
 <script lang="ts">
-import { defineComponent, onBeforeUnmount as onBeforeUnmountOpt } from 'vue'
+import { defineComponent, h, onBeforeUnmount as onBeforeUnmountOpt } from 'vue'
 
 const PairEditor = defineComponent({
   name: 'PairEditor',
@@ -349,10 +349,8 @@ const PairEditor = defineComponent({
       editor.value?.destroy()
     })
 
-    return { editor }
+    return () => h(EditorContent, { editor: editor.value })
   },
-  components: { EditorContent },
-  template: '<EditorContent :editor="editor" />',
 })
 
 export { PairEditor }
