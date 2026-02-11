@@ -5,7 +5,11 @@ from fastapi import APIRouter, HTTPException, Request, UploadFile
 from pydantic import BaseModel
 
 from tradurre.models import ImportParagraph, ProjectResponse
-from tradurre.services.importer import extract_paragraphs_docx, extract_paragraphs_txt
+from tradurre.services.importer import (
+    extract_and_align_txt,
+    extract_paragraphs_docx,
+    extract_paragraphs_txt,
+)
 
 router = APIRouter(tags=["import"])
 
@@ -34,8 +38,17 @@ async def import_preview(source_file: UploadFile, target_file: UploadFile):
     source_bytes = await source_file.read()
     target_bytes = await target_file.read()
 
-    source_paragraphs = _extract(source_file, source_bytes)
-    target_paragraphs = _extract(target_file, target_bytes)
+    source_name = (source_file.filename or "").lower()
+    target_name = (target_file.filename or "").lower()
+
+    # Smart alignment for .txt + .txt pairs
+    if source_name.endswith(".txt") and target_name.endswith(".txt"):
+        source_paragraphs, target_paragraphs = extract_and_align_txt(
+            source_bytes, target_bytes
+        )
+    else:
+        source_paragraphs = _extract(source_file, source_bytes)
+        target_paragraphs = _extract(target_file, target_bytes)
 
     return ImportPreviewResponse(
         source_paragraphs=source_paragraphs,

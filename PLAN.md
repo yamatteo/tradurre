@@ -209,3 +209,131 @@ tradurre/                          # new subfolder in /media/yamatteo/Storage/py
 3. **Editor:** Open a project, type in the target editor, switch between side-by-side and interleaved views, verify auto-save persists on page reload
 4. **Reverse search:** Translate several paragraphs across 2+ projects, search for a word, verify results show pairs from both projects with context
 5. **Scroll sync:** Import a long work (50+ paragraphs), verify side-by-side scroll keeps corresponding paragraphs visible together
+
+
+# Smart Import Alignment for Source/Target Files
+
+## Context
+
+The current import flow splits `.txt` files on blank lines and returns unaligned paragraphs — the user must manually insert/remove blanks to sync source and target. This fails for files like the `contrefeu` pair where:
+- Source has 3,861 lines, target has 3,611 lines
+- Page numbers appear as standalone lines (e.g. "7", "36")
+- Text is line-wrapped (lines break mid-sentence due to page width)
+- No blank lines in some files (e.g. `easy.source.txt`)
+
+We need a smart alignment pipeline that automatically cleans, splits, finds anchors, and aligns.
+
+## Algorithm — 5 Steps
+
+### Step 1: Strip artifact lines
+Remove lines whose content is **only digits, symbols, and/or whitespace** (page numbers, chapter markers like "1", "36", decorative `*` lines).
+
+Regex: `^\s*[\d\W]*\s*$` on non-blank lines.
+
+### Step 2: Join wrapped lines into paragraphs
+- **Blank lines** are paragraph boundaries.
+- A non-blank line ending with `.` `:` `;` `?` `!` (followed by end-of-line) terminates the current paragraph. *(Including `?` `!` as confirmed by user.)*
+- A non-blank line ending with anything else (comma, letter, hyphen) is joined to the next line with a space — it's a line-wrap artifact.
+
+Result: a list of paragraphs (multi-sentence text blocks).
+
+### Step 3: Split paragraphs into sentences
+Each paragraph is split into sentence-level units. A sentence boundary is detected where sentence-ending punctuation (`.` `:` `;` `?` `!`) is followed by whitespace and a capital letter (including accented: `A-ZÀ-Ý`).
+
+Each sentence becomes one alignment unit. This gives fine-grained alignment suitable for translation memory.
+
+### Step 4: Find anchors
+Find capitalized words or multi-word sequences that appear **identically** in both source and target, with the **same occurrence count**.
+
+Algorithm:
+1. Extract all tokens starting with an uppercase letter (length > 1) from both texts
+2. Build candidate n-grams (1 to 3 consecutive capitalized tokens, plus hyphenated compounds like "Marie-Ange")
+3. Count how many **sentences** each candidate appears in, for source and target separately
+4. Keep candidates where `source_count == target_count` and `count >= 1`
+5. Rank by specificity: longer phrases first, then fewer occurrences (rare anchors are stronger)
+
+Expected anchors for the easy files: `Marie-Ange`, `Grégoire Mourron`, `Sibylle Stoltz`, `Guillaume`, `Garance`, `Géraud`, `Pontorgueil`, `Sainte-Guénulphe`, `Champagny-sur-Tille`, `Bernichon`, `Parkinson`.
+
+Counter-examples (correctly excluded): `Ligné`/`Ardent` (character renamed), `Saint-Fruscain`/`Saint-Frésquin` (place renamed), `Dijon`/`Digione` (translated), `Satan`/`Satana` (translated).
+
+### Step 5: Align using anchors
+1. For each anchor, record which source sentence indices and target sentence indices contain it (nth occurrence in source pairs with nth occurrence in target).
+2. Build a sorted list of alignment constraints: `(source_idx, target_idx)`.
+3. Remove crossing constraints (where order conflicts — shouldn't happen in translations, but safety check).
+4. Between consecutive anchor points, distribute unanchored sentences:
+   - If source has M sentences and target has N in a gap: pad the shorter side with `(N-M)` or `(M-N)` empty strings.
+5. Produce the final aligned list of `(source_text, target_text)` pairs.
+
+## Implementation
+
+### 1. New file: `tradurre/services/aligner.py`
+
+```python
+def clean_lines(text: str) -> list[str]:
+    """Strip artifact lines, return cleaned lines."""
+
+def join_into_paragraphs(lines: list[str]) -> list[str]:
+    """Join wrapped lines, split on blank lines and sentence-ending punctuation."""
+
+def split_sentences(paragraph: str) -> list[str]:
+    """Split a paragraph into individual sentences."""
+
+def extract_units(text: str) -> list[str]:
+    """Full pipeline: clean → join → split. Returns sentence-level units."""
+
+def find_anchors(source_units: list[str], target_units: list[str]) -> list[str]:
+    """Find shared capitalized words/phrases with equal occurrence counts."""
+
+def align(source_units: list[str], target_units: list[str], anchors: list[str]) -> list[tuple[str, str]]:
+    """Align source and target units using anchor constraints + padding."""
+
+def smart_align(source_text: str, target_text: str) -> list[tuple[str, str]]:
+    """Top-level: extract units from both texts, find anchors, align."""
+```
+
+### 2. Modify: `tradurre/services/importer.py`
+
+Add a new function:
+```python
+def extract_and_align_txt(source_bytes: bytes, target_bytes: bytes) -> list[tuple[ImportParagraph, ImportParagraph]]:
+    """Use smart alignment for .txt file pairs."""
+```
+
+### 3. Modify: `tradurre/api/import_.py`
+
+Change `import_preview` to:
+- For `.txt` + `.txt`: call `smart_align()` and return pre-aligned pairs
+- For `.docx` or mixed: keep current behavior (extract independently)
+
+The response model stays the same (`ImportPreviewResponse` with `source_paragraphs` and `target_paragraphs`), but now both lists are the same length and pre-aligned.
+
+### 4. Frontend: No changes needed
+
+The existing `ImportWizard.vue` already:
+- Shows source/target side-by-side
+- Allows inserting blank rows and removing rows
+- Handles unequal lengths by padding with empties
+
+The pre-aligned result from the backend will simply render better out of the box. The user can still manually adjust.
+
+### 5. Tests: `tests/test_aligner.py`
+
+Using `library/easy.source.txt` and `library/easy.target.txt`:
+- Test `clean_lines()` — no artifacts in easy files (passthrough)
+- Test `join_into_paragraphs()` — wrapped lines get joined correctly
+- Test `split_sentences()` — multi-sentence blocks split properly
+- Test `find_anchors()` — verify expected anchors are found
+- Test `smart_align()` — verify source/target pairs have equal length and anchors align
+- Test with synthetic artifact data (page numbers, symbol-only lines)
+
+## Key files to modify
+- **New**: [tradurre/services/aligner.py](tradurre/services/aligner.py)
+- **Edit**: [tradurre/services/importer.py](tradurre/services/importer.py)
+- **Edit**: [tradurre/api/import_.py](tradurre/api/import_.py)
+- **New**: [tests/test_aligner.py](tests/test_aligner.py)
+
+## Verification
+1. Run `uv run pytest tests/test_aligner.py` from the `tradurre/` directory
+2. Start the dev server and import `library/easy.source.txt` + `library/easy.target.txt` — verify the preview shows well-aligned sentence pairs
+3. Check that anchor names (Marie-Ange, Guillaume, Pontorgueil, etc.) appear at matching positions in source and target columns
+4. Confirm Import and verify the project editor shows properly aligned pairs
