@@ -5,7 +5,6 @@ import StarterKit from '@tiptap/starter-kit'
 import Underline from '@tiptap/extension-underline'
 import Placeholder from '@tiptap/extension-placeholder'
 import { api, type Project, type Pair, type SearchResponse } from '@/api/client'
-import { useScrollSync } from '@/composables/useScrollSync'
 
 const props = defineProps<{ id: string }>()
 
@@ -13,12 +12,6 @@ const project = ref<Project | null>(null)
 const pairs = ref<Pair[]>([])
 const viewMode = ref<'side-by-side' | 'interleaved'>('side-by-side')
 const saveStatus = ref<Record<string, string>>({})
-
-// Scroll sync
-const sourceCol = ref<HTMLElement>()
-const targetCol = ref<HTMLElement>()
-const scrollSyncEnabled = computed(() => viewMode.value === 'side-by-side')
-useScrollSync(sourceCol, targetCol, scrollSyncEnabled)
 
 // Export dropdown
 const showExportMenu = ref(false)
@@ -200,43 +193,52 @@ onBeforeUnmount(() => {
       <!-- Editor area -->
       <div class="flex-1 flex flex-col overflow-hidden">
         <!-- Side-by-side mode -->
-        <div v-if="viewMode === 'side-by-side'" class="flex-1 flex overflow-hidden">
-          <!-- Source column -->
-          <div class="w-1/2 overflow-y-auto border-r border-gray-200 bg-gray-50 p-4" ref="sourceCol">
-            <div class="text-xs text-gray-400 uppercase tracking-wider mb-3">Source</div>
-            <div v-for="(pair, i) in pairs" :key="pair.id" class="mb-4" :data-pair-index="i">
-              <PairEditor
-                :html="pair.source_html"
-                :readonly="false"
-                placeholder="Source text..."
-                @update="(html: string) => { pair.source_html = html; debouncedSave(pair.id, 'source_html', html) }"
-              />
+        <div v-if="viewMode === 'side-by-side'" class="flex-1 flex flex-col overflow-hidden">
+          <!-- Column headers -->
+          <div class="flex shrink-0 border-b border-gray-200">
+            <div class="w-1/2 px-4 py-1 bg-gray-50 border-r border-gray-200">
+              <span class="text-xs text-gray-400 uppercase tracking-wider">Source</span>
+            </div>
+            <div class="w-1/2 px-4 py-1 bg-white">
+              <span class="text-xs text-gray-400 uppercase tracking-wider">Translation</span>
             </div>
           </div>
-          <!-- Target column -->
-          <div class="w-1/2 overflow-y-auto bg-white p-4" ref="targetCol">
-            <div class="text-xs text-gray-400 uppercase tracking-wider mb-3">Translation</div>
-            <div v-for="(pair, i) in pairs" :key="pair.id" class="mb-4" :data-pair-index="i">
-              <div class="flex items-start gap-2">
-                <button @click="cycleStatus(pair)"
-                  :class="[statusConfig[pair.status]?.bg, statusConfig[pair.status]?.color]"
-                  class="text-xs px-1.5 py-0.5 rounded mt-1 shrink-0" :title="'Click to cycle status'">
-                  {{ statusConfig[pair.status]?.label }}
-                </button>
-                <div class="flex-1">
-                  <PairEditor
-                    :html="pair.target_html"
-                    placeholder="Start translating..."
-                    @update="(html: string) => { pair.target_html = html; debouncedSave(pair.id, 'target_html', html) }"
-                  />
-                </div>
-                <div class="flex flex-col gap-1 shrink-0 mt-1">
-                  <span v-if="saveStatus[pair.id]" class="text-xs text-gray-400 whitespace-nowrap">
-                    {{ saveStatus[pair.id] }}
-                  </span>
-                  <button @click="insertPairAfter(i)" class="text-xs text-gray-400 hover:text-blue-600" title="Insert pair after">+ins</button>
-                  <button v-if="i < pairs.length - 1" @click="mergePair(pair, i)" class="text-xs text-gray-400 hover:text-orange-600" title="Merge with next">merge</button>
-                  <button @click="removePair(pair.id, i)" class="text-xs text-gray-400 hover:text-red-500" title="Remove">del</button>
+          <!-- Single scrollable container with rows -->
+          <div class="flex-1 overflow-y-auto">
+            <div v-for="(pair, i) in pairs" :key="pair.id"
+              class="flex border-b border-gray-100" :data-pair-index="i">
+              <!-- Source cell -->
+              <div class="w-1/2 p-4 bg-gray-50 border-r border-gray-200">
+                <PairEditor
+                  :html="pair.source_html"
+                  :readonly="false"
+                  placeholder="Source text..."
+                  @update="(html: string) => { pair.source_html = html; debouncedSave(pair.id, 'source_html', html) }"
+                />
+              </div>
+              <!-- Target cell -->
+              <div class="w-1/2 p-4 bg-white">
+                <div class="flex items-start gap-2">
+                  <button @click="cycleStatus(pair)"
+                    :class="[statusConfig[pair.status]?.bg, statusConfig[pair.status]?.color]"
+                    class="text-xs px-1.5 py-0.5 rounded mt-1 shrink-0" :title="'Click to cycle status'">
+                    {{ statusConfig[pair.status]?.label }}
+                  </button>
+                  <div class="flex-1">
+                    <PairEditor
+                      :html="pair.target_html"
+                      placeholder="Start translating..."
+                      @update="(html: string) => { pair.target_html = html; debouncedSave(pair.id, 'target_html', html) }"
+                    />
+                  </div>
+                  <div class="flex flex-col gap-1 shrink-0 mt-1">
+                    <span v-if="saveStatus[pair.id]" class="text-xs text-gray-400 whitespace-nowrap">
+                      {{ saveStatus[pair.id] }}
+                    </span>
+                    <button @click="insertPairAfter(i)" class="text-xs text-gray-400 hover:text-blue-600" title="Insert pair after">+ins</button>
+                    <button v-if="i < pairs.length - 1" @click="mergePair(pair, i)" class="text-xs text-gray-400 hover:text-orange-600" title="Merge with next">merge</button>
+                    <button @click="removePair(pair.id, i)" class="text-xs text-gray-400 hover:text-red-500" title="Remove">del</button>
+                  </div>
                 </div>
               </div>
             </div>
