@@ -35,10 +35,16 @@ def create_pair(project_id: str, pair: PairCreate, request: Request):
 
     if pair.position is not None:
         position = pair.position
-        # Shift existing pairs at or after this position
+        # Shift existing pairs at or after this position.
+        # Two-step via negative values to avoid UNIQUE constraint violations
+        # (SQLite checks per-row, so direct +1 can collide with the next row).
         db.execute(
-            "UPDATE pairs SET position = position + 1 WHERE project_id = ? AND position >= ?",
+            "UPDATE pairs SET position = -(position + 1) WHERE project_id = ? AND position >= ?",
             (project_id, position),
+        )
+        db.execute(
+            "UPDATE pairs SET position = -position WHERE project_id = ? AND position < 0",
+            (project_id,),
         )
     else:
         row = db.execute(
@@ -105,10 +111,14 @@ def delete_pair(pair_id: str, request: Request):
     position = existing["position"]
 
     db.execute("DELETE FROM pairs WHERE id = ?", (pair_id,))
-    # Close the gap in positions
+    # Close the gap in positions (two-step via negatives to avoid UNIQUE violations)
     db.execute(
-        "UPDATE pairs SET position = position - 1 WHERE project_id = ? AND position > ?",
+        "UPDATE pairs SET position = -(position - 1) WHERE project_id = ? AND position > ?",
         (project_id, position),
+    )
+    db.execute(
+        "UPDATE pairs SET position = -position WHERE project_id = ? AND position < 0",
+        (project_id,),
     )
     db.execute("UPDATE projects SET updated_at = ? WHERE id = ?", (_now(), project_id))
     db.commit()
@@ -132,10 +142,14 @@ def split_pair(pair_id: str, body: PairSplitRequest, request: Request):
          strip_html(body.source_html_before), strip_html(body.target_html_before), now, pair_id),
     )
 
-    # Shift pairs after this position
+    # Shift pairs after this position (two-step via negatives to avoid UNIQUE violations)
     db.execute(
-        "UPDATE pairs SET position = position + 1 WHERE project_id = ? AND position > ?",
+        "UPDATE pairs SET position = -(position + 1) WHERE project_id = ? AND position > ?",
         (project_id, position),
+    )
+    db.execute(
+        "UPDATE pairs SET position = -position WHERE project_id = ? AND position < 0",
+        (project_id,),
     )
 
     # Create new pair at position + 1 with "after" content
@@ -180,9 +194,14 @@ def merge_pair(pair_id: str, request: Request):
     )
 
     db.execute("DELETE FROM pairs WHERE id = ?", (next_pair["id"],))
+    # Close the gap (two-step via negatives to avoid UNIQUE violations)
     db.execute(
-        "UPDATE pairs SET position = position - 1 WHERE project_id = ? AND position > ?",
+        "UPDATE pairs SET position = -(position - 1) WHERE project_id = ? AND position > ?",
         (project_id, position + 1),
+    )
+    db.execute(
+        "UPDATE pairs SET position = -position WHERE project_id = ? AND position < 0",
+        (project_id,),
     )
     db.execute("UPDATE projects SET updated_at = ? WHERE id = ?", (now, project_id))
     db.commit()
