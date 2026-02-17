@@ -6,12 +6,19 @@ import pytest
 
 from tradurre.services.aligner import (
     align,
+    align_paragraphs,
+    align_sections,
+    align_sentences,
     clean_lines,
+    extract_hierarchy,
     extract_units,
     find_anchors,
     join_into_paragraphs,
     smart_align,
+    smart_align_hierarchical,
     split_sentences,
+    _boundary_optimize,
+    _detect_sections,
 )
 
 LIBRARY = Path(__file__).resolve().parent.parent / "library"
@@ -279,3 +286,214 @@ class TestSmartAlign:
         result_targets = {t for _, t in pairs if t}
         for unit in target_units:
             assert unit in result_targets, f"Target unit missing: {unit[:50]}..."
+
+
+# ---------------------------------------------------------------------------
+# Section detection
+# ---------------------------------------------------------------------------
+
+
+class TestDetectSections:
+    def test_no_sections_single_block(self):
+        """Text with no section markers produces one section."""
+        lines = clean_lines(EASY_SOURCE)
+        sections = _detect_sections(lines)
+        # easy.source.txt has no chapter markers → single section
+        assert len(sections) == 1
+
+    def test_chapter_number_splits(self):
+        """A standalone chapter number between blank lines splits sections."""
+        lines = [
+            "First chapter text.",
+            "",
+            "2",
+            "",
+            "Second chapter text.",
+        ]
+        sections = _detect_sections(lines)
+        assert len(sections) == 2
+        # Content of first section
+        assert any("First chapter" in l for l in sections[0])
+        # Content of second section
+        assert any("Second chapter" in l for l in sections[1])
+
+    def test_chapter_number_mid_sentence_no_split(self):
+        """A number that appears mid-sentence should not split."""
+        lines = [
+            "He said",
+            "7",
+            "",
+            "More text.",
+        ]
+        # "He said" doesn't end with sentence punctuation, so 7 is not a section break
+        sections = _detect_sections(lines)
+        assert len(sections) == 1
+
+    def test_heading_splits(self):
+        """A short heading line splits sections."""
+        lines = [
+            "End of previous chapter.",
+            "",
+            "The New Beginning",
+            "",
+            "Start of next chapter.",
+        ]
+        sections = _detect_sections(lines)
+        assert len(sections) == 2
+
+    def test_heading_with_period_no_split(self):
+        """A short line ending with period is a sentence, not a heading."""
+        lines = [
+            "Previous text.",
+            "",
+            "Short sentence.",
+            "",
+            "More text.",
+        ]
+        sections = _detect_sections(lines)
+        # "Short sentence." ends with period → _SENT_END matches → not a heading
+        assert len(sections) == 1
+
+
+# ---------------------------------------------------------------------------
+# Hierarchy extraction
+# ---------------------------------------------------------------------------
+
+
+class TestExtractHierarchy:
+    def test_easy_source_structure(self):
+        """easy.source.txt → 1 section, multiple paragraphs, multiple sentences."""
+        h = extract_hierarchy(EASY_SOURCE)
+        assert len(h) == 1  # no section breaks
+        assert len(h[0]) > 5  # multiple paragraphs
+        total_sentences = sum(len(p) for p in h[0])
+        assert total_sentences == len(extract_units(EASY_SOURCE))
+
+    def test_multi_section_text(self):
+        """Synthetic text with chapter markers."""
+        text = (
+            "First sentence of chapter one.\n\n"
+            "2\n\n"
+            "First sentence of chapter two.\n\n"
+            "Second paragraph of chapter two."
+        )
+        h = extract_hierarchy(text)
+        assert len(h) == 2
+        # Chapter 1: 1 paragraph, 1 sentence
+        assert len(h[0]) == 1
+        assert h[0][0] == ["First sentence of chapter one."]
+        # Chapter 2: 2 paragraphs
+        assert len(h[1]) == 2
+
+    def test_consistency_with_extract_units(self):
+        """Flat extract_units should equal flattened extract_hierarchy."""
+        flat = extract_units(EASY_SOURCE)
+        h = extract_hierarchy(EASY_SOURCE)
+        from_hierarchy = [s for sec in h for p in sec for s in p]
+        assert flat == from_hierarchy
+
+
+# ---------------------------------------------------------------------------
+# Hierarchical alignment
+# ---------------------------------------------------------------------------
+
+
+class TestHierarchicalAlignment:
+    def test_align_sections_equal_count(self):
+        """Two texts with same number of sections align 1:1."""
+        src = [
+            [["Hello Marie.", "How are you?"]],
+            [["Goodbye Marie."]],
+        ]
+        tgt = [
+            [["Ciao Marie.", "Come stai?"]],
+            [["Arrivederci Marie."]],
+        ]
+        result = align_sections(src, tgt)
+        assert len(result) == 2
+
+    def test_align_paragraphs_with_anchors(self):
+        src_sec = [
+            ["Before Guillaume arrived."],
+            ["Guillaume spoke.", "He was happy."],
+        ]
+        tgt_sec = [
+            ["Prima che Guillaume arrivasse."],
+            ["Guillaume parlò.", "Era felice."],
+        ]
+        result = align_paragraphs(src_sec, tgt_sec)
+        assert len(result) == 2
+
+    def test_align_sentences(self):
+        src = ["Hello Marie.", "Goodbye Marie."]
+        tgt = ["Ciao Marie.", "Addio Marie."]
+        result = align_sentences(src, tgt)
+        assert len(result) == 2
+        assert result[0] == ("Hello Marie.", "Ciao Marie.")
+
+    def test_smart_align_hierarchical_returns_tuples(self):
+        pairs = smart_align_hierarchical(EASY_SOURCE, EASY_TARGET)
+        assert len(pairs) > 0
+        for sec_idx, para_idx, src, tgt in pairs:
+            assert isinstance(sec_idx, int)
+            assert isinstance(para_idx, int)
+            assert isinstance(src, str)
+            assert isinstance(tgt, str)
+
+    def test_hierarchical_covers_all_content(self):
+        """All source and target sentences appear in hierarchical result."""
+        pairs = smart_align_hierarchical(EASY_SOURCE, EASY_TARGET)
+        source_units = extract_units(EASY_SOURCE)
+        target_units = extract_units(EASY_TARGET)
+
+        result_sources = {src for _, _, src, _ in pairs if src}
+        for unit in source_units:
+            assert unit in result_sources, f"Source missing: {unit[:50]}..."
+
+        result_targets = {tgt for _, _, _, tgt in pairs if tgt}
+        for unit in target_units:
+            assert unit in result_targets, f"Target missing: {unit[:50]}..."
+
+    def test_hierarchical_consistent_with_flat(self):
+        """Hierarchical alignment produces same sentences as flat (possibly different grouping)."""
+        flat_pairs = smart_align(EASY_SOURCE, EASY_TARGET)
+        hier_pairs = smart_align_hierarchical(EASY_SOURCE, EASY_TARGET)
+
+        flat_sources = sorted(s for s, _ in flat_pairs if s)
+        hier_sources = sorted(s for _, _, s, _ in hier_pairs if s)
+        assert flat_sources == hier_sources
+
+
+# ---------------------------------------------------------------------------
+# Boundary optimization
+# ---------------------------------------------------------------------------
+
+
+class TestBoundaryOptimize:
+    def test_no_change_when_optimal(self):
+        """No moves when alignment is already optimal."""
+        pairs = [
+            (["Has Marie."], ["Con Marie."]),
+            (["Has Guillaume."], ["Con Guillaume."]),
+        ]
+        result = _boundary_optimize(list(pairs))
+        assert result == pairs
+
+    def test_moves_improve_score(self):
+        """Moving a sentence to the adjacent container improves anchor match."""
+        # Guillaume is in container A's source but container B's target → should move
+        pairs = [
+            (["Hello.", "Guillaume spoke."], ["Ciao."]),
+            (["World."], ["Guillaume parlò.", "Mondo."]),
+        ]
+        result = _boundary_optimize(list(pairs))
+        # After optimization, Guillaume should be in the same container on both sides
+        # Check that at least one container has Guillaume on both sides
+        found = False
+        for src_list, tgt_list in result:
+            src_has = any("Guillaume" in s for s in src_list)
+            tgt_has = any("Guillaume" in t for t in tgt_list)
+            if src_has and tgt_has:
+                found = True
+                break
+        assert found, f"Guillaume should be co-located after optimization: {result}"

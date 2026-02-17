@@ -26,6 +26,8 @@ export interface Pair {
   id: string
   project_id: string
   position: number
+  section: number
+  paragraph: number
   source_html: string
   target_html: string
   source_text: string
@@ -53,11 +55,40 @@ export interface SearchResponse {
 export interface ImportParagraph {
   html: string
   text: string
+  section: number
+  paragraph: number
 }
 
 export interface ImportPreviewResponse {
   source_paragraphs: ImportParagraph[]
   target_paragraphs: ImportParagraph[]
+}
+
+export interface ImportUnit {
+  html: string
+  text: string
+  index: number
+  section: number
+  paragraph: number
+}
+
+export interface ImportSectionsResponse {
+  source_sections: ImportUnit[]
+  target_sections: ImportUnit[]
+}
+
+export interface ImportParagraphsResponse {
+  source_paragraphs: ImportUnit[]
+  target_paragraphs: ImportUnit[]
+}
+
+export interface ImportSentencesResponse {
+  source_sentences: ImportUnit[]
+  target_sentences: ImportUnit[]
+}
+
+export interface ResplitResponse {
+  pairs: Pair[]
 }
 
 export const api = {
@@ -75,7 +106,7 @@ export const api = {
   // Pairs
   listPairs: (projectId: string) => request<Pair[]>(`/projects/${projectId}/pairs`),
 
-  createPair: (projectId: string, data: { source_html: string; target_html?: string; source_text: string; target_text?: string; position?: number }) =>
+  createPair: (projectId: string, data: { source_html: string; target_html?: string; source_text: string; target_text?: string; position?: number; section?: number; paragraph?: number }) =>
     request<Pair>(`/projects/${projectId}/pairs`, { method: 'POST', body: JSON.stringify(data) }),
 
   updatePair: (pairId: string, data: { source_html?: string; target_html?: string; status?: string }) =>
@@ -84,6 +115,13 @@ export const api = {
   deletePair: (pairId: string) =>
     request<void>(`/pairs/${pairId}`, { method: 'DELETE' }),
 
+  // Resplit (for paragraph/section level editing)
+  resplit: (pairIds: string[], targetHtml: string) =>
+    request<ResplitResponse>('/pairs/resplit', {
+      method: 'POST',
+      body: JSON.stringify({ pair_ids: pairIds, target_html: targetHtml }),
+    }),
+
   // Search
   search: (q: string, lang: 'source' | 'target' | 'both' = 'both', projectId?: string) => {
     const params = new URLSearchParams({ q, lang })
@@ -91,7 +129,7 @@ export const api = {
     return request<SearchResponse>(`/search?${params}`)
   },
 
-  // Import
+  // Import — legacy
   importPreview: async (sourceFile: File, targetFile: File): Promise<ImportPreviewResponse> => {
     const form = new FormData()
     form.append('source_file', sourceFile)
@@ -101,7 +139,29 @@ export const api = {
     return res.json()
   },
 
-  importConfirm: (data: { title: string; source_lang: string; target_lang: string; pairs: { source_html: string; target_html: string; source_text: string; target_text: string }[] }) =>
+  // Import — hierarchical wizard
+  importSections: async (sourceFile: File, targetFile: File): Promise<ImportSectionsResponse> => {
+    const form = new FormData()
+    form.append('source_file', sourceFile)
+    form.append('target_file', targetFile)
+    const res = await fetch(`${BASE}/import/sections`, { method: 'POST', body: form })
+    if (!res.ok) throw new Error(`API error: ${res.status} ${res.statusText}`)
+    return res.json()
+  },
+
+  importParagraphs: (sections: { source_text: string; target_text: string }[]) =>
+    request<ImportParagraphsResponse>('/import/paragraphs', {
+      method: 'POST',
+      body: JSON.stringify({ sections }),
+    }),
+
+  importSentences: (paragraphs: { source_text: string; target_text: string; section: number; paragraph: number }[]) =>
+    request<ImportSentencesResponse>('/import/sentences', {
+      method: 'POST',
+      body: JSON.stringify({ paragraphs }),
+    }),
+
+  importConfirm: (data: { title: string; source_lang: string; target_lang: string; pairs: { source_html: string; target_html: string; source_text: string; target_text: string; section?: number; paragraph?: number }[] }) =>
     request<Project>('/import/confirm', { method: 'POST', body: JSON.stringify(data) }),
 
   // Split/Merge

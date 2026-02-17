@@ -2,10 +2,11 @@
 
 Pipeline:
 1. Strip artifact lines (page numbers, symbols-only lines)
-2. Join wrapped lines into paragraphs
-3. Split paragraphs into sentences
-4. Find anchors (shared capitalized words/phrases with equal counts)
-5. Align using anchors + padding
+2. Detect section boundaries (chapters)
+3. Join wrapped lines into paragraphs
+4. Split paragraphs into sentences
+5. Find anchors (shared capitalized words/phrases with equal counts)
+6. Align using anchors + padding (hierarchically: sections → paragraphs → sentences)
 """
 
 import re
@@ -23,6 +24,9 @@ _ARTIFACT = re.compile(r"^[\d\s\W]*$")
 
 # Capitalized token (including accented, hyphenated compounds like Marie-Ange)
 _CAP_TOKEN = re.compile(r"\b[A-ZÀ-ÝÆŒ][a-zA-ZÀ-ÿæœ]+(?:-[A-Za-zÀ-ÿæœ]+)*\b")
+
+# Chapter number: standalone integer 1-99
+_CHAPTER_NUM = re.compile(r"^\d{1,2}$")
 
 
 # ---------------------------------------------------------------------------
@@ -44,6 +48,78 @@ def clean_lines(text: str) -> list[str]:
         else:
             result.append(stripped)
     return result
+
+
+# ---------------------------------------------------------------------------
+# Step 1b: Detect section boundaries
+# ---------------------------------------------------------------------------
+
+def _is_section_break(lines: list[str], i: int, last_text_line: str) -> bool:
+    """Check if line at index i is a section break marker (chapter heading)."""
+    line = lines[i].strip()
+    if not line:
+        return False
+
+    preceded_by_blank = (i == 0) or (lines[i - 1].strip() == "")
+    followed_by_blank = (i == len(lines) - 1) or (
+        i + 1 < len(lines) and lines[i + 1].strip() == ""
+    )
+    prev_ends_sentence = _SENT_END.search(last_text_line) if last_text_line else True
+
+    # Chapter number (1-99), surrounded by blanks, after a sentence end
+    if _CHAPTER_NUM.match(line):
+        if preceded_by_blank and followed_by_blank and prev_ends_sentence:
+            return True
+
+    # Short heading: <60 chars, starts uppercase, not ending with comma or
+    # sentence-ending punctuation, surrounded by blanks after a sentence end
+    if len(line) < 60 and not line.endswith(","):
+        looks_like_heading = (
+            len(line) > 2
+            and line[0].isupper()
+            and not _SENT_END.search(line)
+        )
+        if (
+            preceded_by_blank
+            and followed_by_blank
+            and prev_ends_sentence
+            and looks_like_heading
+        ):
+            return True
+
+    return False
+
+
+def _detect_sections(lines: list[str]) -> list[list[str]]:
+    """Split cleaned lines into sections at chapter boundaries.
+
+    Returns a list of line-groups, one per section. Section marker lines
+    are excluded from the content.
+    """
+    sections: list[list[str]] = []
+    current_section: list[str] = []
+    last_text_line = ""
+
+    for i, line in enumerate(lines):
+        if _is_section_break(lines, i, last_text_line):
+            if current_section:
+                sections.append(current_section)
+                current_section = []
+            last_text_line = ""
+            continue
+
+        current_section.append(line)
+        if line.strip():
+            last_text_line = line
+
+    if current_section:
+        sections.append(current_section)
+
+    # If nothing detected, return everything as one section
+    if not sections:
+        sections = [lines]
+
+    return sections
 
 
 # ---------------------------------------------------------------------------
@@ -132,17 +208,41 @@ def split_sentences(paragraph: str) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# Step 1-3 combined
+# Hierarchy extraction: sections → paragraphs → sentences
 # ---------------------------------------------------------------------------
 
+def extract_hierarchy(text: str) -> list[list[list[str]]]:
+    """Full pipeline returning sections[paragraphs[sentences]].
+
+    1. _detect_sections on raw lines (before artifact removal, so chapter
+       numbers like "2" are still visible)
+    2. clean_lines — per section
+    3. join_into_paragraphs — per section
+    4. split_sentences — per paragraph
+    """
+    raw_lines = [line.strip() for line in text.split("\n")]
+    raw_sections = _detect_sections(raw_lines)
+
+    hierarchy: list[list[list[str]]] = []
+    for section_lines in raw_sections:
+        # Re-join section lines and run clean → join → split
+        section_text = "\n".join(section_lines)
+        cleaned = clean_lines(section_text)
+        paragraphs_text = join_into_paragraphs(cleaned)
+        section: list[list[str]] = []
+        for para_text in paragraphs_text:
+            sentences = split_sentences(para_text)
+            if sentences:
+                section.append(sentences)
+        if section:
+            hierarchy.append(section)
+
+    return hierarchy
+
+
 def extract_units(text: str) -> list[str]:
-    """Full pipeline: clean → join → split. Returns sentence-level units."""
-    lines = clean_lines(text)
-    paragraphs = join_into_paragraphs(lines)
-    units: list[str] = []
-    for para in paragraphs:
-        units.extend(split_sentences(para))
-    return units
+    """Full pipeline: clean → join → split. Returns flat sentence-level units."""
+    return [s for sec in extract_hierarchy(text) for p in sec for s in p]
 
 
 # ---------------------------------------------------------------------------
@@ -297,7 +397,7 @@ def align(
 # ---------------------------------------------------------------------------
 
 def smart_align(source_text: str, target_text: str) -> list[tuple[str, str]]:
-    """Full smart alignment pipeline.
+    """Full smart alignment pipeline (flat, backward-compatible).
 
     1. Extract sentence-level units from both texts
     2. Find anchors
@@ -308,3 +408,184 @@ def smart_align(source_text: str, target_text: str) -> list[tuple[str, str]]:
     target_units = extract_units(target_text)
     anchors = find_anchors(source_units, target_units)
     return align(source_units, target_units, anchors)
+
+
+# ---------------------------------------------------------------------------
+# Hierarchical alignment
+# ---------------------------------------------------------------------------
+
+def _align_units(
+    source_units: list[str],
+    target_units: list[str],
+) -> list[tuple[str, str]]:
+    """Find anchors and align two lists of text units."""
+    if not source_units and not target_units:
+        return []
+    anchors = find_anchors(source_units, target_units)
+    return align(source_units, target_units, anchors)
+
+
+def _anchor_score(source_units: list[str], target_units: list[str]) -> int:
+    """Score an alignment by counting how many anchor constraint pairs it produces."""
+    if not source_units or not target_units:
+        return 0
+    anchors = find_anchors(source_units, target_units)
+    count = 0
+    for anchor in anchors:
+        sc = sum(1 for u in source_units if anchor in u)
+        tc = sum(1 for u in target_units if anchor in u)
+        count += min(sc, tc)
+    return count
+
+
+def _boundary_optimize(
+    pairs: list[tuple[list[str], list[str]]],
+) -> list[tuple[list[str], list[str]]]:
+    """Try moving boundary units between adjacent containers to improve alignment.
+
+    For each adjacent pair of containers, tries moving the last unit of the
+    first container to the start of the second (and vice versa), accepting
+    the move only if it increases the total anchor score.
+    """
+    improved = True
+    while improved:
+        improved = False
+        for i in range(len(pairs) - 1):
+            src_a, tgt_a = pairs[i]
+            src_b, tgt_b = pairs[i + 1]
+
+            current_score = (
+                _anchor_score(src_a, tgt_a) + _anchor_score(src_b, tgt_b)
+            )
+
+            best_score = current_score
+            best = None
+
+            # Try moving last of A-source to start of B-source
+            if len(src_a) > 1:
+                new_src_a = src_a[:-1]
+                new_src_b = [src_a[-1]] + src_b
+                s = _anchor_score(new_src_a, tgt_a) + _anchor_score(new_src_b, tgt_b)
+                if s > best_score:
+                    best_score = s
+                    best = (new_src_a, tgt_a, new_src_b, tgt_b)
+
+            # Try moving first of B-source to end of A-source
+            if len(src_b) > 1:
+                new_src_a = src_a + [src_b[0]]
+                new_src_b = src_b[1:]
+                s = _anchor_score(new_src_a, tgt_a) + _anchor_score(new_src_b, tgt_b)
+                if s > best_score:
+                    best_score = s
+                    best = (new_src_a, tgt_a, new_src_b, tgt_b)
+
+            # Try moving last of A-target to start of B-target
+            if len(tgt_a) > 1:
+                new_tgt_a = tgt_a[:-1]
+                new_tgt_b = [tgt_a[-1]] + tgt_b
+                s = _anchor_score(src_a, new_tgt_a) + _anchor_score(src_b, new_tgt_b)
+                if s > best_score:
+                    best_score = s
+                    best = (src_a, new_tgt_a, src_b, new_tgt_b)
+
+            # Try moving first of B-target to end of A-target
+            if len(tgt_b) > 1:
+                new_tgt_a = tgt_a + [tgt_b[0]]
+                new_tgt_b = tgt_b[1:]
+                s = _anchor_score(src_a, new_tgt_a) + _anchor_score(src_b, new_tgt_b)
+                if s > best_score:
+                    best_score = s
+                    best = (src_a, new_tgt_a, src_b, new_tgt_b)
+
+            if best is not None:
+                pairs[i] = (best[0], best[1])
+                pairs[i + 1] = (best[2], best[3])
+                improved = True
+
+    return pairs
+
+
+def align_sections(
+    source_sections: list[list[list[str]]],
+    target_sections: list[list[list[str]]],
+) -> list[tuple[list[list[str]], list[list[str]]]]:
+    """Align sections using anchors on section-level concatenated text."""
+    source_texts = [
+        " ".join(s for p in sec for s in p) for sec in source_sections
+    ]
+    target_texts = [
+        " ".join(s for p in sec for s in p) for sec in target_sections
+    ]
+
+    aligned_texts = _align_units(source_texts, target_texts)
+
+    # Build lookup from text → structured section
+    src_iter = iter(source_sections)
+    tgt_iter = iter(target_sections)
+
+    result: list[tuple[list[list[str]], list[list[str]]]] = []
+    for src_text, tgt_text in aligned_texts:
+        src_sec = next(src_iter) if src_text else [[]]
+        tgt_sec = next(tgt_iter) if tgt_text else [[]]
+        result.append((src_sec, tgt_sec))
+
+    return result
+
+
+def align_paragraphs(
+    source_section: list[list[str]],
+    target_section: list[list[str]],
+) -> list[tuple[list[str], list[str]]]:
+    """Align paragraphs within a section pair using anchors."""
+    source_texts = [" ".join(p) for p in source_section]
+    target_texts = [" ".join(p) for p in target_section]
+
+    aligned_texts = _align_units(source_texts, target_texts)
+
+    src_iter = iter(source_section)
+    tgt_iter = iter(target_section)
+
+    result: list[tuple[list[str], list[str]]] = []
+    for src_text, tgt_text in aligned_texts:
+        src_para = next(src_iter) if src_text else []
+        tgt_para = next(tgt_iter) if tgt_text else []
+        result.append((src_para, tgt_para))
+
+    return result
+
+
+def align_sentences(
+    source_para: list[str],
+    target_para: list[str],
+) -> list[tuple[str, str]]:
+    """Align sentences within a paragraph pair using anchors."""
+    return _align_units(source_para, target_para)
+
+
+def smart_align_hierarchical(
+    source_text: str, target_text: str,
+) -> list[tuple[int, int, str, str]]:
+    """Full hierarchical alignment pipeline.
+
+    Returns list of (section_idx, paragraph_idx, source_sentence, target_sentence).
+    """
+    source_h = extract_hierarchy(source_text)
+    target_h = extract_hierarchy(target_text)
+
+    # Level 1: sections
+    section_pairs = align_sections(source_h, target_h)
+
+    result: list[tuple[int, int, str, str]] = []
+    for section_idx, (src_sec, tgt_sec) in enumerate(section_pairs):
+        # Level 2: paragraphs within section
+        para_pairs_raw = align_paragraphs(src_sec, tgt_sec)
+        para_pairs = _boundary_optimize(list(para_pairs_raw))
+
+        for para_idx, (src_para, tgt_para) in enumerate(para_pairs):
+            # Level 3: sentences within paragraph
+            sent_pairs = align_sentences(src_para, tgt_para)
+
+            for src_sent, tgt_sent in sent_pairs:
+                result.append((section_idx, para_idx, src_sent, tgt_sent))
+
+    return result

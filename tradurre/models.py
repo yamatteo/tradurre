@@ -29,6 +29,8 @@ class PairCreate(BaseModel):
     source_text: str
     target_text: str = ""
     position: int | None = None
+    section: int = 0
+    paragraph: int = 0
 
 
 class PairUpdate(BaseModel):
@@ -41,6 +43,8 @@ class PairResponse(BaseModel):
     id: str
     project_id: str
     position: int
+    section: int = 0
+    paragraph: int = 0
     source_html: str
     target_html: str
     source_text: str
@@ -75,8 +79,50 @@ class PairSplitRequest(BaseModel):
 class ImportParagraph(BaseModel):
     html: str
     text: str
+    section: int = 0
+    paragraph: int = 0
 
 
 class ImportPreview(BaseModel):
     source_paragraphs: list[ImportParagraph]
     target_paragraphs: list[ImportParagraph]
+
+
+class ImportUnit(BaseModel):
+    html: str
+    text: str
+    index: int = 0
+    section: int = 0
+    paragraph: int = 0
+
+
+class ImportSectionsResponse(BaseModel):
+    source_sections: list[ImportUnit]
+    target_sections: list[ImportUnit]
+
+
+class ImportParagraphsRequest(BaseModel):
+    sections: list[dict]  # [{source_text, target_text}]
+
+
+class ImportParagraphsResponse(BaseModel):
+    source_paragraphs: list[ImportUnit]
+    target_paragraphs: list[ImportUnit]
+
+
+class ImportSentencesRequest(BaseModel):
+    paragraphs: list[dict]  # [{source_text, target_text, section}]
+
+
+class ImportSentencesResponse(BaseModel):
+    source_sentences: list[ImportUnit]
+    target_sentences: list[ImportUnit]
+
+
+class ResplitRequest(BaseModel):
+    pair_ids: list[str]
+    target_html: str
+
+
+class ResplitResponse(BaseModel):
+    pairs: list[PairResponse]

@@ -76,4 +76,14 @@ def init_db(conn: sqlite3.Connection) -> None:
     conn.executescript(_SCHEMA)
     conn.executescript(_FTS_SCHEMA)
     conn.executescript(_FTS_TRIGGERS)
+
+    # Migration: add hierarchy columns (section/paragraph)
+    for col in ("section", "paragraph"):
+        try:
+            conn.execute(
+                f"ALTER TABLE pairs ADD COLUMN {col} INTEGER NOT NULL DEFAULT 0"
+            )
+        except sqlite3.OperationalError:
+            pass  # Column already exists
+
     conn.commit()
