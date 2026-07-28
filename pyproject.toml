@@ -24,3 +24,4 @@ build-backend = "hatchling.build"
 
 [project.scripts]
 tradurre = "tradurre.__main__:main"
+tradurre-align = "tradurre.services.pipeline_cli:main"
