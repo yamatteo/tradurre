@@ -1,0 +1,76 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## What this is
+
+`tradurre` is a local-first literary translation workbench: a FastAPI backend + Vue 3/TipTap frontend for
+paragraph/sentence-aligned source↔target editing, with SQLite+FTS5 powering full-text "translation memory"
+search across all past projects. See `PLAN.md` for the original design doc (data model rationale, alignment
+algorithm details) — it's a useful reference but may drift from the code over time; trust the code first.
+
+## Commands
+
+Backend (run from repo root, Python 3.12, managed with `uv`):
+```sh
+uv run tradurre              # start the app (uvicorn, reload=True, http://127.0.0.1:8000)
+uv run pytest                # run all backend tests
+uv run pytest tests/test_aligner.py            # single test file
+uv run pytest tests/test_pairs_api.py -k insert  # single test by name
+```
+
+Frontend (run from `frontend/`):
+```sh
+npm run dev          # Vite dev server on :5173, proxies /api to :8000 (see vite.config.ts)
+npm run build         # type-check (vue-tsc) + production build to frontend/dist
+npm run type-check    # vue-tsc --build only
+npm run test:e2e      # Playwright e2e tests (e2e/*.spec.ts); auto-starts `npm run dev`
+```
+
+In production, `tradurre/app.py` serves the built SPA from `frontend/dist` directly off the FastAPI process —
+run `npm run build` before relying on the backend to serve frontend routes.
+
+## Architecture
+
+```
+Browser ── Vue 3 SPA (TipTap editors) ──/api──▶ FastAPI ──▶ SQLite (~/.tradurre/tradurre.db) + FTS5
+```
+
+### Backend (`tradurre/`)
+
+- `app.py` — FastAPI app setup, CORS (allows `localhost:5173` for dev), router registration, SPA static mount.
+- `db.py` — raw `sqlite3` connection (no ORM). Schema lives here as inline SQL strings (`_SCHEMA`, `_FTS_SCHEMA`,
+  `_FTS_TRIGGERS`), applied idempotently via `init_db()` on startup. Schema migrations are done ad hoc with
+  `ALTER TABLE ... ADD COLUMN` wrapped in try/except — follow this pattern for new columns rather than adding a
+  migration framework.
+- `models.py` — all Pydantic request/response models in one file.
+- `api/` — one router module per resource (`projects.py`, `pairs.py`, `search.py`, `import_.py`, `export.py`).
+  Handlers access the DB via `request.app.state.db` (a single shared sqlite3 connection, not a session/pool).
+- `services/aligner.py` — the core text-alignment pipeline: strips artifact lines (page numbers), rejoins
+  line-wrapped paragraphs, splits into sentences, finds "anchor" tokens (capitalized names/phrases with matching
+  occurrence counts in source and target) and uses them to align source/target sentence sequences. Used by the
+  import flow to auto-align raw `.txt`/`.docx` pairs before the user manually adjusts them.
+- `services/importer.py` — `.docx`/`.txt` paragraph extraction feeding into the aligner.
+- `services/html_utils.py` — HTML↔plain-text conversion (pairs store both `*_html`, for TipTap, and `*_text`,
+  for FTS indexing — keep these in sync when creating/updating pairs).
+
+### Data model
+
+`pairs` rows are the atomic unit: one (source_html, target_html) pair per position, scoped to a `project_id`,
+ordered by `position`, with `section`/`paragraph` columns tracking hierarchical structure (multiple pairs can
+share a section/paragraph). The `translation_memory` FTS5 table is kept in sync with `pairs` via SQL triggers
+(`pairs_ai`/`pairs_au`/`pairs_ad`) — never write to `translation_memory` directly, insert/update/delete `pairs`
+and the triggers handle it.
+
+Reordering pairs within a project uses a two-step negative-position shift (see `create_pair` in `api/pairs.py`)
+to dodge the `UNIQUE(project_id, position)` constraint when shifting a contiguous range — replicate that pattern
+for any other operation that reindexes positions.
+
+### Frontend (`frontend/src/`)
+
+- `views/` — one component per route (`ProjectList`, `ProjectEditor`, `ImportWizard`, `SearchView`), wired in
+  `router/index.ts`.
+- `api/client.ts` — fetch wrapper for the backend.
+- `ProjectEditor.vue` hosts the TipTap-based aligned source/target editing surface; `ImportWizard.vue` drives
+  the upload → align-preview → confirm import flow, letting the user manually fix up the aligner's output.
+- Tailwind v4 via `@tailwindcss/vite` (no separate `tailwind.config.js`).
