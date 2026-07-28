@@ -130,8 +130,13 @@ def _maybe_load_embedding_scorer(enabled, model_name, warnings, stats, generator
         generator["embedding_model"] = scorer.model_name
         generator["embedding_device"] = scorer.device
         return scorer
-    except RuntimeError as e:
-        logger.warning("embedding stage unavailable: %s", e)
+    except Exception as e:
+        # Broad on purpose: a heavy-model load can fail in ways that aren't
+        # ImportError/RuntimeError (HF download errors, version mismatches
+        # inside transformers/torchvision, etc.). This run can't be debugged
+        # live, so a single stage failing must degrade to "skip the stage"
+        # rather than abort the whole pipeline with no output artifact.
+        logger.exception("embedding stage unavailable")
         warnings.append(f"embedding stage skipped: {e}")
         return None
 
@@ -147,8 +152,11 @@ def _maybe_load_llm_judge(enabled, model_name, warnings, stats, generator):
         generator["stages"].append("llm_judge")
         generator["llm_model"] = judge.model_name
         return judge
-    except RuntimeError as e:
-        logger.warning("LLM judge stage unavailable: %s", e)
+    except Exception as e:
+        # See comment in _maybe_load_embedding_scorer: catch broadly so a
+        # broken heavy-model load degrades this one stage instead of
+        # aborting the whole run.
+        logger.exception("LLM judge stage unavailable")
         warnings.append(f"LLM judge stage skipped: {e}")
         return None
 
