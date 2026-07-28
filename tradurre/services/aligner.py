@@ -440,13 +440,23 @@ def _anchor_score(source_units: list[str], target_units: list[str]) -> int:
 
 def _boundary_optimize(
     pairs: list[tuple[list[str], list[str]]],
+    score_fn=None,
 ) -> list[tuple[list[str], list[str]]]:
     """Try moving boundary units between adjacent containers to improve alignment.
 
     For each adjacent pair of containers, tries moving the last unit of the
     first container to the start of the second (and vice versa), accepting
-    the move only if it increases the total anchor score.
+    the move only if it increases the total score.
+
+    `score_fn` defaults to the anchor-count heuristic (_anchor_score) but can be
+    swapped for any `(list[str], list[str]) -> float` scorer -- e.g. an
+    embedding-similarity score (see tradurre.services.embed_align) -- to drive
+    the same boundary-nudging logic with a stronger signal. Only ever reassigns
+    which existing units are grouped together; never alters unit content.
     """
+    if score_fn is None:
+        score_fn = _anchor_score
+
     improved = True
     while improved:
         improved = False
@@ -455,7 +465,7 @@ def _boundary_optimize(
             src_b, tgt_b = pairs[i + 1]
 
             current_score = (
-                _anchor_score(src_a, tgt_a) + _anchor_score(src_b, tgt_b)
+                score_fn(src_a, tgt_a) + score_fn(src_b, tgt_b)
             )
 
             best_score = current_score
@@ -465,7 +475,7 @@ def _boundary_optimize(
             if len(src_a) > 1:
                 new_src_a = src_a[:-1]
                 new_src_b = [src_a[-1]] + src_b
-                s = _anchor_score(new_src_a, tgt_a) + _anchor_score(new_src_b, tgt_b)
+                s = score_fn(new_src_a, tgt_a) + score_fn(new_src_b, tgt_b)
                 if s > best_score:
                     best_score = s
                     best = (new_src_a, tgt_a, new_src_b, tgt_b)
@@ -474,7 +484,7 @@ def _boundary_optimize(
             if len(src_b) > 1:
                 new_src_a = src_a + [src_b[0]]
                 new_src_b = src_b[1:]
-                s = _anchor_score(new_src_a, tgt_a) + _anchor_score(new_src_b, tgt_b)
+                s = score_fn(new_src_a, tgt_a) + score_fn(new_src_b, tgt_b)
                 if s > best_score:
                     best_score = s
                     best = (new_src_a, tgt_a, new_src_b, tgt_b)
@@ -483,7 +493,7 @@ def _boundary_optimize(
             if len(tgt_a) > 1:
                 new_tgt_a = tgt_a[:-1]
                 new_tgt_b = [tgt_a[-1]] + tgt_b
-                s = _anchor_score(src_a, new_tgt_a) + _anchor_score(src_b, new_tgt_b)
+                s = score_fn(src_a, new_tgt_a) + score_fn(src_b, new_tgt_b)
                 if s > best_score:
                     best_score = s
                     best = (src_a, new_tgt_a, src_b, new_tgt_b)
@@ -492,7 +502,7 @@ def _boundary_optimize(
             if len(tgt_b) > 1:
                 new_tgt_a = tgt_a + [tgt_b[0]]
                 new_tgt_b = tgt_b[1:]
-                s = _anchor_score(src_a, new_tgt_a) + _anchor_score(src_b, new_tgt_b)
+                s = score_fn(src_a, new_tgt_a) + score_fn(src_b, new_tgt_b)
                 if s > best_score:
                     best_score = s
                     best = (src_a, new_tgt_a, src_b, new_tgt_b)

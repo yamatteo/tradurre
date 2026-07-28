@@ -1,16 +1,16 @@
 import re
-from html import escape
+from html import escape, unescape
 
 
 def strip_html(html: str) -> str:
     """Strip HTML tags and return plain text."""
     text = re.sub(r"<br\s*/?>", "\n", html)
     text = re.sub(r"<[^>]+>", "", text)
-    text = re.sub(r"&nbsp;", " ", text)
-    text = re.sub(r"&amp;", "&", text)
-    text = re.sub(r"&lt;", "<", text)
-    text = re.sub(r"&gt;", ">", text)
-    text = re.sub(r"&#\d+;", "", text)
+    # Decode all named/numeric entities (&amp; &#8217; &#39; ...) rather than
+    # dropping the ones we don't special-case -- a deleted entity silently
+    # corrupts the translated text.
+    text = unescape(text)
+    text = text.replace(" ", " ")  # nbsp -> regular space
     return text.strip()
 
 

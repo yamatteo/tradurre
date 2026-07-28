@@ -70,6 +70,19 @@ export interface ImportUnit {
   index: number
   section: number
   paragraph: number
+  confidence?: number
+  method?: string
+  flags?: string[]
+}
+
+export interface ImportArtifactResponse {
+  title: string
+  source_lang: string
+  target_lang: string
+  source_sentences: ImportUnit[]
+  target_sentences: ImportUnit[]
+  warnings: string[]
+  stats: Record<string, unknown>
 }
 
 export interface ImportSectionsResponse {
@@ -163,6 +176,15 @@ export const api = {
 
   importConfirm: (data: { title: string; source_lang: string; target_lang: string; pairs: { source_html: string; target_html: string; source_text: string; target_text: string; section?: number; paragraph?: number }[] }) =>
     request<Project>('/import/confirm', { method: 'POST', body: JSON.stringify(data) }),
+
+  // Import — pre-aligned artifact (from the external embedding/LLM pipeline)
+  importArtifact: async (artifactFile: File): Promise<ImportArtifactResponse> => {
+    const form = new FormData()
+    form.append('artifact_file', artifactFile)
+    const res = await fetch(`${BASE}/import/artifact`, { method: 'POST', body: form })
+    if (!res.ok) throw new Error(`API error: ${res.status} ${res.statusText}`)
+    return res.json()
+  },
 
   // Split/Merge
   splitPair: (pairId: string, data: { source_html_before: string; source_html_after: string; target_html_before: string; target_html_after: string }) =>

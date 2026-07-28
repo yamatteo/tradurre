@@ -3,9 +3,11 @@ from datetime import datetime, timezone
 from html import escape
 
 from fastapi import APIRouter, HTTPException, Request, UploadFile
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from tradurre.models import (
+    AlignedArtifact,
+    ImportArtifactResponse,
     ImportParagraph,
     ImportParagraphsRequest,
     ImportParagraphsResponse,
@@ -15,6 +17,7 @@ from tradurre.models import (
     ImportUnit,
     ProjectResponse,
 )
+from tradurre.services import doc_adapter
 from tradurre.services.aligner import (
     _align_units,
     _boundary_optimize,
@@ -23,6 +26,7 @@ from tradurre.services.aligner import (
     align,
     split_sentences,
 )
+from tradurre.services.artifact_io import parse_artifact
 from tradurre.services.importer import (
     extract_and_align_txt,
     extract_paragraphs_docx,
@@ -37,11 +41,15 @@ def _now() -> str:
 
 
 def _extract(file: UploadFile, content: bytes) -> list[ImportParagraph]:
+    from tradurre.services.importer import extract_paragraphs_pdf
+
     name = (file.filename or "").lower()
     if name.endswith(".docx"):
         return extract_paragraphs_docx(content)
     elif name.endswith(".txt"):
         return extract_paragraphs_txt(content)
+    elif name.endswith(".pdf"):
+        return extract_paragraphs_pdf(content)
     else:
         raise HTTPException(status_code=400, detail=f"Unsupported file type: {name}")
 
@@ -68,8 +76,11 @@ async def import_preview(source_file: UploadFile, target_file: UploadFile):
             source_bytes, target_bytes
         )
     else:
-        source_paragraphs = _extract(source_file, source_bytes)
-        target_paragraphs = _extract(target_file, target_bytes)
+        try:
+            source_paragraphs = _extract(source_file, source_bytes)
+            target_paragraphs = _extract(target_file, target_bytes)
+        except RuntimeError as e:
+            raise HTTPException(status_code=400, detail=str(e))
 
     return ImportPreviewResponse(
         source_paragraphs=source_paragraphs,
@@ -87,8 +98,13 @@ async def import_sections(source_file: UploadFile, target_file: UploadFile):
     source_bytes = await source_file.read()
     target_bytes = await target_file.read()
 
-    source_text = source_bytes.decode("utf-8")
-    target_text = target_bytes.decode("utf-8")
+    try:
+        source_text = doc_adapter.load_as_text(source_file.filename or "", source_bytes)
+        target_text = doc_adapter.load_as_text(target_file.filename or "", target_bytes)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
     source_h = extract_hierarchy(source_text)
     target_h = extract_hierarchy(target_text)
@@ -263,6 +279,71 @@ def import_confirm(body: ImportConfirmRequest, request: Request):
         )
 
     db.commit()
+
+    return {
+        "id": project_id,
+        "title": body.title,
+        "source_lang": body.source_lang,
+        "target_lang": body.target_lang,
+        "created_at": now,
+        "updated_at": now,
+        "pair_count": len(body.pairs),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Import a pre-aligned artifact (produced externally, e.g. by the Colab
+# embedding/LLM pipeline in tradurre.services.pipeline). Flattens the
+# artifact's section/paragraph/sentence hierarchy into the same shape the
+# text-file wizard's sentence-review step produces, so it reuses the existing
+# review-then-/import/confirm flow rather than a parallel project-creation path.
+# ---------------------------------------------------------------------------
+
+@router.post("/import/artifact", response_model=ImportArtifactResponse)
+async def import_artifact(artifact_file: UploadFile):
+    raw = await artifact_file.read()
+
+    try:
+        artifact: AlignedArtifact = parse_artifact(raw)
+    except ValidationError as e:
+        raise HTTPException(status_code=422, detail=f"Invalid artifact: {e}")
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    source_sentences: list[ImportUnit] = []
+    target_sentences: list[ImportUnit] = []
+
+    for section_idx, section in enumerate(artifact.sections):
+        for para_idx, paragraph in enumerate(section.paragraphs):
+            for sentence in paragraph.sentences:
+                source_sentences.append(ImportUnit(
+                    html=f"<p>{escape(sentence.source_text)}</p>" if sentence.source_text else "<p></p>",
+                    text=sentence.source_text,
+                    section=section_idx,
+                    paragraph=para_idx,
+                    confidence=sentence.confidence,
+                    method=sentence.method,
+                    flags=sentence.flags,
+                ))
+                target_sentences.append(ImportUnit(
+                    html=f"<p>{escape(sentence.target_text)}</p>" if sentence.target_text else "<p></p>",
+                    text=sentence.target_text,
+                    section=section_idx,
+                    paragraph=para_idx,
+                    confidence=sentence.confidence,
+                    method=sentence.method,
+                    flags=sentence.flags,
+                ))
+
+    return ImportArtifactResponse(
+        title=artifact.title,
+        source_lang=artifact.source_lang,
+        target_lang=artifact.target_lang,
+        source_sentences=source_sentences,
+        target_sentences=target_sentences,
+        warnings=artifact.warnings,
+        stats=artifact.stats,
+    )
 
     return {
         "id": project_id,

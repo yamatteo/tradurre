@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel
 
 
@@ -94,6 +96,9 @@ class ImportUnit(BaseModel):
     index: int = 0
     section: int = 0
     paragraph: int = 0
+    confidence: float = 1.0
+    method: str = "anchor"
+    flags: list[str] = []
 
 
 class ImportSectionsResponse(BaseModel):
@@ -126,3 +131,48 @@ class ResplitRequest(BaseModel):
 
 class ResplitResponse(BaseModel):
     pairs: list[PairResponse]
+
+
+# ---------------------------------------------------------------------------
+# Aligned artifact interchange format (produced by the external/Colab pipeline,
+# consumed by /import/artifact). See tradurre/services/pipeline.py and
+# tradurre/services/artifact_io.py.
+# ---------------------------------------------------------------------------
+
+class ArtifactSentence(BaseModel):
+    source_text: str
+    target_text: str
+    confidence: float = 1.0
+    method: str = "anchor"  # anchor | embedding | llm | fallback | manual
+    flags: list[str] = []
+
+
+class ArtifactParagraph(BaseModel):
+    sentences: list[ArtifactSentence]
+
+
+class ArtifactSection(BaseModel):
+    paragraphs: list[ArtifactParagraph]
+
+
+class AlignedArtifact(BaseModel):
+    format: Literal["tradurre-aligned-bitext"]
+    version: int = 1
+    title: str = ""
+    source_lang: str
+    target_lang: str
+    generated_at: str
+    generator: dict = {}
+    sections: list[ArtifactSection]
+    warnings: list[str] = []
+    stats: dict = {}
+
+
+class ImportArtifactResponse(BaseModel):
+    title: str
+    source_lang: str
+    target_lang: str
+    source_sentences: list[ImportUnit]
+    target_sentences: list[ImportUnit]
+    warnings: list[str] = []
+    stats: dict = {}

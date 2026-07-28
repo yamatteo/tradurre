@@ -33,8 +33,7 @@ def extract_paragraphs_docx(file_bytes: bytes) -> list[ImportParagraph]:
     return paragraphs
 
 
-def extract_paragraphs_txt(file_bytes: bytes) -> list[ImportParagraph]:
-    content = file_bytes.decode("utf-8")
+def extract_paragraphs_from_text(content: str) -> list[ImportParagraph]:
     raw_paragraphs = re.split(r"\n\s*\n", content)
     paragraphs = []
     for raw in raw_paragraphs:
@@ -44,6 +43,16 @@ def extract_paragraphs_txt(file_bytes: bytes) -> list[ImportParagraph]:
         html = f"<p>{escape(text)}</p>"
         paragraphs.append(ImportParagraph(html=html, text=text))
     return paragraphs
+
+
+def extract_paragraphs_txt(file_bytes: bytes) -> list[ImportParagraph]:
+    return extract_paragraphs_from_text(file_bytes.decode("utf-8"))
+
+
+def extract_paragraphs_pdf(file_bytes: bytes) -> list[ImportParagraph]:
+    from tradurre.services.doc_adapter import load_as_text
+
+    return extract_paragraphs_from_text(load_as_text("file.pdf", file_bytes))
 
 
 def extract_and_align_txt(

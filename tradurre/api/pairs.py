@@ -210,8 +210,10 @@ def merge_pair(pair_id: str, request: Request):
         raise HTTPException(status_code=400, detail="No next pair to merge with")
 
     now = _now()
-    merged_source = existing["source_html"] + next_pair["source_html"]
-    merged_target = existing["target_html"] + next_pair["target_html"]
+    # A space between the two HTML fragments survives tag-stripping to plain
+    # text -- without it the merged source_text/target_text run words together.
+    merged_source = existing["source_html"] + " " + next_pair["source_html"]
+    merged_target = existing["target_html"] + " " + next_pair["target_html"]
 
     db.execute(
         "UPDATE pairs SET source_html = ?, target_html = ?, source_text = ?, target_text = ?, updated_at = ? WHERE id = ?",

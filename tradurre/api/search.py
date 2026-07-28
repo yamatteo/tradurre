@@ -15,7 +15,9 @@ def _fts5_escape(query: str) -> str:
     from special characters while still allowing multi-word searches.
     """
     words = query.strip().split()
-    return " ".join(f'"{w}"' for w in words if w)
+    # Double up any literal quote inside a word (FTS5 string-literal escaping),
+    # otherwise a query containing a `"` produces invalid MATCH syntax.
+    return " ".join('"' + w.replace('"', '""') + '"' for w in words if w)
 
 
 @router.get("/search", response_model=SearchResponse)
