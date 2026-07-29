@@ -35,7 +35,7 @@ _OCR_PAD_RATIO = 0.4  # padding around the glyph bbox, as a fraction of its size
 # the entire document on whichever occurrence happened to be seen first --
 # this matters most for exactly the highest-frequency glyphs, where a wrong
 # or missed call corrupts the largest fraction of the text.
-_MAX_SAMPLES_PER_GLYPH = 8
+_MAX_SAMPLES_PER_GLYPH = 16
 _MIN_VOTES_TO_ACCEPT = 2
 
 
@@ -135,11 +135,23 @@ def resolve_pua_glyphs(doc) -> tuple[dict[str, str], list[str]]:
                 votes[guess] = votes.get(guess, 0) + 1
 
         winner, winner_votes = max(votes.items(), key=lambda kv: kv[1], default=(None, 0))
-        if winner and winner_votes >= min(_MIN_VOTES_TO_ACCEPT, len(info["samples"])):
+        total_votes = sum(votes.values())
+        # A raw vote count alone is not enough signal: with several samples
+        # failing to OCR at all, a "winner" that only accounts for a small
+        # minority of the successful attempts is often wrong (e.g. "r"
+        # misread as "n" a couple of times while most crops produced nothing)
+        # -- confidently substituting it would silently corrupt text instead
+        # of leaving a visible, honest warning. Require an outright majority
+        # of the successful OCR attempts, not just a plurality.
+        if (
+            winner
+            and winner_votes >= _MIN_VOTES_TO_ACCEPT
+            and winner_votes > total_votes / 2
+        ):
             mapping[c] = winner
             logger.info(
-                "resolved glyph U+%04X -> %r (%d/%d sample vote(s), %d occurrence(s) total)",
-                ord(c), winner, winner_votes, len(info["samples"]), info["count"],
+                "resolved glyph U+%04X -> %r (%d/%d sample vote(s), %d occurrence(s) total, votes=%r)",
+                ord(c), winner, winner_votes, len(info["samples"]), info["count"], votes,
             )
         else:
             warnings.append(

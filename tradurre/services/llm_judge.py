@@ -14,6 +14,7 @@ anything that fails validation is discarded (logged, original alignment kept).
 
 import json
 import logging
+import re
 import time
 
 logger = logging.getLogger("tradurre.llm_judge")
@@ -37,12 +38,18 @@ Task: decide which SOURCE sentence indices correspond to which TARGET sentence \
 indices. Do NOT translate, rewrite, paraphrase, or add any text -- you are only \
 grouping existing sentences by index.
 
-Respond with ONLY a JSON array (no markdown fences, no other text). Each element:
+Respond with ONLY a single JSON array (no markdown fences, no other text, no \
+newlines between elements). It must be valid JSON: a '[' followed by \
+comma-separated elements and a closing ']' -- do NOT emit one object per line \
+and do NOT omit the commas between elements. Each element:
 {{"source_indices": [ints], "target_indices": [ints]}}
 Every SOURCE index (0..{n_source_minus_1}) and every TARGET index \
 (0..{n_target_minus_1}) must appear in exactly one element's list (a list may be \
 empty on one side to represent an omission). Order elements by their position in \
 the paragraph.
+
+Example of the exact format required, for 3 source and 2 target sentences:
+[{{"source_indices": [0], "target_indices": [0]}}, {{"source_indices": [1, 2], "target_indices": [1]}}]
 """
 
 
@@ -158,9 +165,15 @@ def _build_prompt(source_sentences: list[str], target_sentences: list[str]) -> s
     )
 
 
-def _validate_mapping(
-    raw_output: str, source_sentences: list[str], target_sentences: list[str]
-) -> list[tuple[list[int], list[int]]] | None:
+def _parse_mapping_json(raw_output: str) -> list | None:
+    """Parse the judge's output into a list of mapping objects.
+
+    Small/quantized models frequently fail to wrap their objects in a proper
+    JSON array -- emitting one object per line, or comma-joined without
+    brackets, even when explicitly told to produce an array. Rather than
+    reject the whole paragraph over a formatting slip, fall back to salvaging
+    each brace-delimited object independently.
+    """
     cleaned = raw_output.strip()
     if cleaned.startswith("```"):
         cleaned = cleaned.strip("`")
@@ -168,13 +181,29 @@ def _validate_mapping(
             cleaned = cleaned.split("\n", 1)[1]
 
     try:
-        mapping = json.loads(cleaned)
-    except json.JSONDecodeError as e:
-        logger.error("LLM judge returned unparseable JSON: %s", e)
-        return None
+        parsed = json.loads(cleaned)
+        if isinstance(parsed, list):
+            return parsed
+        if isinstance(parsed, dict):
+            return [parsed]
+    except json.JSONDecodeError:
+        pass
 
-    if not isinstance(mapping, list):
-        logger.error("LLM judge mapping root is not a list: %r", type(mapping))
+    objects = []
+    for match in re.finditer(r"\{[^{}]*\}", cleaned):
+        try:
+            objects.append(json.loads(match.group(0)))
+        except json.JSONDecodeError:
+            return None
+    return objects or None
+
+
+def _validate_mapping(
+    raw_output: str, source_sentences: list[str], target_sentences: list[str]
+) -> list[tuple[list[int], list[int]]] | None:
+    mapping = _parse_mapping_json(raw_output)
+    if mapping is None:
+        logger.error("LLM judge returned unparseable JSON")
         return None
 
     seen_src: set[int] = set()
