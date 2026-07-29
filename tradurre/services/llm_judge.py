@@ -123,16 +123,23 @@ class LLMJudge:
 
     def _generate(self, prompt: str) -> str:
         messages = [{"role": "user", "content": prompt}]
-        input_ids = self.tokenizer.apply_chat_template(
-            messages, add_generation_prompt=True, return_tensors="pt"
-        ).to(self.device)
+        # return_dict=True (rather than a bare return_tensors="pt" tensor) is
+        # required on current transformers -- without it apply_chat_template
+        # can hand back a BatchEncoding that lacks .shape, which crashes deep
+        # inside generate() with a confusing KeyError/AttributeError. The dict
+        # form also carries attention_mask, which generate() otherwise has to
+        # guess at.
+        encoded = self.tokenizer.apply_chat_template(
+            messages, add_generation_prompt=True, return_tensors="pt", return_dict=True,
+        ).to(self.model.device)
         t0 = time.monotonic()
         output = self.model.generate(
-            input_ids, max_new_tokens=1024, do_sample=False,
+            **encoded, max_new_tokens=1024, do_sample=False,
             pad_token_id=self.tokenizer.eos_token_id,
         )
+        input_len = encoded["input_ids"].shape[1]
         text = self.tokenizer.decode(
-            output[0][input_ids.shape[1]:], skip_special_tokens=True
+            output[0][input_len:], skip_special_tokens=True
         )
         logger.debug(
             "LLM judge generated %d chars in %.1fs", len(text), time.monotonic() - t0

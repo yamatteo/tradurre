@@ -28,6 +28,16 @@ _PUA_RANGES = ((0xE000, 0xF8FF), (0xF0000, 0xFFFFD), (0x100000, 0x10FFFD))
 _OCR_ZOOM = 12
 _OCR_PAD_RATIO = 0.4  # padding around the glyph bbox, as a fraction of its size
 
+# A single occurrence's crop can be OCR-ambiguous (bad kerning with a
+# neighboring glyph, a partially-clipped ascender/descender, antialiasing
+# noise, ...). Since a PDF-wide substitution is applied from one glyph
+# decision, sample several distinct occurrences and vote instead of betting
+# the entire document on whichever occurrence happened to be seen first --
+# this matters most for exactly the highest-frequency glyphs, where a wrong
+# or missed call corrupts the largest fraction of the text.
+_MAX_SAMPLES_PER_GLYPH = 8
+_MIN_VOTES_TO_ACCEPT = 2
+
 
 def _is_pua(ch: str) -> bool:
     cp = ord(ch)
@@ -37,9 +47,10 @@ def _is_pua(ch: str) -> bool:
 def find_pua_occurrences(doc) -> dict[str, dict]:
     """Scan every page of an open fitz.Document for PUA-codepoint characters.
 
-    Returns {char: {"count": int, "sample": (page_index, bbox)}}: one
-    representative bbox per distinct character (the first one seen), enough
-    to crop and OCR a single glyph without needing every occurrence.
+    Returns {char: {"count": int, "samples": [(page_index, bbox), ...]}}: up
+    to _MAX_SAMPLES_PER_GLYPH representative bboxes per distinct character,
+    spread across occurrences, so recovery can vote across multiple crops
+    rather than trusting a single one.
     """
     occurrences: dict[str, dict] = {}
     for page_index in range(len(doc)):
@@ -52,10 +63,10 @@ def find_pua_occurrences(doc) -> dict[str, dict]:
                         c = ch["c"]
                         if not _is_pua(c):
                             continue
-                        entry = occurrences.setdefault(c, {"count": 0, "sample": None})
+                        entry = occurrences.setdefault(c, {"count": 0, "samples": []})
                         entry["count"] += 1
-                        if entry["sample"] is None:
-                            entry["sample"] = (page_index, ch["bbox"])
+                        if len(entry["samples"]) < _MAX_SAMPLES_PER_GLYPH:
+                            entry["samples"].append((page_index, ch["bbox"]))
     return occurrences
 
 
@@ -113,23 +124,27 @@ def resolve_pua_glyphs(doc) -> tuple[dict[str, str], list[str]]:
     mapping: dict[str, str] = {}
     warnings: list[str] = []
     for c, info in sorted(occurrences.items()):
-        page_index, bbox = info["sample"]
-        try:
-            guess = _ocr_glyph(doc, page_index, bbox)
-        except Exception:
-            logger.exception("OCR failed while resolving glyph U+%04X", ord(c))
-            guess = None
+        votes: dict[str, int] = {}
+        for page_index, bbox in info["samples"]:
+            try:
+                guess = _ocr_glyph(doc, page_index, bbox)
+            except Exception:
+                logger.exception("OCR failed while resolving glyph U+%04X", ord(c))
+                guess = None
+            if guess:
+                votes[guess] = votes.get(guess, 0) + 1
 
-        if guess:
-            mapping[c] = guess
+        winner, winner_votes = max(votes.items(), key=lambda kv: kv[1], default=(None, 0))
+        if winner and winner_votes >= min(_MIN_VOTES_TO_ACCEPT, len(info["samples"])):
+            mapping[c] = winner
             logger.info(
-                "resolved glyph U+%04X -> %r (%d occurrence(s))",
-                ord(c), guess, info["count"],
+                "resolved glyph U+%04X -> %r (%d/%d sample vote(s), %d occurrence(s) total)",
+                ord(c), winner, winner_votes, len(info["samples"]), info["count"],
             )
         else:
             warnings.append(
                 f"could not confidently OCR glyph U+{ord(c):04X} "
-                f"({info['count']} occurrence(s)); left unresolved"
+                f"({info['count']} occurrence(s), votes={votes!r}); left unresolved"
             )
 
     return mapping, warnings
