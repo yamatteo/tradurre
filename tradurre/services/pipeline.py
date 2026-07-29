@@ -55,8 +55,14 @@ def build_aligned_artifact(
 
     logger.info("loading source=%r target=%r", source_filename, target_filename)
     t0 = time.monotonic()
-    source_text = doc_adapter.load_as_text(source_filename, source_bytes)
-    target_text = doc_adapter.load_as_text(target_filename, target_bytes)
+    source_text, source_load_warnings = doc_adapter.load_as_text_with_warnings(
+        source_filename, source_bytes
+    )
+    target_text, target_load_warnings = doc_adapter.load_as_text_with_warnings(
+        target_filename, target_bytes
+    )
+    warnings.extend(f"source: {w}" for w in source_load_warnings)
+    warnings.extend(f"target: {w}" for w in target_load_warnings)
     stats["stage_seconds"]["load"] = round(time.monotonic() - t0, 2)
 
     t0 = time.monotonic()

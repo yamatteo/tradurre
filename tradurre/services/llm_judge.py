@@ -60,8 +60,37 @@ def _load_llm(model_name: str, device: str | None):
     logger.info("loading LLM judge model %r on device %r", model_name, resolved_device)
     t0 = time.monotonic()
     tokenizer = AutoTokenizer.from_pretrained(model_name)
-    model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype="auto")
-    model = model.to(resolved_device)
+
+    # A 7B model in fp16 is ~15GB of weights alone -- too tight to coexist with
+    # an already-loaded embedding model on a single consumer/Colab GPU (e.g. a
+    # 15-16GB T4), which is exactly what caused this stage to OOM in practice.
+    # 4-bit quantization (bitsandbytes) cuts that to ~5GB, only on cuda -- CPU
+    # inference doesn't benefit from it and bitsandbytes may not even be
+    # available there, so fall back to a plain fp32/auto load off-GPU.
+    if resolved_device == "cuda":
+        try:
+            from transformers import BitsAndBytesConfig
+            quant_config = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_compute_dtype=torch.bfloat16,
+                bnb_4bit_quant_type="nf4",
+            )
+            model = AutoModelForCausalLM.from_pretrained(
+                model_name, quantization_config=quant_config, device_map={"": 0},
+            )
+        except ImportError:
+            logger.warning(
+                "bitsandbytes not installed; loading %r in full precision -- "
+                "install the 'align' extra's bitsandbytes dependency to avoid "
+                "GPU OOM when this coexists with an embedding model",
+                model_name,
+            )
+            model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype="auto")
+            model = model.to(resolved_device)
+    else:
+        model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype="auto")
+        model = model.to(resolved_device)
+
     logger.info("LLM judge model loaded in %.1fs", time.monotonic() - t0)
     return tokenizer, model, resolved_device
 

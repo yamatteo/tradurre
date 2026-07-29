@@ -15,8 +15,14 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-pdf = ["pymupdf>=1.24"]
-align = ["sentence-transformers>=3.0", "transformers>=4.44", "torch>=2.3", "accelerate>=0.33"]
+pdf = [
+    "pymupdf>=1.24",
+]
+ocr = [
+    "pytesseract>=0.3.10",
+    "pillow>=10.0",
+]
+align = ["sentence-transformers>=3.0", "transformers>=4.44", "torch>=2.3", "accelerate>=0.33", "bitsandbytes>=0.43"]
 
 [build-system]
 requires = ["hatchling"]

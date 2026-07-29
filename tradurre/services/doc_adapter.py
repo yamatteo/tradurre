@@ -65,7 +65,7 @@ def _load_docx(content: bytes) -> str:
     return "\n\n".join(paragraphs)
 
 
-def _load_pdf(content: bytes) -> str:
+def _load_pdf(content: bytes) -> tuple[str, list[str]]:
     try:
         import fitz  # PyMuPDF
     except ImportError as e:
@@ -74,24 +74,37 @@ def _load_pdf(content: bytes) -> str:
             "Install with: uv sync --extra pdf"
         ) from e
 
+    from tradurre.services import glyph_resolver
+
     doc = fitz.open(stream=content, filetype="pdf")
-    pages = []
-    for page in doc:
-        page_text = page.get_text("text")
-        pages.append(page_text)
-    doc.close()
+    pages = [page.get_text("text") for page in doc]
     logger.info("pdf: extracted %d pages", len(pages))
+
+    mapping, warnings = glyph_resolver.resolve_pua_glyphs(doc)
+    doc.close()
+    for w in warnings:
+        logger.warning("pdf glyph resolution: %s", w)
+
     text = "\n\n".join(pages)
-    return normalize_ocr_artifacts(text)
+    text = glyph_resolver.apply_resolution(text, mapping)
+    return normalize_ocr_artifacts(text), warnings
 
 
 def load_as_text(filename: str, content: bytes) -> str:
     """Dispatch on file extension and return plain text with blank-line paragraph breaks."""
+    text, _warnings = load_as_text_with_warnings(filename, content)
+    return text
+
+
+def load_as_text_with_warnings(filename: str, content: bytes) -> tuple[str, list[str]]:
+    """Like load_as_text, but also returns non-fatal warnings (e.g. unresolved
+    PDF glyphs) for callers -- such as the Colab pipeline -- that want to
+    surface them somewhere more durable than the log."""
     ext = _extension(filename)
     if ext == ".txt":
-        return _load_txt(content)
+        return _load_txt(content), []
     elif ext == ".docx":
-        return _load_docx(content)
+        return _load_docx(content), []
     elif ext == ".pdf":
         return _load_pdf(content)
     else:
