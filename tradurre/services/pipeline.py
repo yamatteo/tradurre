@@ -24,7 +24,7 @@ import logging
 import time
 
 from tradurre.models import ArtifactSentence
-from tradurre.services import aligner, artifact_io, doc_adapter
+from tradurre.services import aligner, artifact_io, doc_adapter, glyph_resolver
 
 logger = logging.getLogger("tradurre.pipeline")
 
@@ -53,17 +53,40 @@ def build_aligned_artifact(
         "stages": ["baseline"],
     }
 
+    # Loaded here (before text loading, not just before paragraph judging) so
+    # the same already-loaded judge model can also be reused as a second
+    # opinion on OCR glyph substitutions during PDF loading, and again below
+    # for LLM-assisted glyph gap-filling -- avoids paying to load a second
+    # copy for either.
+    scorer = _maybe_load_embedding_scorer(
+        use_embeddings, embedding_model, warnings, stats, generator
+    )
+    judge = _maybe_load_llm_judge(use_llm_judge, llm_model, warnings, stats, generator)
+
     logger.info("loading source=%r target=%r", source_filename, target_filename)
     t0 = time.monotonic()
     source_text, source_load_warnings = doc_adapter.load_as_text_with_warnings(
-        source_filename, source_bytes
+        source_filename, source_bytes, generate=judge.generate if judge else None
     )
     target_text, target_load_warnings = doc_adapter.load_as_text_with_warnings(
-        target_filename, target_bytes
+        target_filename, target_bytes, generate=judge.generate if judge else None
     )
+    stats["stage_seconds"]["load"] = round(time.monotonic() - t0, 2)
+
+    if judge is not None:
+        t0 = time.monotonic()
+        source_text, source_glyph_warnings = glyph_resolver.llm_resolve_remaining_markers(
+            source_text, judge.generate
+        )
+        target_text, target_glyph_warnings = glyph_resolver.llm_resolve_remaining_markers(
+            target_text, judge.generate
+        )
+        source_load_warnings += source_glyph_warnings
+        target_load_warnings += target_glyph_warnings
+        stats["stage_seconds"]["llm_glyph_repair"] = round(time.monotonic() - t0, 2)
+
     warnings.extend(f"source: {w}" for w in source_load_warnings)
     warnings.extend(f"target: {w}" for w in target_load_warnings)
-    stats["stage_seconds"]["load"] = round(time.monotonic() - t0, 2)
 
     t0 = time.monotonic()
     source_h = aligner.extract_hierarchy(source_text)
@@ -71,11 +94,6 @@ def build_aligned_artifact(
     section_pairs = aligner.align_sections(source_h, target_h)
     stats["stage_seconds"]["section_align"] = round(time.monotonic() - t0, 2)
     logger.info("baseline: %d aligned sections", len(section_pairs))
-
-    scorer = _maybe_load_embedding_scorer(
-        use_embeddings, embedding_model, warnings, stats, generator
-    )
-    judge = _maybe_load_llm_judge(use_llm_judge, llm_model, warnings, stats, generator)
 
     hierarchy: list[list[list[ArtifactSentence]]] = []
     counts = {"anchor": 0, "fallback": 0, "embedding": 0, "llm": 0, "llm_rejected": 0}

@@ -117,7 +117,7 @@ class LLMJudge:
         the prior (embedding/anchor) alignment for this paragraph in that case.
         """
         prompt = _build_prompt(source_sentences, target_sentences)
-        raw_output = self._generate(prompt)
+        raw_output = self.generate(prompt)
         groups = _validate_mapping(raw_output, source_sentences, target_sentences)
         if groups is None:
             logger.warning(
@@ -128,7 +128,11 @@ class LLMJudge:
             logger.debug("rejected LLM judge output: %r", raw_output)
         return groups
 
-    def _generate(self, prompt: str) -> str:
+    def generate(self, prompt: str, max_new_tokens: int = 1024) -> str:
+        """Low-level raw generation, reused by both the alignment judge and
+        any other feature that wants to reuse this already-loaded model
+        (e.g. glyph_resolver's LLM-assisted gap filling) without paying to
+        load a second copy."""
         messages = [{"role": "user", "content": prompt}]
         # return_dict=True (rather than a bare return_tensors="pt" tensor) is
         # required on current transformers -- without it apply_chat_template
@@ -141,7 +145,7 @@ class LLMJudge:
         ).to(self.model.device)
         t0 = time.monotonic()
         output = self.model.generate(
-            **encoded, max_new_tokens=1024, do_sample=False,
+            **encoded, max_new_tokens=max_new_tokens, do_sample=False,
             pad_token_id=self.tokenizer.eos_token_id,
         )
         input_len = encoded["input_ids"].shape[1]

@@ -65,7 +65,7 @@ def _load_docx(content: bytes) -> str:
     return "\n\n".join(paragraphs)
 
 
-def _load_pdf(content: bytes) -> tuple[str, list[str]]:
+def _load_pdf(content: bytes, generate=None) -> tuple[str, list[str]]:
     try:
         import fitz  # PyMuPDF
     except ImportError as e:
@@ -80,7 +80,7 @@ def _load_pdf(content: bytes) -> tuple[str, list[str]]:
     pages = [page.get_text("text") for page in doc]
     logger.info("pdf: extracted %d pages", len(pages))
 
-    mapping, warnings = glyph_resolver.resolve_pua_glyphs(doc)
+    mapping, warnings = glyph_resolver.resolve_pua_glyphs(doc, generate=generate)
     doc.close()
     for w in warnings:
         logger.warning("pdf glyph resolution: %s", w)
@@ -96,16 +96,21 @@ def load_as_text(filename: str, content: bytes) -> str:
     return text
 
 
-def load_as_text_with_warnings(filename: str, content: bytes) -> tuple[str, list[str]]:
+def load_as_text_with_warnings(filename: str, content: bytes, generate=None) -> tuple[str, list[str]]:
     """Like load_as_text, but also returns non-fatal warnings (e.g. unresolved
     PDF glyphs) for callers -- such as the Colab pipeline -- that want to
-    surface them somewhere more durable than the log."""
+    surface them somewhere more durable than the log.
+
+    `generate`, if given, is a callable(prompt: str) -> str for an LLM, used
+    (PDF only) as a second opinion on OCR-based glyph substitutions -- see
+    glyph_resolver.resolve_pua_glyphs. Ignored for other formats.
+    """
     ext = _extension(filename)
     if ext == ".txt":
         return _load_txt(content), []
     elif ext == ".docx":
         return _load_docx(content), []
     elif ext == ".pdf":
-        return _load_pdf(content)
+        return _load_pdf(content, generate=generate)
     else:
         raise ValueError(f"Unsupported file type: {filename!r}")
