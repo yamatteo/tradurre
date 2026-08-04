@@ -85,7 +85,16 @@ def _load_pdf(content: bytes, generate=None) -> tuple[str, list[str]]:
     for w in warnings:
         logger.warning("pdf glyph resolution: %s", w)
 
-    text = "\n\n".join(pages)
+    # A single newline, not a blank line: joining pages with "\n\n" would force
+    # a hard paragraph break at every page boundary regardless of whether the
+    # text actually continues there (justified body text routinely wraps a
+    # paragraph across a page break). A lone "\n" makes the page boundary look
+    # like any other line-wrap to join_into_paragraphs, which already decides
+    # -- via sentence-ending punctuation -- whether consecutive lines continue
+    # the same paragraph or start a new one. Each page's text already ends in
+    # its own trailing "\n" (fitz), so that has to be stripped first or the
+    # join still produces a blank line.
+    text = "\n".join(page.rstrip("\n") for page in pages)
     # When an LLM is available, the pipeline runs llm_resolve_remaining_markers
     # next -- that stage needs each still-unresolved glyph's original PUA
     # codepoint intact (to group same-glyph occurrences together), so don't

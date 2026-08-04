@@ -19,8 +19,11 @@ logger = logging.getLogger("tradurre.aligner")
 # Sentence-ending punctuation
 _SENT_END = re.compile(r"[.;:?!]\s*$")
 
-# Sentence boundary: sentence-end punctuation, whitespace, then capital letter
-_SENT_BOUNDARY = re.compile(r"([.;:?!])\s+(?=[A-ZÀ-ÝÆŒ])")
+# Sentence boundary: sentence-end punctuation, whitespace, then capital letter.
+# Deliberately excludes ':' and ';' -- those introduce a clause rather than end
+# a sentence, and source/target translations don't reliably place them at the
+# same spot, so splitting on them desyncs sentence counts between languages.
+_SENT_BOUNDARY = re.compile(r"([.?!])\s+(?=[A-ZÀ-ÝÆŒ])")
 
 # Artifact line: non-blank line containing only digits, whitespace, and punctuation/symbols
 _ARTIFACT = re.compile(r"^[\d\s\W]*$")
@@ -283,7 +286,7 @@ def split_sentences(paragraph: str) -> list[str]:
     sentences: list[str] = []
     i = 0
     while i < len(parts):
-        if i + 1 < len(parts) and re.match(r"^[.;:?!]$", parts[i + 1]):
+        if i + 1 < len(parts) and re.match(r"^[.?!]$", parts[i + 1]):
             # Reattach punctuation to the preceding chunk
             sentences.append(parts[i] + parts[i + 1])
             i += 2
@@ -414,6 +417,40 @@ def find_anchors(source_units: list[str], target_units: list[str]) -> list[str]:
 # Step 5: Align using anchors
 # ---------------------------------------------------------------------------
 
+def _pad_align(s_gap: list[str], t_gap: list[str]) -> list[tuple[str, str]]:
+    """Positional pairing, padding the shorter side with empty strings."""
+    max_len = max(len(s_gap), len(t_gap))
+    s_padded = s_gap + [""] * (max_len - len(s_gap))
+    t_padded = t_gap + [""] * (max_len - len(t_gap))
+    return list(zip(s_padded, t_padded))
+
+
+def _align_gap(s_gap: list[str], t_gap: list[str]) -> list[tuple[str, str]]:
+    """Align the units strictly between two anchor points.
+
+    `find_anchors` only surfaces a name as an anchor if it has an equal,
+    non-zero count across the *entire* unit list -- a name that's uneven
+    overall (e.g. dropped for a pronoun a couple of times elsewhere) can
+    still be perfectly even within one gap, but the parent-level anchor
+    search never sees that because the matched units around the gap are
+    still in scope. So re-run anchor-finding scoped to just this gap before
+    giving up and falling back to positional padding, which only produces
+    a sane result when both sides are close in length. Recursion always
+    terminates: each anchor found strictly splits the gap into smaller
+    sub-gaps (a unit list can't contain itself), and the length-<=1 and
+    no-anchors-found cases are direct base cases.
+    """
+    if not s_gap or not t_gap:
+        return _pad_align(s_gap, t_gap)
+    if len(s_gap) == 1 and len(t_gap) == 1:
+        return [(s_gap[0], t_gap[0])]
+
+    sub_anchors = find_anchors(s_gap, t_gap)
+    if sub_anchors:
+        return align(s_gap, t_gap, sub_anchors)
+    return _pad_align(s_gap, t_gap)
+
+
 def align(
     source_units: list[str],
     target_units: list[str],
@@ -423,7 +460,8 @@ def align(
 
     For each anchor, the nth occurrence in source is paired with the nth
     occurrence in target. Between anchor points, unanchored units are
-    distributed with empty-string padding on the shorter side.
+    aligned recursively (see `_align_gap`), falling back to positional
+    padding when a gap has no anchors of its own.
 
     Returns a list of (source_text, target_text) pairs.
     """
@@ -465,13 +503,7 @@ def align(
         s_gap = source_units[s_start:s_end]
         t_gap = target_units[t_start:t_end]
 
-        # Pad the shorter side
-        max_len = max(len(s_gap), len(t_gap))
-        s_padded = s_gap + [""] * (max_len - len(s_gap))
-        t_padded = t_gap + [""] * (max_len - len(t_gap))
-
-        for s, t in zip(s_padded, t_padded):
-            result.append((s, t))
+        result.extend(_align_gap(s_gap, t_gap))
 
         # Add the anchor point itself (if not sentinel end)
         if anchor_points[k + 1][0] < len(source_units):
