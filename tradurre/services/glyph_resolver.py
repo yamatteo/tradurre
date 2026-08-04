@@ -38,6 +38,14 @@ _OCR_PAD_RATIO = 0.4  # padding around the glyph bbox, as a fraction of its size
 _MAX_SAMPLES_PER_GLYPH = 16
 _MIN_VOTES_TO_ACCEPT = 2
 
+# A glyph that only shows up a handful of times gives too little evidence to
+# vote on reliably either way (OCR samples or LLM fill guesses), and getting
+# it wrong there corrupts only a few spots -- not worth the guessing risk.
+# Below this occurrence count, skip attempting recovery entirely and leave it
+# as a visible unresolved marker; a marker here and there is a much smaller
+# problem than a confidently-wrong guess.
+_MIN_OCCURRENCES_TO_ATTEMPT = 8
+
 # How many already-known (non-PUA) characters on each side of the mystery
 # glyph to include in its OCR crop. An isolated single-glyph crop throws away
 # exactly the information that disambiguates it (e.g. a bare "r" is easily
@@ -274,6 +282,14 @@ def resolve_pua_glyphs(doc, generate=None) -> tuple[dict[str, str], list[str]]:
     mapping: dict[str, str] = {}
     warnings: list[str] = []
     for c, info in sorted(occurrences.items()):
+        if info["count"] <= _MIN_OCCURRENCES_TO_ATTEMPT:
+            warnings.append(
+                f"glyph U+{ord(c):04X} occurs only {info['count']} time(s) "
+                f"(<= {_MIN_OCCURRENCES_TO_ATTEMPT}); skipped recovery to avoid "
+                "guessing from too little evidence, left unresolved"
+            )
+            continue
+
         votes: dict[str, int] = {}
         for sample in info["samples"]:
             # Context OCR (glyph + known neighbors) resolves genuinely
@@ -388,10 +404,18 @@ def _check_substitution_plausible(generate, winner: str, samples: list[dict]) ->
 UNRESOLVED_MARKER = "�"  # U+FFFD REPLACEMENT CHARACTER
 
 
-def apply_resolution(text: str, mapping: dict[str, str]) -> str:
-    """Apply a PUA->text substitution map, then flag any remaining PUA chars."""
+def apply_resolution(text: str, mapping: dict[str, str], *, stub_remaining: bool = True) -> str:
+    """Apply a PUA->text substitution map, then flag any remaining PUA chars.
+
+    `stub_remaining=False` leaves any still-unresolved PUA codepoints as-is
+    (distinct per glyph) instead of collapsing them all to the same generic
+    UNRESOLVED_MARKER -- used when a later stage (llm_resolve_remaining_markers)
+    needs to know which occurrences share the same original glyph.
+    """
     for pua_char, real in mapping.items():
         text = text.replace(pua_char, real)
+    if not stub_remaining:
+        return text
     return "".join(UNRESOLVED_MARKER if _is_pua(c) else c for c in text)
 
 
@@ -401,13 +425,27 @@ def apply_resolution(text: str, mapping: dict[str, str]) -> str:
 # small crop of pixels. A language model reading the whole sentence has a
 # different, complementary source of evidence -- word shape, grammar, and
 # knowledge of common ligature patterns -- that can resolve exactly the cases
-# OCR is weakest at. This runs on the final UNRESOLVED_MARKER placeholder
-# text (not the original PUA codepoints), so it has no dependency on OCR/PDF
-# internals at all and works for any text with an isolated corrupted spot.
+# OCR is weakest at. This runs on text that still has the *original* PUA
+# codepoints for whatever OCR left unresolved (not yet collapsed to the
+# generic UNRESOLVED_MARKER), which matters: the corruption is one font-level
+# substitution applied uniformly by the PDF, so the same glyph recurs at many
+# unrelated spots in the text. A single cloze-style guess per occurrence,
+# with no requirement that occurrences of the *same* glyph agree, was
+# observed assigning completely different filler text to the same underlying
+# glyph depending on which sentence it happened to land in -- effectively
+# hallucinating a different word each time instead of recovering one
+# consistent character. So, exactly like the OCR path above, occurrences are
+# grouped by their original codepoint and only a consensus answer across
+# several of them is trusted; every occurrence of a glyph gets the same
+# substitution (or none at all), never a per-occurrence guess.
 
 _LLM_CONTEXT_CHARS = 60
 _LLM_PLACEHOLDER = "[???]"
-_MAX_LLM_MARKER_REPAIRS = 50  # bound worst-case LLM calls for a pathological file
+_MAX_LLM_FILL_SAMPLES = 6  # occurrences sampled per distinct glyph, to vote on
+_MIN_LLM_FILL_VOTES = 3  # higher bar than OCR's _MIN_VOTES_TO_ACCEPT: free-text
+# generation is riskier than picking among a handful of OCR shape candidates,
+# so require more agreement before trusting it.
+_MAX_LLM_FILL_GLYPHS = 50  # bound worst-case LLM calls for a pathological file
 
 _GLYPH_FILL_PROMPT = """The text below comes from a scanned/converted document and has \
 one corrupted spot, marked {placeholder}, where a single character or short \
@@ -451,41 +489,80 @@ def _parse_glyph_fill_answer(raw: str) -> str | None:
 
 
 def llm_resolve_remaining_markers(text: str, generate) -> tuple[str, list[str]]:
-    """Ask an LLM to fill in whatever UNRESOLVED_MARKER placeholders remain
-    after OCR-based recovery, one occurrence at a time, using its
-    surrounding sentence as context.
+    """Ask an LLM to fill in whatever PUA glyphs OCR-based recovery left
+    unresolved, grouping occurrences by their original codepoint so the same
+    underlying glyph always gets the same answer (or none).
+
+    `text` must still contain the *original* PUA codepoints for anything
+    unresolved (i.e. produced with `apply_resolution(..., stub_remaining=False)`)
+    -- this function does the final collapse to UNRESOLVED_MARKER itself, for
+    whatever it couldn't confidently fill.
 
     `generate` is a callable(prompt: str) -> str, deliberately generic (not
     tied to any specific model/tokenizer) so this has no hard dependency on
     transformers and can reuse whatever LLM instance the caller already has
     loaded for other purposes.
     """
-    idxs = [i for i, c in enumerate(text) if c == UNRESOLVED_MARKER]
-    if not idxs:
+    idxs_by_char: dict[str, list[int]] = {}
+    for i, c in enumerate(text):
+        if _is_pua(c):
+            idxs_by_char.setdefault(c, []).append(i)
+    if not idxs_by_char:
         return text, []
 
     warnings: list[str] = []
-    result = list(text)
-    skipped = max(0, len(idxs) - _MAX_LLM_MARKER_REPAIRS)
-    for i in idxs[:_MAX_LLM_MARKER_REPAIRS]:
-        lo = max(0, i - _LLM_CONTEXT_CHARS)
-        hi = min(len(text), i + _LLM_CONTEXT_CHARS + 1)
-        context = (text[lo:i] + _LLM_PLACEHOLDER + text[i + 1:hi]).replace("\n", " ")
-        prompt = _GLYPH_FILL_PROMPT.format(placeholder=_LLM_PLACEHOLDER, context=context)
-        try:
-            raw = generate(prompt)
-        except Exception:
-            logger.exception("LLM glyph-fill generation failed")
-            raw = ""
+    result: list[str] = list(text)
+    glyphs = sorted(idxs_by_char.items())
+    skipped_glyphs = max(0, len(glyphs) - _MAX_LLM_FILL_GLYPHS)
 
-        answer = _parse_glyph_fill_answer(raw)
-        if answer:
-            result[i] = answer
-            logger.info("LLM filled a remaining unresolved glyph -> %r", answer)
+    for c, idxs in glyphs[:_MAX_LLM_FILL_GLYPHS]:
+        if len(idxs) <= _MIN_OCCURRENCES_TO_ATTEMPT:
+            warnings.append(
+                f"glyph U+{ord(c):04X} occurs only {len(idxs)} time(s) "
+                f"(<= {_MIN_OCCURRENCES_TO_ATTEMPT}); skipped LLM fill to avoid "
+                "guessing from too little evidence, left unresolved"
+            )
+            continue
+
+        votes: dict[str, int] = {}
+        for i in idxs[:_MAX_LLM_FILL_SAMPLES]:
+            lo = max(0, i - _LLM_CONTEXT_CHARS)
+            hi = min(len(text), i + _LLM_CONTEXT_CHARS + 1)
+            context = (text[lo:i] + _LLM_PLACEHOLDER + text[i + 1:hi]).replace("\n", " ")
+            prompt = _GLYPH_FILL_PROMPT.format(placeholder=_LLM_PLACEHOLDER, context=context)
+            try:
+                raw = generate(prompt)
+            except Exception:
+                logger.exception("LLM glyph-fill generation failed")
+                raw = ""
+            answer = _parse_glyph_fill_answer(raw)
+            if answer:
+                votes[answer] = votes.get(answer, 0) + 1
+
+        ranked = sorted(votes.values(), reverse=True)
+        winner, winner_votes = max(votes.items(), key=lambda kv: kv[1], default=(None, 0))
+        runner_up_votes = ranked[1] if len(ranked) > 1 else 0
+        if (
+            winner
+            and winner_votes >= _MIN_LLM_FILL_VOTES
+            and winner_votes >= 2 * runner_up_votes
+        ):
+            for i in idxs:
+                result[i] = winner
+            logger.info(
+                "LLM filled glyph U+%04X -> %r (%d/%d sample vote(s), %d occurrence(s) total, votes=%r)",
+                ord(c), winner, winner_votes, len(idxs[:_MAX_LLM_FILL_SAMPLES]), len(idxs), votes,
+            )
         else:
-            warnings.append("LLM could not confidently fill a remaining unresolved glyph")
+            warnings.append(
+                f"LLM could not confidently fill glyph U+{ord(c):04X} "
+                f"({len(idxs)} occurrence(s), votes={votes!r}); left unresolved"
+            )
 
-    if skipped:
-        warnings.append(f"{skipped} additional unresolved glyph(s) skipped (LLM repair cap reached)")
+    if skipped_glyphs:
+        warnings.append(f"{skipped_glyphs} additional distinct glyph(s) skipped (LLM repair cap reached)")
 
-    return "".join(result), warnings
+    filled = "".join(result)
+    # Whatever's still an original PUA codepoint (rejected or skipped above)
+    # gets the same generic, visible stand-in as the OCR stage uses.
+    return "".join(UNRESOLVED_MARKER if _is_pua(c) else c for c in filled), warnings

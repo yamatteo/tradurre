@@ -89,8 +89,8 @@ def build_aligned_artifact(
     warnings.extend(f"target: {w}" for w in target_load_warnings)
 
     t0 = time.monotonic()
-    source_h = aligner.extract_hierarchy(source_text)
-    target_h = aligner.extract_hierarchy(target_text)
+    source_h = aligner.extract_hierarchy(source_text, generate=judge.generate if judge else None)
+    target_h = aligner.extract_hierarchy(target_text, generate=judge.generate if judge else None)
     section_pairs = aligner.align_sections(source_h, target_h)
     stats["stage_seconds"]["section_align"] = round(time.monotonic() - t0, 2)
     logger.info("baseline: %d aligned sections", len(section_pairs))

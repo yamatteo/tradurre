@@ -9,8 +9,11 @@ Pipeline:
 6. Align using anchors + padding (hierarchically: sections → paragraphs → sentences)
 """
 
+import logging
 import re
 from collections import Counter
+
+logger = logging.getLogger("tradurre.aligner")
 
 
 # Sentence-ending punctuation
@@ -126,20 +129,94 @@ def _detect_sections(lines: list[str]) -> list[list[str]]:
 # Step 2: Join wrapped lines into paragraphs
 # ---------------------------------------------------------------------------
 
-def join_into_paragraphs(lines: list[str]) -> list[str]:
+def _looks_like_wrap_hyphen(fragment: str) -> bool:
+    """True if `fragment` ends in a plain ASCII hyphen directly attached to a
+    letter -- as opposed to a standalone dash (e.g. a spaced em-dash used as
+    punctuation), which isn't a line-wrap candidate at all."""
+    return len(fragment) >= 2 and fragment[-1] == "-" and fragment[-2].isalpha()
+
+
+_HYPHEN_CONTEXT_CHARS = 40
+
+_HYPHEN_MERGE_PROMPT = """Text extracted from a PDF was broken across two lines \
+right after a hyphen, marked [-] below, at the exact point where the layout \
+wrapped the line.
+
+End of line 1: ...{before}[-]
+Start of line 2: {after}...
+
+This happens for two different reasons: (a) a word was simply wrapped across \
+the two lines and the hyphen is not really part of the word -- e.g. \
+"associations" wrapped as "asso-" / "ciations", where removing the hyphen \
+gives the real word; or (b) the hyphen is a genuine character of a \
+hyphenated compound word or expression -- e.g. "nouveau-né", "avant-hier" -- \
+that merely happens to break at its own hyphen, and must be kept.
+
+Task: decide which case applies here (regardless of language). Respond with \
+ONLY a JSON object: {{"keep_hyphen": true}} or {{"keep_hyphen": false}}.
+"""
+
+
+def _decide_hyphen_merge(generate, before: str, after: str) -> bool | None:
+    """Ask the LLM whether a line-wrap hyphen is real or a wrap artifact.
+
+    Returns True (keep the hyphen), False (it's an artifact, strip it), or
+    None if the answer is missing/unparseable/ambiguous -- callers must treat
+    None as "leave the text untouched" (don't guess either way).
+    """
+    import json
+
+    # `before` ends with the hyphen itself -- strip it so the [-] placeholder
+    # in the prompt represents it exactly once, not "...word-[-]" (doubled).
+    before_text = before[:-1] if before.endswith("-") else before
+    prompt = _HYPHEN_MERGE_PROMPT.format(
+        before=before_text[-_HYPHEN_CONTEXT_CHARS:], after=after[:_HYPHEN_CONTEXT_CHARS],
+    )
+    try:
+        raw = generate(prompt)
+    except Exception:
+        logger.exception("LLM hyphen-merge check failed; leaving text untouched")
+        return None
+
+    cleaned = raw.strip()
+    if cleaned.startswith("```"):
+        cleaned = cleaned.strip("`")
+        if "\n" in cleaned:
+            cleaned = cleaned.split("\n", 1)[1]
+    match = re.search(r"\{.*?\}", cleaned, re.DOTALL)
+    if not match:
+        return None
+    try:
+        parsed = json.loads(match.group(0))
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(parsed, dict) or not isinstance(parsed.get("keep_hyphen"), bool):
+        return None
+    return parsed["keep_hyphen"]
+
+
+def join_into_paragraphs(lines: list[str], generate=None) -> list[str]:
     """Join line-wrapped text into paragraphs.
 
     Rules:
     - A blank line ends the current paragraph.
     - A line ending with . : ; ? ! ends the current paragraph.
     - A line ending with a soft hyphen (U+00AD) joins to the next without space.
+    - A line ending with a plain ASCII hyphen right after a letter is
+      ambiguous: it might be a genuine hyphenated word (e.g. "nouveau-né")
+      that happens to break at its own hyphen, or just a line-wrap artifact
+      splitting an ordinary word (e.g. "asso-" / "ciations"). Layout position
+      alone can't tell these apart, so if `generate` (an LLM callable) is
+      given, it's asked to decide; without one, the text is left exactly as
+      extracted rather than guessed either way.
     - Otherwise the line is joined to the next with a space (line wrapping).
     """
     paragraphs: list[str] = []
     current: list[str] = []
     join_no_space = False  # next line joins without space (soft hyphen)
 
-    for line in lines:
+    n = len(lines)
+    for idx, line in enumerate(lines):
         if line == "":
             # Blank line → paragraph break
             if current:
@@ -149,7 +226,7 @@ def join_into_paragraphs(lines: list[str]) -> list[str]:
             continue
 
         # Strip leading soft hyphens (appear before some words like ­Pontorgueil)
-        line = line.lstrip("\u00ad")
+        line = line.lstrip("­")
 
         if current:
             if join_no_space:
@@ -160,9 +237,19 @@ def join_into_paragraphs(lines: list[str]) -> list[str]:
             current.append(line)
 
         # Check if line ends with soft hyphen → next joins without space
-        if current[-1].endswith("\u00ad"):
-            current[-1] = current[-1].rstrip("\u00ad")
+        if current[-1].endswith("­"):
+            current[-1] = current[-1].rstrip("­")
             join_no_space = True
+        elif generate is not None and _looks_like_wrap_hyphen(current[-1]):
+            next_line = lines[idx + 1] if idx + 1 < n else ""
+            keep = _decide_hyphen_merge(generate, current[-1], next_line) if next_line.strip() else None
+            if keep is False:
+                current[-1] = current[-1][:-1]  # drop the artifact hyphen
+                join_no_space = True
+            elif keep is True:
+                join_no_space = True  # genuine compound: no space, hyphen kept
+            else:
+                join_no_space = False  # undecided -> leave as extracted
         else:
             join_no_space = False
 
@@ -211,7 +298,7 @@ def split_sentences(paragraph: str) -> list[str]:
 # Hierarchy extraction: sections → paragraphs → sentences
 # ---------------------------------------------------------------------------
 
-def extract_hierarchy(text: str) -> list[list[list[str]]]:
+def extract_hierarchy(text: str, generate=None) -> list[list[list[str]]]:
     """Full pipeline returning sections[paragraphs[sentences]].
 
     1. _detect_sections on raw lines (before artifact removal, so chapter
@@ -219,6 +306,10 @@ def extract_hierarchy(text: str) -> list[list[list[str]]]:
     2. clean_lines — per section
     3. join_into_paragraphs — per section
     4. split_sentences — per paragraph
+
+    `generate`, if given, is a callable(prompt: str) -> str for an LLM, passed
+    through to join_into_paragraphs to resolve ambiguous line-wrap hyphens
+    (see there). Ignored (no hyphen guessing) if omitted.
     """
     raw_lines = [line.strip() for line in text.split("\n")]
     raw_sections = _detect_sections(raw_lines)
@@ -228,7 +319,7 @@ def extract_hierarchy(text: str) -> list[list[list[str]]]:
         # Re-join section lines and run clean → join → split
         section_text = "\n".join(section_lines)
         cleaned = clean_lines(section_text)
-        paragraphs_text = join_into_paragraphs(cleaned)
+        paragraphs_text = join_into_paragraphs(cleaned, generate=generate)
         section: list[list[str]] = []
         for para_text in paragraphs_text:
             sentences = split_sentences(para_text)

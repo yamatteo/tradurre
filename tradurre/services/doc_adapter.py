@@ -86,7 +86,12 @@ def _load_pdf(content: bytes, generate=None) -> tuple[str, list[str]]:
         logger.warning("pdf glyph resolution: %s", w)
 
     text = "\n\n".join(pages)
-    text = glyph_resolver.apply_resolution(text, mapping)
+    # When an LLM is available, the pipeline runs llm_resolve_remaining_markers
+    # next -- that stage needs each still-unresolved glyph's original PUA
+    # codepoint intact (to group same-glyph occurrences together), so don't
+    # collapse them to the generic marker yet; it does that collapse itself
+    # for whatever it still can't confidently fill.
+    text = glyph_resolver.apply_resolution(text, mapping, stub_remaining=generate is None)
     return normalize_ocr_artifacts(text), warnings
 
 
