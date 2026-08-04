@@ -101,7 +101,19 @@ def build_aligned_artifact(
 
     for section_idx, (src_sec, tgt_sec) in enumerate(section_pairs):
         para_pairs_raw = aligner.align_paragraphs(src_sec, tgt_sec)
-        para_pairs = aligner._boundary_optimize(list(para_pairs_raw))
+
+        # Same boundary-nudging mechanism used for sentences within a
+        # paragraph (see _align_paragraph_sentences), one level up: lets
+        # sentences move across a *paragraph* boundary when the source and
+        # target editions don't break paragraphs at the same points (common
+        # -- publishers/translators re-paragraph freely). Falls back to the
+        # anchor-count heuristic when no embedding scorer is loaded.
+        para_score_fn = None
+        if scorer is not None:
+            all_sentences = [s for p in src_sec for s in p] + [s for p in tgt_sec for s in p]
+            scorer.warm_cache(all_sentences)
+            para_score_fn = scorer.score_fn()
+        para_pairs = aligner._boundary_optimize(list(para_pairs_raw), score_fn=para_score_fn)
         section_out: list[list[ArtifactSentence]] = []
 
         for para_idx, (src_para, tgt_para) in enumerate(para_pairs):

@@ -472,9 +472,17 @@ def align(
         s_indices = [i for i, u in enumerate(source_units) if anchor in u]
         t_indices = [i for i, u in enumerate(target_units) if anchor in u]
 
-        # Pair nth occurrence with nth occurrence
-        for si, ti in zip(s_indices, t_indices):
-            constraints.append((si, ti))
+        # Only trust an anchor's occurrence as a hard constraint when it's
+        # unambiguous (exactly one occurrence per side). find_anchors only
+        # guarantees equal *counts*, not that the nth occurrence on one side
+        # corresponds to the nth on the other -- for a repeated name that's
+        # just a position-order guess, and a wrong guess here can force a
+        # huge, wrong gap between it and the next anchor. A repeated anchor
+        # isn't wasted: once singleton anchors have bracketed a smaller gap,
+        # _align_gap re-runs find_anchors there, where the same name may now
+        # occur only once per side and become usable.
+        if len(s_indices) == 1 and len(t_indices) == 1:
+            constraints.append((s_indices[0], t_indices[0]))
 
     # Deduplicate and sort by source index
     constraints = sorted(set(constraints), key=lambda c: (c[0], c[1]))
@@ -595,7 +603,7 @@ def _boundary_optimize(
             best = None
 
             # Try moving last of A-source to start of B-source
-            if len(src_a) > 1:
+            if len(src_a) >= 1:
                 new_src_a = src_a[:-1]
                 new_src_b = [src_a[-1]] + src_b
                 s = score_fn(new_src_a, tgt_a) + score_fn(new_src_b, tgt_b)
@@ -604,7 +612,7 @@ def _boundary_optimize(
                     best = (new_src_a, tgt_a, new_src_b, tgt_b)
 
             # Try moving first of B-source to end of A-source
-            if len(src_b) > 1:
+            if len(src_b) >= 1:
                 new_src_a = src_a + [src_b[0]]
                 new_src_b = src_b[1:]
                 s = score_fn(new_src_a, tgt_a) + score_fn(new_src_b, tgt_b)
@@ -613,7 +621,7 @@ def _boundary_optimize(
                     best = (new_src_a, tgt_a, new_src_b, tgt_b)
 
             # Try moving last of A-target to start of B-target
-            if len(tgt_a) > 1:
+            if len(tgt_a) >= 1:
                 new_tgt_a = tgt_a[:-1]
                 new_tgt_b = [tgt_a[-1]] + tgt_b
                 s = score_fn(src_a, new_tgt_a) + score_fn(src_b, new_tgt_b)
@@ -622,7 +630,7 @@ def _boundary_optimize(
                     best = (src_a, new_tgt_a, src_b, new_tgt_b)
 
             # Try moving first of B-target to end of A-target
-            if len(tgt_b) > 1:
+            if len(tgt_b) >= 1:
                 new_tgt_a = tgt_a + [tgt_b[0]]
                 new_tgt_b = tgt_b[1:]
                 s = score_fn(src_a, new_tgt_a) + score_fn(src_b, new_tgt_b)
