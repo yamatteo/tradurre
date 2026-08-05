@@ -53,8 +53,10 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--target-lang", required=True, help="Target language code, e.g. 'it'")
     parser.add_argument("--title", default="", help="Project title to embed in the artifact")
     parser.add_argument("--out", required=True, type=Path, help="Path to write the aligned artifact JSON")
-    parser.add_argument("--no-embeddings", action="store_true", help="Skip the embedding-rescoring stage")
+    parser.add_argument("--no-bertalign", action="store_true", help="Skip the bertalign stage (falls back to anchor+embedding alignment)")
+    parser.add_argument("--no-embeddings", action="store_true", help="Skip the embedding-rescoring stage (only used when bertalign is skipped)")
     parser.add_argument("--no-llm-judge", action="store_true", help="Skip the LLM-judge stage")
+    parser.add_argument("--bertalign-model", default=None, help="Override bertalign's sentence-embedding model")
     parser.add_argument("--embedding-model", default=None, help="Override the sentence-embedding model")
     parser.add_argument("--llm-model", default=None, help="Override the LLM judge model")
     return parser.parse_args(argv)
@@ -90,8 +92,10 @@ def main(argv: list[str] | None = None) -> int:
             source_lang=args.source_lang,
             target_lang=args.target_lang,
             title=args.title,
+            use_bertalign=not args.no_bertalign,
             use_embeddings=not args.no_embeddings,
             use_llm_judge=not args.no_llm_judge,
+            bertalign_model=args.bertalign_model,
             embedding_model=args.embedding_model,
             llm_model=args.llm_model,
         )

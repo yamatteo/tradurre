@@ -2,10 +2,17 @@
 
 Chains, in increasing cost/quality order:
   1. baseline (free, local): doc_adapter + the existing anchor-based hierarchical
-     aligner (tradurre.services.aligner) -- always runs.
-  2. embedding rescoring (optional, needs 'align' extra): refines sentence
-     boundaries within low-confidence paragraphs using multilingual sentence
-     embeddings (tradurre.services.embed_align).
+     aligner (tradurre.services.aligner) -- always runs, for section splitting
+     and (only as a fallback -- see below) paragraph/sentence alignment.
+  2. sentence/paragraph alignment (optional, needs 'align' extra): one of --
+       a. bertalign (preferred when available): a two-pass DP aligner over
+          embedded sentences (tradurre.services.bertalign_align) that natively
+          produces 1-1/1-many/many-1/many-many groups for a whole section in
+          one pass -- see that module's docstring for why this replaces the
+          anchor+boundary-nudge approach rather than complementing it.
+       b. embedding rescoring, when bertalign isn't installed: refines the
+          anchor-based alignment within low-confidence paragraphs using
+          multilingual sentence embeddings (tradurre.services.embed_align).
   3. LLM judge (optional, needs 'align' extra): for paragraphs still
      low-confidence after step 2, asks an LLM for a validated index-mapping
      (tradurre.services.llm_judge) -- never lets it generate replacement text.
@@ -40,8 +47,10 @@ def build_aligned_artifact(
     source_lang: str,
     target_lang: str,
     title: str = "",
+    use_bertalign: bool = True,
     use_embeddings: bool = True,
     use_llm_judge: bool = True,
+    bertalign_model: str | None = None,
     embedding_model: str | None = None,
     llm_model: str | None = None,
 ):
@@ -58,9 +67,21 @@ def build_aligned_artifact(
     # opinion on OCR glyph substitutions during PDF loading, and again below
     # for LLM-assisted glyph gap-filling -- avoids paying to load a second
     # copy for either.
-    scorer = _maybe_load_embedding_scorer(
-        use_embeddings, embedding_model, warnings, stats, generator
+    #
+    # bertalign, when available, replaces the embedding scorer rather than
+    # supplementing it -- it does the same job (embedding-similarity scoring
+    # for low-confidence flagging and LLM-judge-output rescoring) on top of
+    # its own already-loaded LaBSE instance, so loading embed_align's
+    # EmbeddingScorer as well would just load the same model twice.
+    bertaligner = _maybe_load_bertalign(
+        use_bertalign, bertalign_model, warnings, stats, generator
     )
+    if bertaligner is not None:
+        scorer = bertaligner.scorer
+    else:
+        scorer = _maybe_load_embedding_scorer(
+            use_embeddings, embedding_model, warnings, stats, generator
+        )
     judge = _maybe_load_llm_judge(use_llm_judge, llm_model, warnings, stats, generator)
 
     logger.info("loading source=%r target=%r", source_filename, target_filename)
@@ -96,28 +117,36 @@ def build_aligned_artifact(
     logger.info("baseline: %d aligned sections", len(section_pairs))
 
     hierarchy: list[list[list[ArtifactSentence]]] = []
-    counts = {"anchor": 0, "fallback": 0, "embedding": 0, "llm": 0, "llm_rejected": 0}
+    counts = {"anchor": 0, "fallback": 0, "embedding": 0, "bertalign": 0, "llm": 0, "llm_rejected": 0}
     t0 = time.monotonic()
 
     for section_idx, (src_sec, tgt_sec) in enumerate(section_pairs):
-        para_pairs_raw = aligner.align_paragraphs(src_sec, tgt_sec)
+        if bertaligner is not None:
+            para_results = bertaligner.align_section(src_sec, tgt_sec)
+        else:
+            para_pairs_raw = aligner.align_paragraphs(src_sec, tgt_sec)
 
-        # Same boundary-nudging mechanism used for sentences within a
-        # paragraph (see _align_paragraph_sentences), one level up: lets
-        # sentences move across a *paragraph* boundary when the source and
-        # target editions don't break paragraphs at the same points (common
-        # -- publishers/translators re-paragraph freely). Falls back to the
-        # anchor-count heuristic when no embedding scorer is loaded.
-        para_score_fn = None
-        if scorer is not None:
-            all_sentences = [s for p in src_sec for s in p] + [s for p in tgt_sec for s in p]
-            scorer.warm_cache(all_sentences)
-            para_score_fn = scorer.score_fn()
-        para_pairs = aligner._boundary_optimize(list(para_pairs_raw), score_fn=para_score_fn)
+            # Boundary-nudging mechanism used for sentences within a
+            # paragraph (see _align_paragraph_sentences), one level up: lets
+            # sentences move across a *paragraph* boundary when the source
+            # and target editions don't break paragraphs at the same points
+            # (common -- publishers/translators re-paragraph freely). Falls
+            # back to the anchor-count heuristic when no embedding scorer is
+            # loaded.
+            para_score_fn = None
+            if scorer is not None:
+                all_sentences = [s for p in src_sec for s in p] + [s for p in tgt_sec for s in p]
+                scorer.warm_cache(all_sentences)
+                para_score_fn = scorer.score_fn()
+            para_pairs = aligner._boundary_optimize(list(para_pairs_raw), score_fn=para_score_fn)
+            para_results = [
+                (src_para, tgt_para, _align_paragraph_sentences(src_para, tgt_para, scorer))
+                for src_para, tgt_para in para_pairs
+            ]
+
         section_out: list[list[ArtifactSentence]] = []
 
-        for para_idx, (src_para, tgt_para) in enumerate(para_pairs):
-            sentence_pairs = _align_paragraph_sentences(src_para, tgt_para, scorer)
+        for para_idx, (src_para, tgt_para, sentence_pairs) in enumerate(para_results):
             sentence_pairs = _escalate_to_judge(
                 sentence_pairs, src_para, tgt_para, judge, scorer,
                 section_idx, para_idx, counts,
@@ -174,6 +203,29 @@ def _maybe_load_embedding_scorer(enabled, model_name, warnings, stats, generator
         # rather than abort the whole pipeline with no output artifact.
         logger.exception("embedding stage unavailable")
         warnings.append(f"embedding stage skipped: {e}")
+        return None
+
+
+def _maybe_load_bertalign(enabled, model_name, warnings, stats, generator):
+    if not enabled:
+        return None
+    try:
+        from tradurre.services.bertalign_align import BertalignSectionAligner
+        t0 = time.monotonic()
+        section_aligner = (
+            BertalignSectionAligner(model_name=model_name)
+            if model_name else BertalignSectionAligner()
+        )
+        stats["stage_seconds"]["bertalign_model_load"] = round(time.monotonic() - t0, 2)
+        generator["stages"].append("bertalign")
+        generator["bertalign_model"] = section_aligner.model_name
+        return section_aligner
+    except Exception as e:
+        # See comment in _maybe_load_embedding_scorer: catch broadly so a
+        # broken heavy-model load degrades this one stage (falling back to
+        # the anchor+embedding path) instead of aborting the whole run.
+        logger.exception("bertalign stage unavailable")
+        warnings.append(f"bertalign stage skipped: {e}")
         return None
 
 
