@@ -14,6 +14,12 @@ export default defineConfig({
       '@': fileURLToPath(new URL('./src', import.meta.url))
     },
   },
+  build: {
+    // Built straight into the Python package so the wheel can ship the SPA
+    // (see [tool.hatch.build] in pyproject.toml and tradurre/app.py).
+    outDir: '../tradurre/static',
+    emptyOutDir: true,
+  },
   server: {
     proxy: {
       '/api': {

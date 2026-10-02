@@ -13,7 +13,8 @@ algorithm details) — it's a useful reference but may drift from the code over 
 
 Backend (run from repo root, Python 3.12, managed with `uv`):
 ```sh
-uv run tradurre              # start the app (uvicorn, reload=True, http://127.0.0.1:8000)
+uv run tradurre --dev        # start the app with auto-reload (http://127.0.0.1:8000)
+uv run tradurre              # end-user mode: no reload, opens the browser
 uv run pytest                # run all backend tests
 uv run pytest tests/test_aligner.py            # single test file
 uv run pytest tests/test_pairs_api.py -k insert  # single test by name
@@ -22,13 +23,15 @@ uv run pytest tests/test_pairs_api.py -k insert  # single test by name
 Frontend (run from `frontend/`):
 ```sh
 npm run dev          # Vite dev server on :5173, proxies /api to :8000 (see vite.config.ts)
-npm run build         # type-check (vue-tsc) + production build to frontend/dist
+npm run build         # type-check (vue-tsc) + production build into ../tradurre/static
 npm run type-check    # vue-tsc --build only
 npm run test:e2e      # Playwright e2e tests (e2e/*.spec.ts); auto-starts `npm run dev`
 ```
 
-In production, `tradurre/app.py` serves the built SPA from `frontend/dist` directly off the FastAPI process —
-run `npm run build` before relying on the backend to serve frontend routes.
+In production, `tradurre/app.py` serves the built SPA from `tradurre/static/` (gitignored) directly off the
+FastAPI process — run `npm run build` before relying on the backend to serve frontend routes. `tradurre/static/`
+is included in the wheel via hatch `artifacts`; `.github/workflows/release.yml` builds and publishes the wheel
+(plus the Windows launcher `packaging/tradurre.bat`) to a GitHub Release when a `v*` tag is pushed.
 
 ## Architecture
 

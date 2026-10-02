@@ -28,6 +28,10 @@ align = ["sentence-transformers>=3.0", "transformers>=4.44", "torch>=2.3", "acce
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.hatch.build]
+# The built frontend is gitignored but must ship in the wheel.
+artifacts = ["tradurre/static/"]
+
 [project.scripts]
 tradurre = "tradurre.__main__:main"
 tradurre-align = "tradurre.services.pipeline_cli:main"

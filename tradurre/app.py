@@ -9,7 +9,8 @@ from fastapi.staticfiles import StaticFiles
 from tradurre.config import DB_PATH
 from tradurre.db import get_connection, init_db
 
-FRONTEND_DIR = Path(__file__).parent.parent / "frontend" / "dist"
+# Populated by `npm run build` in frontend/ (vite outDir), and shipped inside the wheel.
+FRONTEND_DIR = Path(__file__).parent / "static"
 
 
 @asynccontextmanager
@@ -45,5 +46,9 @@ if FRONTEND_DIR.is_dir():
 
     @app.get("/{full_path:path}")
     async def serve_spa(full_path: str):
-        # Serve index.html for all non-API routes (SPA client-side routing)
+        # Real files at the root (e.g. favicon.ico from frontend/public) are served
+        # as-is; anything else gets index.html for SPA client-side routing.
+        candidate = (FRONTEND_DIR / full_path).resolve()
+        if full_path and candidate.is_file() and candidate.is_relative_to(FRONTEND_DIR.resolve()):
+            return FileResponse(candidate)
         return FileResponse(FRONTEND_DIR / "index.html")
