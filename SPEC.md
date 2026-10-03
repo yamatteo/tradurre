@@ -125,8 +125,15 @@ The translator skims **the whole book**. The review view is optimized for steady
   Performance stays smooth on a 10,000-bead book.
 - Low-confidence beads and unmatched (1:0, 0:1) beads stand out visually; there are shortcuts to jump to the next
   one.
-- A **"reviewed up to here"** position per project; beads above it count as reviewed. Progress is visible (e.g.
-  "62% reviewed").
+- **Reviewed marks.** Each bead is reviewed or not, and the mark can be set or cleared on any single bead. Beads
+  produced by an aligner start unreviewed; a bead produced by a correction inherits the mark (a merge is reviewed
+  only if all merged beads were). Progress shows the share of beads reviewed, with a shortcut to the next unreviewed
+  bead.
+- **Skim review.** A pass the translator starts deliberately, typically once after import: starting from the first
+  unreviewed bead, they read the book and fix what's wrong as they go. A bead becomes reviewed when it leaves
+  through the top edge during ordinary downward scrolling after being fully on screen for about a second. Jumps,
+  scrollbar drags and scrolling up mark nothing. The pass ends when the translator stops it or at the end of the
+  book. One undo removes the marks made since the last correction.
 - Keyboard-first corrections on the current bead:
   - move the first/last segment of a side to the previous/next bead;
   - merge with the next bead; split a bead at a chosen segment;
@@ -159,10 +166,8 @@ The corpus is searchable across all projects, from a global search page and from
 
 ## 4. Non-functional requirements
 
-- **Python 3.12 and 3.14, simultaneously.** The app runs on Python 3.14 on the translator's machine; the same
-  code and dependencies must also run on Python 3.12, which is what Colab provides (§3.2). Both versions are
-  tested. If a dependency or language feature can't satisfy both, 3.12 wins: the app moves back to 3.12 rather
-  than giving up the Colab step.
+- **Python 3.14** everywhere, including Colab, where the notebook installs it with uv rather than using Colab's
+  system Python.
 - **Local-first.** The app runs on the translator's laptop with no network access needed (except for the
   optional Colab step). Data lives in a single SQLite file under `~/.tradurre/`; copying that file is a backup.
 - **Easy install and upgrade on Windows** through the self-installing launcher; upgrades never lose data.

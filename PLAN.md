@@ -25,8 +25,10 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
 - Alignment exists twice: a local anchor heuristic (`aligner.py`) and a heavy Colab pipeline (bertalign, LLM
   judge) whose many-to-many output is flattened to 1:1 on import.
 - UI: three-step import wizard, a TipTap editor per pair, FTS5 search over pairs (no context).
-- One shared `sqlite3` connection across FastAPI's threadpool; no undo/history. `tests/test_aligner.py` now reads
-  synthetic fixtures, but 9 of its tests hit a `RecursionError` in the live aligner (see Stage 0).
+- One shared `sqlite3` connection across FastAPI's threadpool, no explicit transactions; no undo/history.
+- `uv run pytest`: 70 passed, 1 skipped, also on a fresh clone (tests read only committed synthetic fixtures).
+- `uv.lock` is gitignored and untracked (removed in `2b47438`, reason unknown); "Repo hygiene" tracks it again
+  (user, 2026-10-03). The Windows launcher's `uv tool install` resolves from PyPI and never reads it.
 - No user data needs migrating: the new model can start from an empty database.
 - A real book pair is available **locally only**: `library/contrefeu.fr.pdf` / `contrefeu.it.pdf` (gitignored,
   copyrighted: never commit it or excerpts of it; the repo is public). See "Reference book" in Stage 2.
@@ -62,9 +64,11 @@ call it, so any import whose only shared names repeat crashes.
   change) in place; it is needed to run the module.
 
 ### Test fixtures
-Status: todo
+Status: done
 **Done when:** on a fresh clone, `uv run pytest` collects every test file and passes, with no file read
 from `library/`.
+Verified (/pauli, 2026-10-03): `git clone` into a scratch dir, `uv run pytest` → 70 passed, 1 skipped. The
+`.gitignore` step was not done; moved to "Repo hygiene".
 Report: 2026-10-03 — blocked: fixtures written and `test_aligner.py` now collects (60 passed, 1 skipped), but 9 aligner tests fail with RecursionError in `aligner.py` (`align` ↔ `_align_gap`), including fixture-free ones (`test_align_sentences`, `test_align_sections_equal_count`): when every anchor repeats, `align` builds no constraints and `_align_gap` re-calls `align` on the same lists. Pre-existing bug, hidden by the collection error; fixing it is outside this task.
 Resolution (/pauli, 2026-10-03): fixture files and the `LIBRARY` change were reviewed and are kept. After "Fix
 aligner recursion", what remains is the `.gitignore` step, then the full suite. If one of the 9 formerly
@@ -93,36 +97,78 @@ the whole module fails to collect (the other 26 tests pass; 1 is skipped). The r
   add `!tests/fixtures/**` after those lines and check with `git check-ignore -v tests/fixtures/x.pdf` (no
   output = not ignored).
 
+### Repo hygiene
+Status: todo
+**Done when:** `uv run pytest` passes with the same counts (70 passed, 1 skipped); `npm run type-check` passes in
+`frontend/`; `git check-ignore -v tests/fixtures/x.pdf tests/fixtures/x.json uv.lock` prints nothing; `uv lock --check`
+passes and `uv.lock` is committed (`git ls-files uv.lock` prints it); `grep -rn
+"import/preview\|ImportPreviewResponse\|importPreview" tradurre frontend/src` finds nothing; `uv tree
+--no-dev` (or `uv export --no-dev`) lists neither `pytest` nor `httpx`.
+
+- **Dev dependencies.** In `pyproject.toml` move `pytest` and `httpx` out of `[project] dependencies` into
+  `[dependency-groups] dev = [...]` (same version specifiers). `uv run pytest` installs the dev group by default;
+  check it. Nothing under `tradurre/` imports either (verified with grep), so the wheel loses nothing.
+- **Dead endpoint.** In `tradurre/api/import_.py` delete the "Legacy preview" block: the comment, the
+  `ImportPreviewResponse` model (defined locally at `:61`) and `import_preview` (`:66`). In
+  `frontend/src/api/client.ts` delete `export interface ImportPreviewResponse` (`:62`) and `importPreview`
+  (`:146`). No view calls it (the wizard uses `importSections`/`importParagraphs`/`importSentences`).
+- **Unreachable code.** In `import_artifact` delete the dead `return {"id": project_id, …}` dict after the
+  `return ImportArtifactResponse(...)` (`import_.py:~348`). Remove any import that becomes unused.
+- **Fixture ignores.** In `.gitignore` add `!tests/fixtures/**` after the `*.json` and `*.pdf` lines (it must come
+  after them to win). Check with the `git check-ignore` command above.
+- **Lockfile.** Remove the `uv.lock` line from `.gitignore`. After the `pyproject.toml` change run `uv lock` (it
+  moves `pytest`/`httpx` into the dev group; no other version should change: check `git diff --stat` is limited
+  to that, and report any upgrade it made) and commit `uv.lock` with the rest of the task.
+- Don't touch the `pdf`/`ocr`/`align` extras or any other endpoint.
+
 ### Database access
 Status: todo
-**Done when:** each request gets its own connection (or all access goes through one lock), multi-statement
-operations run inside an explicit transaction that rolls back on error, and a test shows that a failing
-operation leaves no partial change.
+**Done when:** no code reads `app.state.db`; every request uses its own connection; every write handler runs in
+one transaction that rolls back on error; the new test `test_failed_insert_leaves_positions_intact` passes and
+fails on the pre-task code; `uv run pytest` passes otherwise unchanged.
 
-### Dependency hygiene
-Status: todo
-**Done when:** `pytest` and `httpx` are in a dev dependency group, not runtime dependencies; dead code
-(`/import/preview` and its client call, the unreachable `return` in `import_artifact`) is removed; tests pass.
+Why: today one `check_same_thread=False` connection (`app.py:19-21`) is shared by sync handlers running in
+FastAPI's threadpool, and handlers commit only at the end (`pairs.py:90`, etc.). An exception between the
+negative-position shift and the `INSERT` in `create_pair` (`pairs.py:48-89`) leaves the shift pending on the
+shared connection, visible to every later request and committed by the next `db.commit()` of any request.
+
+- `tradurre/db.py`: add `get_db(request: Request)`, a generator dependency: opens
+  `get_connection(request.app.state.db_path)`, yields it, closes it in `finally`. `get_connection` stays as is
+  (it sets `foreign_keys=ON`, which is per connection, so every new connection gets it).
+- `tradurre/app.py` lifespan: open a connection, `init_db` it, close it; set `app.state.db_path = DB_PATH`
+  instead of `app.state.db`. (Reading `DB_PATH` at lifespan time keeps the test fixture's monkeypatch working.)
+- Every handler in `tradurre/api/*.py` that uses the DB takes `db: sqlite3.Connection = Depends(get_db)` instead
+  of `request: Request` + `request.app.state.db` (keep `request` only where it is used for something else).
+- Every handler that writes wraps all its reads-for-write and writes in one `with db:` block (sqlite3 commits on
+  success, rolls back on exception) and drops its explicit `db.commit()`. `HTTPException`s raised inside the
+  block roll back too, which is correct. Read-only handlers need no block.
+- Don't change SQL, response shapes, or `init_db`'s schema/migration code; keep the negative-position shift.
+- Test in `tests/test_pairs_api.py`: create pairs "a","b","c" at positions 0–2; monkeypatch
+  `tradurre.api.pairs.strip_html` to raise `RuntimeError`; POST a pair at `position: 1` **without**
+  `source_text` (so `strip_html` runs after the shift); expect a 500 (use a `TestClient(app,
+  raise_server_exceptions=False)` or `pytest.raises(RuntimeError)`); undo the monkeypatch; GET the pairs and
+  assert positions `[0, 1, 2]` with texts `a, b, c`. Before writing the fix, run the test against the old code
+  and confirm it fails; say so in the Report.
 
 ### Python 3.14
 Status: todo
-**Done when:** development and the Windows install use Python 3.14, and `uv run pytest` and
-`uv run --python 3.12 pytest` both pass with the same counts.
+**Done when:** `.python-version` says `3.14`; `pyproject.toml` has `requires-python = ">=3.14"`; `uv lock --check`
+passes and the only `uv.lock` changes are dropped pre-3.14 markers/wheels (no version bumps; report any);
+`uv run pytest` passes with the same counts as before; `grep -rn "3\.12" CLAUDE.md SPEC.md pyproject.toml
+packaging/` finds nothing.
 
-Decision (user, 2026-10-03, now in SPEC §4): 3.14 and 3.12 are both supported; on conflict, 3.12 wins.
-`requires-python` stays `>=3.12`, because the Colab step (Stage 4) installs the `align` extra on Colab's 3.12.
+Decision (user, 2026-10-03, SPEC §4): Python 3.14 only, Colab included. Colab gets 3.14 through uv (`uv venv` /
+`uv sync` honour `.python-version` and download a managed interpreter); every package of the `align` extra has
+`cp314` or pure/abi3 Linux wheels in `uv.lock` (checked: torch 2.14.1, numba, lingua-language-detector), and every
+runtime dependency has `cp314`/`abi3` `win_amd64` wheels (checked: pymupdf, pydantic-core, httptools, watchfiles,
+lxml, websockets, pyyaml).
 - Add `.python-version` containing `3.14` at the repo root.
-- `packaging/start-tradurre.bat`: add `--python 3.14` to the `uv.exe tool install --force` line, so the
-  translator's environment is deterministic instead of "whatever Python uv finds". Existing installs move to
-  3.14 on the next upgrade, because `--force` rebuilds the tool environment (uv downloads its managed 3.14).
-- `CLAUDE.md`: in "Commands", "Python 3.12" → "Python 3.14; the code must also run on 3.12 (Colab, SPEC §4)", and
-  add `uv run --python 3.12 pytest` to the command list as the check to run before calling a task done whenever
-  it adds or bumps a dependency or uses syntax/stdlib newer than 3.12.
-- Don't touch `pyproject.toml` or `uv.lock`. All runtime dependencies already ship `cp314`/`abi3`
-  `win_amd64` wheels in `uv.lock` (checked: pymupdf, pydantic-core, httptools, watchfiles, lxml, websockets,
-  pyyaml), so nothing builds from source on Windows.
-- If the 3.12 run fails for a reason that isn't a one-line fix, stop and report (SPEC: 3.12 wins, but how is a
-  decision).
+- `pyproject.toml`: `requires-python = ">=3.14"`; then `uv lock`, and commit `uv.lock` with the change (it is
+  tracked from "Repo hygiene" on).
+- `packaging/start-tradurre.bat`: add `--python 3.14` to the `uv.exe tool install --force` line (`:56`), so the
+  translator's environment doesn't depend on which Python uv happens to find. Existing installs move to 3.14 on
+  the next upgrade, because `--force` rebuilds the tool environment.
+- `CLAUDE.md`, "Commands": "Python 3.12" → "Python 3.14".
 - Report that the `.bat` change can't be exercised here; the developer checks it by hand on the next release.
 
 ---
@@ -140,8 +186,14 @@ Must include a schema-version mechanism (`PRAGMA user_version` plus an ordered l
 by `init_db()`), because SPEC §4 requires automatic migration on upgrade once v0.2 ships; the ad hoc
 `ALTER TABLE … try/except` pattern described in `CLAUDE.md` cannot express table rebuilds or data moves. (Needs
 user agreement, since `CLAUDE.md` says not to add a migration framework; update `CLAUDE.md` with it.)
-Open question for the user before breakdown: is "reviewed" a per-bead flag, or derived from the per-project
-"reviewed up to here" position (SPEC §2 vs §3.3)? It decides what §3.2 "reviewed beads are kept" protects.
+Decided (user, 2026-10-03): "reviewed" is a **per-bead flag** in storage, editable one bead at a time; no "reviewed
+up to here" position. Bulk marking comes from **skim review**, a pass the translator starts deliberately (typically
+once, after import), not a default mode: beads scrolled past during the pass are marked reviewed (Stage 3).
+Consequences for this stage: the flag is a column on the bead; marking many beads at once is one operation with one
+inverse (one undo reverses the marks made since the last correction in a skim pass; a single step for the whole pass
+would break the linear undo order once corrections are interleaved); beads made by a correction inherit the flag
+(merge: reviewed only if all merged beads were). SPEC §3.3 now says this ("Reviewed marks", "Skim
+review").
 
 ### Domain operations
 A service layer, independent of HTTP, implementing every SPEC §3.3 correction (segment split/join/edit, block
@@ -235,7 +287,7 @@ project.
 ## Stage 3 — Review view
 
 The main screen (SPEC §3.3): virtualized bead list, confidence and unmatched highlighting, next-problem
-navigation, "reviewed up to here", keyboard corrections, inline plain-text segment editing, excluded blocks
+navigation, skim-review pass and per-bead reviewed toggle, keyboard corrections, inline plain-text segment editing, excluded blocks
 revealable, undo/redo, re-align range. Plain text editing; TipTap is not used here.
 
 ---
@@ -245,6 +297,20 @@ revealable, undo/redo, re-align range. Plain text editing; TipTap is not used he
 Project bundle format (text layer) and alignment file format (beads over bundle segments), both versioned.
 Adapt `pipeline.py`/`pipeline_cli.py` and the bertalign/LLM-judge stages to consume a bundle and emit native
 many-to-many beads. Loading an alignment file replaces only unreviewed regions. A notebook for Colab.
+
+Input from the old Colab cell (`colab_cell_blueprint.py`, untracked, user's past workflow: clone → `uv sync
+--extra align --extra ocr --extra pdf` → upload two files → `tradurre-align` → download JSON + log). Keep its
+shape (one cell, upload, run the CLI, download), but:
+- **Version pinning.** It clones `main`, while the app is an installed release. The bundle records the app version
+  and format version; the notebook checks out that tag (fallback: refuse with a clear message on an unknown
+  format version), so app and aligner always agree on formats.
+- **GPU check on the right torch.** It checks `torch.cuda` with Colab's preinstalled torch (`:15`, `:47`), not the
+  one `uv sync` installs from `uv.lock` into `.venv`. Check with `uv run python -c "import torch; …"` after the
+  sync and stop if the locked torch can't see the GPU (a CUDA/driver mismatch would otherwise run silently on CPU).
+- **Only `--extra align`.** A bundle is already extracted text; `pdf`/`ocr` are needed only for the raw-files
+  convenience route.
+- **No token.** The repo is public; drop `GITHUB_TOKEN` (today it is also written into `.git/config` on the VM).
+- **Warnings travel in the alignment file**, not only in the `.log`, so they reach the project (SPEC §3.1.5).
 
 ---
 
