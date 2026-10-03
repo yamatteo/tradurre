@@ -59,6 +59,47 @@ END;
 """
 
 
+_TEXT_SCHEMA = """
+CREATE TABLE documents (
+    id         INTEGER PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    side       TEXT NOT NULL CHECK (side IN ('source', 'target')),
+    filename   TEXT NOT NULL,
+    format     TEXT NOT NULL CHECK (format IN ('pdf', 'docx', 'txt')),
+    UNIQUE (project_id, side)
+);
+CREATE TABLE blocks (
+    id          INTEGER PRIMARY KEY,
+    document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    ord         INTEGER NOT NULL,
+    kind        TEXT NOT NULL CHECK (kind IN ('paragraph', 'heading', 'footnote', 'running_head',
+                    'page_number', 'front_matter', 'back_matter', 'other')),
+    excluded    INTEGER NOT NULL DEFAULT 0 CHECK (excluded IN (0, 1)),
+    page        INTEGER,            -- logical page in the edition, for diagnostics; NULL if unknown
+    UNIQUE (document_id, ord)
+);
+CREATE TABLE beads (
+    id         INTEGER PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    ord        INTEGER NOT NULL,
+    confidence REAL NOT NULL CHECK (confidence >= 0 AND confidence <= 1),
+    method     TEXT NOT NULL CHECK (method IN ('anchor', 'length', 'embedding', 'llm', 'manual')),
+    reviewed   INTEGER NOT NULL DEFAULT 0 CHECK (reviewed IN (0, 1)),
+    UNIQUE (project_id, ord)
+);
+CREATE TABLE segments (
+    id            INTEGER PRIMARY KEY,
+    block_id      INTEGER NOT NULL REFERENCES blocks(id) ON DELETE CASCADE,
+    ord           INTEGER NOT NULL,
+    text          TEXT NOT NULL,
+    original_text TEXT NOT NULL,    -- as extracted; text edits never change it
+    bead_id       INTEGER REFERENCES beads(id),   -- NULL iff the block is excluded
+    UNIQUE (block_id, ord)
+);
+CREATE INDEX idx_segments_bead ON segments(bead_id);
+"""
+
+
 def get_db_path() -> Path:
     path = Path.home() / ".tradurre"
     path.mkdir(parents=True, exist_ok=True)
@@ -113,8 +154,13 @@ def _m001_pairs(conn: sqlite3.Connection) -> None:
             conn.execute(f"ALTER TABLE pairs ADD COLUMN {col} INTEGER NOT NULL DEFAULT 0")
 
 
+def _m002_text_alignment(conn: sqlite3.Connection) -> None:
+    """Text layer (documents, blocks, segments) and alignment layer (beads); SPEC §2."""
+    _run_script(conn, _TEXT_SCHEMA)
+
+
 # Applied in order; migration n sets PRAGMA user_version = n. Never edit an applied one.
-MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [_m001_pairs]
+MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [_m001_pairs, _m002_text_alignment]
 
 
 def init_db(conn: sqlite3.Connection) -> None:

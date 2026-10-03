@@ -308,9 +308,12 @@ All in `tradurre/db.py`:
   pending ones, each in its own transaction, and records the count in `PRAGMA user_version`. Use `_run_script`,
   not `executescript`, inside a migration."
 Report: 2026-10-03 — `_run_script`, `_m001_pairs` (columns via `PRAGMA table_info`), `MIGRATIONS`, `init_db` with one `BEGIN IMMEDIATE` transaction per migration and a newer-version refusal; `CLAUDE.md` `db.py` bullet rewritten; `tests/test_migrations.py` 6 passed (the 5 listed plus `_run_script` rejecting an incomplete statement); pytest 77 passed, 1 skipped. A copy of the local `~/.tradurre/tradurre.db` (empty, user_version 0) migrated to 1 cleanly.
+Verified (/pauli, 2026-10-03, `e1f4f65`): code matches the task; pytest 77 passed, 1 skipped. Checked by hand that
+`_run_script` keeps `--` comments containing `;` inside one statement, and that two statements on one line fail
+loudly (`ProgrammingError`) rather than silently: so SQL given to it must end each statement at a line end.
 
 #### Text and alignment tables
-Status: todo
+Status: done
 **Done when:** migration 2 creates the tables below; the new `tests/test_schema.py` passes; `uv run pytest`
 otherwise unchanged; the old `pairs` API and its tests untouched.
 
@@ -340,7 +343,7 @@ CREATE TABLE beads (
     id         INTEGER PRIMARY KEY,
     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     ord        INTEGER NOT NULL,
-    confidence REAL CHECK (confidence IS NULL OR (confidence >= 0 AND confidence <= 1)),
+    confidence REAL NOT NULL CHECK (confidence >= 0 AND confidence <= 1),
     method     TEXT NOT NULL CHECK (method IN ('anchor', 'length', 'embedding', 'llm', 'manual')),
     reviewed   INTEGER NOT NULL DEFAULT 0 CHECK (reviewed IN (0, 1)),
     UNIQUE (project_id, ord)
@@ -350,13 +353,15 @@ CREATE TABLE segments (
     block_id      INTEGER NOT NULL REFERENCES blocks(id) ON DELETE CASCADE,
     ord           INTEGER NOT NULL,
     text          TEXT NOT NULL,
-    original_text TEXT NOT NULL,    -- as extracted; never changed after import
+    original_text TEXT NOT NULL,    -- as extracted; text edits never change it
     bead_id       INTEGER REFERENCES beads(id),   -- NULL iff the block is excluded
     UNIQUE (block_id, ord)
 );
 CREATE INDEX idx_segments_bead ON segments(bead_id);
 ```
 
+- SPEC §2 gives every bead a confidence, so it is `NOT NULL`; beads made by hand get `1.0` (rule owned by
+  "Domain operations"). What a segment split/join does to `original_text` is also decided there, not here.
 - `segments.bead_id` deliberately has no `ON DELETE` action: deleting a bead that still has segments must fail,
   so no domain bug can silently orphan text. (Deleting a project still works: the cascade removes beads and
   segments in the same statement, and SQLite checks the constraint at statement end.)
@@ -366,14 +371,20 @@ CREATE INDEX idx_segments_bead ON segments(bead_id);
   - deleting a bead that a segment points to raises `sqlite3.IntegrityError`;
   - deleting the project removes every row in `documents`, `blocks`, `segments`, `beads`;
   - a duplicate `(block_id, ord)` and a duplicate `(project_id, ord)` raise `IntegrityError`;
-  - `kind = 'chapter'`, `method = 'magic'`, `confidence = 1.5`, `side = 'left'` each raise `IntegrityError`.
+  - `kind = 'chapter'`, `method = 'magic'`, `confidence = 1.5`, `confidence = NULL`, `side = 'left'` each raise
+    `IntegrityError`;
+  - `user_version` is 2 after `init_db`.
 - Don't touch `pairs`, the FTS table or the API.
+Report: 2026-10-03 — `_TEXT_SCHEMA` (SQL copied verbatim from this task) and `_m002_text_alignment` appended to `MIGRATIONS`; `tests/test_schema.py` 10 passed (user_version 2, bead delete blocked, project cascade, two duplicate `ord`s, five CHECK cases); pytest 87 passed, 1 skipped; `pairs`/FTS/API untouched.
 
 ### Domain operations
 A service layer, independent of HTTP, implementing every SPEC §3.3 correction (segment split/join/edit, block
 exclude/include, bead boundary moves, merge/split, review mark) as transactional operations that record an
 inverse in the operation log (its table and payload format are designed here and added as a migration);
-also the `ord` spacing policy and gap renumbering. Undo/redo on top of it. Also one bulk primitive, "replace the beads covering a
+also the `ord` spacing policy and gap renumbering. Undo/redo on top of it. Rules to decide here (left open by
+"Schema"): confidence of beads made by hand (`1.0`) and by corrections; what a segment split/join does to
+`original_text`, including a split at a cursor inside text that was already edited; whether two segments in
+different blocks, or in different beads, can be joined (SPEC §2: the result stays inside the bead(s) that held them). Also one bulk primitive, "replace the beads covering a
 segment range with a new bead list", which import (Stage 2), re-align range (Stage 3) and loading a Colab
 alignment file (Stage 4) all build on.
 
