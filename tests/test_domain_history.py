@@ -1,22 +1,13 @@
 """Tests for the Recorder and undo/redo (tradurre.domain.history)."""
 
 import json
-from contextlib import contextmanager
 
 import pytest
 
 from tradurre.db import get_connection, init_db
-from tradurre.domain.history import Recorder, record, redo, undo
+from tradurre.domain.history import Recorder, record, redo, transaction, undo
 from tradurre.domain.invariants import check_project
 from tradurre.domain.layer import NewBead, NewBlock, append_beads, create_document
-
-
-@contextmanager
-def tx(conn):
-    with conn:
-        conn.execute("BEGIN IMMEDIATE")
-        conn.execute("PRAGMA defer_foreign_keys = ON")
-        yield
 
 
 def snapshot(conn):
@@ -36,7 +27,7 @@ def db(tmp_path):
     path = tmp_path / "test.db"
     conn = get_connection(path)
     init_db(conn)
-    with tx(conn):
+    with transaction(conn):
         conn.execute(
             "INSERT INTO projects (id, title, source_lang, target_lang, created_at, updated_at) "
             "VALUES ('p1', 'Book', 'fr', 'it', 'now', 'now')"
@@ -59,7 +50,7 @@ def db(tmp_path):
 
 def _edit_and_new_bead(conn, ids, kind="edit"):
     """Update s1's text, insert a bead between b1 and b2, move s2 into it."""
-    with tx(conn):
+    with transaction(conn):
         rec = Recorder(conn)
         rec.update("segments", ids["s1"], text="Un!")
         new = rec.insert("beads", {"project_id": "p1", "ord": 512, "confidence": 1.0, "method": "manual"})
@@ -75,12 +66,12 @@ def test_undo_redo_round_trip(db):
     after = snapshot(conn)
     assert valid(conn)
 
-    with tx(conn):
+    with transaction(conn):
         undo(conn, "p1")
     assert snapshot(conn) == before
     assert valid(conn)
 
-    with tx(conn):
+    with transaction(conn):
         redo(conn, "p1")
     assert snapshot(conn) == after
     assert conn.execute("SELECT bead_id FROM segments WHERE id = ?", (ids["s2"],)).fetchone()[0] == new
@@ -90,7 +81,7 @@ def test_undo_redo_round_trip(db):
 def test_undo_merge_restores_deleted_bead(db):
     conn, ids, _ = db
     before = snapshot(conn)
-    with tx(conn):
+    with transaction(conn):
         rec = Recorder(conn)
         for seg in ("s3", "s4", "t3", "t4"):
             rec.update("segments", ids[seg], bead_id=ids["b1"])
@@ -99,13 +90,13 @@ def test_undo_merge_restores_deleted_bead(db):
     after = snapshot(conn)
     assert valid(conn)
 
-    with tx(conn):
+    with transaction(conn):
         undo(conn, "p1")
     assert snapshot(conn) == before
     assert conn.execute("SELECT id FROM beads WHERE id = ?", (ids["b2"],)).fetchone() is not None
     assert valid(conn)
 
-    with tx(conn):
+    with transaction(conn):
         redo(conn, "p1")
     assert snapshot(conn) == after
     assert valid(conn)
@@ -116,7 +107,7 @@ def test_swap_ords_respects_unique(db):
     b1, b2 = ids["b1"], ids["b2"]
     ord1, ord2 = (conn.execute("SELECT ord FROM beads WHERE id = ?", (b,)).fetchone()[0] for b in (b1, b2))
     before = snapshot(conn)
-    with tx(conn):
+    with transaction(conn):
         rec = Recorder(conn)
         rec.update("beads", b1, ord=-1)
         rec.update("beads", b2, ord=ord1)
@@ -130,11 +121,11 @@ def test_swap_ords_respects_unique(db):
     after = snapshot(conn)
     assert valid(conn)
 
-    with tx(conn):
+    with transaction(conn):
         undo(conn, "p1")
     assert snapshot(conn) == before
     assert valid(conn)
-    with tx(conn):
+    with transaction(conn):
         redo(conn, "p1")
     assert snapshot(conn) == after
     assert valid(conn)
@@ -143,20 +134,20 @@ def test_swap_ords_respects_unique(db):
 def test_new_operation_drops_redo(db):
     conn, ids, _ = db
     _edit_and_new_bead(conn, ids)
-    with tx(conn):
+    with transaction(conn):
         undo(conn, "p1")
-    with tx(conn):
+    with transaction(conn):
         rec = Recorder(conn)
         rec.update("segments", ids["s3"], text="Trois!")
         record(conn, "p1", "edit", rec)
-    with tx(conn):
+    with transaction(conn):
         assert redo(conn, "p1") is None
     assert conn.execute("SELECT COUNT(*) FROM operations").fetchone()[0] == 1
     assert valid(conn)
 
 
 def _mark(conn, bead_id, kind="skim", coalesce=True):
-    with tx(conn):
+    with transaction(conn):
         rec = Recorder(conn)
         rec.update("beads", bead_id, reviewed=1)
         return record(conn, "p1", kind, rec, coalesce=coalesce)
@@ -171,7 +162,7 @@ def test_coalesce_same_kind(db):
     op1 = _mark(conn, ids["b1"])
     op2 = _mark(conn, ids["b2"])
     assert op1 == op2
-    with tx(conn):
+    with transaction(conn):
         undo(conn, "p1")
     assert (_reviewed(conn, ids["b1"]), _reviewed(conn, ids["b2"])) == (0, 0)
     assert valid(conn)
@@ -180,13 +171,13 @@ def test_coalesce_same_kind(db):
 def test_coalesce_not_after_undo(db):
     conn, ids, _ = db
     _mark(conn, ids["b1"])
-    with tx(conn):
+    with transaction(conn):
         undo(conn, "p1")
     _mark(conn, ids["b2"])
     # The undone operation was dropped; the new one holds only b2's mark.
     (changes,) = conn.execute("SELECT changes FROM operations").fetchone()
     assert [c[1] for c in json.loads(changes)] == [ids["b2"]]
-    with tx(conn):
+    with transaction(conn):
         undo(conn, "p1")
     assert (_reviewed(conn, ids["b1"]), _reviewed(conn, ids["b2"])) == (0, 0)
 
@@ -196,7 +187,7 @@ def test_coalesce_not_across_kinds(db):
     op1 = _mark(conn, ids["b1"], kind="skim")
     op2 = _mark(conn, ids["b2"], kind="review")
     assert op1 != op2
-    with tx(conn):
+    with transaction(conn):
         undo(conn, "p1")
     assert (_reviewed(conn, ids["b1"]), _reviewed(conn, ids["b2"])) == (1, 0)
 
@@ -209,13 +200,13 @@ def test_survives_reopen(db):
     conn.close()
 
     conn = get_connection(path)
-    with tx(conn):
+    with transaction(conn):
         assert undo(conn, "p1") is not None
     assert snapshot(conn) == before
     conn.close()
 
     conn = get_connection(path)
-    with tx(conn):
+    with transaction(conn):
         assert redo(conn, "p1") is not None
     assert snapshot(conn) == after
     assert valid(conn)

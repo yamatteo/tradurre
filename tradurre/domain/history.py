@@ -7,12 +7,14 @@ Rows keep their ids across undo/redo, and history is linear: recording a new ope
 project's undone ones.
 
 None of these functions commit. The caller owns the transaction and must start it with
-`BEGIN IMMEDIATE` followed by `PRAGMA defer_foreign_keys = ON`, because undo/redo may briefly break a
-foreign key (e.g. re-inserting a bead after re-pointing segments at it) and only the end state is valid.
+`BEGIN IMMEDIATE` followed by `PRAGMA defer_foreign_keys = ON` (`transaction(conn)` does both),
+because undo/redo may briefly break a foreign key (e.g. re-inserting a bead after re-pointing segments at it) and only the end state is valid.
 """
 
 import json
 import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any
 
@@ -23,6 +25,15 @@ _INSERT_DELETE_TABLES = {"segments", "beads"}
 
 Row = dict[str, Any]
 Change = list  # [table, id, before: Row | None, after: Row | None]
+
+
+@contextmanager
+def transaction(conn: sqlite3.Connection) -> Iterator[None]:
+    """One write transaction for domain operations: commits on success, rolls back on error."""
+    with conn:
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute("PRAGMA defer_foreign_keys = ON")
+        yield
 
 
 def _check_table(table: str, insert_delete: bool = False) -> None:

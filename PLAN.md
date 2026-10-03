@@ -400,7 +400,7 @@ Design (/pauli, 2026-10-03), binding for every task below:
   target state is one that existed and ords are never negative outside step (1).
 - **Ordering**: `ord` values are non-negative integers, spaced by `GAP = 1024` when created in bulk. A single
   insert between siblings `a` and `b` takes `(a + b) // 2`; at the end `last + GAP`; at the start `first // 2`. If
-  the result equals a neighbour (no integer room), the siblings are first renumbered `0, GAP, 2·GAP, …` through the
+  the result equals a neighbour (no integer room), the siblings are first renumbered `GAP, 2·GAP, …` through the
   Recorder (so the renumbering is undone with the operation), then the midpoint is taken again.
 - **Rules for corrections** (SPEC §2, §3.3):
   - a bead whose segment membership changes through a correction becomes `method = 'manual'`,
@@ -429,6 +429,12 @@ Design (/pauli, 2026-10-03), binding for every task below:
   - **replace beads** (bulk): replaces a contiguous run of beads (or, for a project with no beads yet, nothing)
     with new beads given as source/target segment-id lists with confidence and method; new beads start
     `reviewed = 0`. Refused unless the new beads cover exactly the segments the old ones covered, in order.
+- **Every write to a project's documents/blocks/segments/beads after it is built goes through a Recorder** (undo
+  assumes the database is exactly as the last operation left it). The layer builder is for building only.
+- **Operations** are functions `op(conn, project_id, …)` in `tradurre/domain/`, one module per area; each validates
+  its arguments, writes through one `Recorder`, calls `record` once, and returns the operation id (or what the
+  task says). A refused operation raises `DomainError` (defined in `tradurre/domain/__init__.py`) before writing
+  anything. Operations don't open transactions: callers use `history.transaction(conn)`.
 - **Invariants** (checked in tests after every operation, and by Stage 2's debug endpoint): (I1) a segment has a
   bead iff its block is not excluded; (I2) a bead and the segments pointing at it belong to the same project;
   (I3) every bead has at least one segment; (I4) on each side, the beads' `ord`s, read along non-excluded segments
@@ -522,16 +528,78 @@ Status: done
   - `check_project` returns `[]` after every step.
 - Don't touch `tradurre/api/`.
 Report: 2026-10-03 — migration 3 (`operations`), `tradurre/domain/history.py` (`Recorder`, `record` with coalescing, `undo`/`redo` via net-per-row four-step apply); `test_schema.py` version assertion now `len(MIGRATIONS)`; `tests/test_domain_history.py` 9 passed (the listed cases plus Recorder table restrictions); pytest 103 passed, 1 skipped. Deviation: the ord-swap test also swaps the two beads' segments, else the swapped state itself breaks I4 and "`check_project` after every step" can't hold. Checked ad hoc: undoing a merge without `defer_foreign_keys` raises `IntegrityError`, so the docstring's requirement is real.
+Verified (/pauli, 2026-10-03, `8ea5e97`): matches the task; pytest 103 passed, 1 skipped. Both deviations accepted
+(the swap test as written in the plan could not have passed `check_project`). Operation-id reuse is harmless: nothing
+refers to an operation by id across an undo; revisit only if something must.
 
 #### Ordering helpers
-Not ready: `ord_between`/renumber in `tradurre/domain/ordering.py`, through the Recorder, per the design above.
+Status: done
+**Done when:** `tests/test_domain_ordering.py` passes (cases below); `uv run pytest` otherwise unchanged.
 
-#### Segment and block operations
-Not ready: edit text, split (with the offset mapping), join, exclude, include, per the rules above.
+- `tradurre/domain/__init__.py`: `class DomainError(Exception)` ("operation refused"; message for the translator).
+- `tradurre/domain/history.py`: `transaction(conn)`, a `contextlib.contextmanager`: `with conn:` →
+  `BEGIN IMMEDIATE` → `PRAGMA defer_foreign_keys = ON` → `yield`. Replace the local `tx` helper in
+  `tests/test_domain_history.py` with it.
+- `tradurre/domain/ordering.py`:
+  - `_PARENT = {"beads": "project_id", "segments": "block_id"}` (the only tables that get new rows).
+  - `ord_after(rec: Recorder, table: str, parent_id, after_id: int | None) -> int`: an `ord` for a new row placed
+    right after the sibling `after_id` (`None` = before every sibling). With `prev` = `after_id`'s `ord` (or none)
+    and `next` = the smallest sibling `ord` greater than `prev` (or than −1 when there's no `prev`): no siblings →
+    `0`; no `next` → `prev + GAP`; no `prev` → `next // 2`; otherwise `(prev + next) // 2`. If the result equals
+    `prev` or `next` (no room), call `renumber` and compute again.
+  - `renumber(rec, table, parent_id)`: siblings in `ord` order get `GAP, 2·GAP, 3·GAP, …` (`(i + 1) * GAP`, so
+    there is always room before the first) through `rec.update`, in two passes (first `-(i + 1)`, then
+    `(i + 1) * GAP`) so no step collides with `UNIQUE`.
+  - `GAP` imported from `layer.py`. Raise `ValueError` for a table not in `_PARENT` or an `after_id` that isn't a
+    sibling (programming errors, not `DomainError`).
+- `tests/test_domain_ordering.py`, on the beads of a project built with the layer builder (ords `0, 1024, 2048`),
+  each call inside a recorded operation:
+  - after the first → `512`; after the last → `3072`; in an empty project → `0`;
+  - `None` (before the first, whose `ord` is `0`): `0 // 2 == 0` collides, so siblings are renumbered to
+    `1024, 2048, 3072` and the result is `512`;
+  - siblings at ords `0, 1` (set directly): after the first → renumbered to `1024, 2048`, result `1536`;
+  - the operation that renumbered is undone exactly (snapshot equal) and redone;
+  - `ValueError` for `table="blocks"` and for an `after_id` from another project.
+
+Report: 2026-10-03 — `DomainError`, `history.transaction`, `domain/ordering.py` (`ord_after`, `renumber`); history tests use `transaction`; 6 new tests, 109 passed, 1 skipped.
 
 #### Bead operations
-Not ready: move the first/last segment of a side to the previous/next bead, merge with next, split at a segment
-per side, set/clear review mark (single and skim-coalesced).
+Status: todo
+**Done when:** `tests/test_domain_beads.py` passes (cases below); `uv run pytest` otherwise unchanged.
+
+`tradurre/domain/beads.py`. Helpers: a bead's segment ids on one side in document order (block `ord`, segment
+`ord`); a bead's previous/next bead in the project (adjacent `ord`); `_corrected(rec, bead_id)` = set
+`method = 'manual'`, `confidence = 1.0`. Every function checks that the bead belongs to `project_id`
+(`DomainError` otherwise). `side` is `"source"` or `"target"`.
+- `move_first_to_previous(conn, project_id, bead_id, side) -> int`: the bead's first segment on `side` moves to
+  the previous bead. Refused if there is no previous bead or the bead has no segment on `side`. Both beads
+  `_corrected`; if the bead is left with no segments it is deleted. Kind `"move_segment"`.
+- `move_last_to_next(conn, project_id, bead_id, side) -> int`: mirror image.
+- `merge_with_next(conn, project_id, bead_id) -> int`: the next bead's segments move to this bead, the next bead
+  is deleted, this one is `_corrected` and `reviewed = 1` only if both were. Refused if there is no next bead.
+  Kind `"merge"`. Factor the body into `_merge(rec, bead_id, next_id)` so the segment join (next task) can reuse
+  it.
+- `split_bead(conn, project_id, bead_id, source_at: int | None, target_at: int | None) -> int`: the segments of
+  each side from `*_at` onward (in document order) move to a new bead placed right after this one
+  (`ordering.ord_after`); returns the **new bead's id**. `*_at` must be a segment of this bead on that side.
+  Refused if both are `None`, or if either resulting bead would have no segments. Both beads `_corrected`; the new
+  bead copies `reviewed`. Kind `"split"`.
+- `set_reviewed(conn, project_id, bead_ids: list[int], reviewed: bool, skim: bool = False) -> int | None`: sets
+  the flag on each bead whose value differs. `skim=True` requires `reviewed=True` and records kind
+  `"skim_review"` with `coalesce=True`; otherwise kind `"review"`, no coalescing. Returns `None` if nothing
+  changed.
+- `tests/test_domain_beads.py`: a fixture project (layer builder) with beads A `(s1 | t1)`, B `(s2, s3 | t2)`,
+  C `(s4 | t3, t4)`, all `reviewed = 0` except A. For each operation: the resulting bead contents (segment ids per
+  side, `method`, `confidence`, `reviewed`), `check_project == []`, undo restores the snapshot, redo restores the
+  post-state. Plus: moving A's first source segment back (no previous) raises `DomainError` and changes nothing;
+  `move_last_to_next(A, "source")` then `move_last_to_next(A, "target")` empties A, which is deleted (B becomes
+  `(s1, s2, s3 | t1, t2)`; one undo brings A back with its id, a second undo restores the start); merge A+B gives `reviewed = 0`, merge after marking B reviewed gives `1`; split B at `s3` with
+  `target_at=None` → new bead `(s3 | )`; `split_bead` with both `None` raises; two skim marks then one undo clears
+  both, while a `review` mark in between stops the coalescing; a bead of another project raises `DomainError`.
+
+#### Segment and block operations
+Not ready: edit text, split (with the offset mapping), join (merging beads via `beads._merge` when the segments
+are in different beads), exclude, include, per the rules above.
 
 #### Replace beads
 Not ready: the bulk primitive, per the rule above.
