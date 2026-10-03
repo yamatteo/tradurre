@@ -5,16 +5,30 @@ aligns them paragraph by paragraph and sentence by sentence. You then edit both 
 can search everything you've translated before (translation memory).
 
 Everything runs on your own computer. Your projects are stored in a single file,
-`~/.tradurre/tradurre.db` (on Windows: `C:\Users\<you>\.tradurre\tradurre.db`). To back up your work, copy
-that file.
+`~/.tradurre/tradurre.db` (on Windows: `%USERPROFILE%\.tradurre\tradurre.db`, which you can paste into the
+Explorer address bar). To back up your work, copy that file.
 
 ## Install
+
+### Windows: one-click launcher
+
+Open the [latest release](https://github.com/yamatteo/tradurre/releases/latest), download
+`start-tradurre.bat`, put it on your desktop, and double-click it. The first run installs uv and Tradurre (with
+PDF support), then starts it; after that it just starts Tradurre.
+
+Windows may warn "Windows protected your PC" because the file was downloaded: click *More info → Run anyway*.
+
+To upgrade, download the newer release's `start-tradurre.bat` and double-click it: it notices that a different
+version is installed and installs its own (close Tradurre first). Your projects are kept.
+
+### From a terminal
 
 Tradurre is installed with [uv](https://docs.astral.sh/uv/), which also takes care of Python.
 
 **1. Install uv.**
 
-- Windows (PowerShell): `winget install astral-sh.uv`
+- Windows (PowerShell): `powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"`
+  (or, if you have winget: `winget install astral-sh.uv`)
 - macOS / Linux: `curl -LsSf https://astral.sh/uv/install.sh | sh`
 
 Then close and reopen the terminal.
@@ -47,37 +61,39 @@ tradurre
 Your browser opens on http://127.0.0.1:8000. Keep the terminal window open while you work; closing it (or
 pressing Ctrl+C) stops Tradurre.
 
-On **Windows** you can skip the terminal: download `tradurre.bat` from the release, put it on your desktop,
-and double-click it.
+On **Windows** you can skip the terminal: double-click `start-tradurre.bat` (see [Install](#install)).
 
 Options: `tradurre --no-browser` doesn't open a browser, `tradurre --port 8080` uses another port.
 
 Notes:
 
 - Text (`.txt`) files must be saved as UTF-8. In Notepad: *Save as → Encoding: UTF-8*.
-- OCR glyph recovery (`ocr` extra) also needs the Tesseract program. On Windows:
-  `winget install UB-Mannheim.TesseractOCR`, then add its folder to `PATH`.
+- OCR glyph recovery (`ocr` extra) also needs the Tesseract program. On Windows, install it with
+  `winget install UB-Mannheim.TesseractOCR` or the [UB Mannheim installer](https://github.com/UB-Mannheim/tesseract/wiki),
+  then add `C:\Program Files\Tesseract-OCR` to your `PATH` (Start → "Edit environment variables for your
+  account" → `Path` → *Edit* → *New*) and open a new terminal.
 - The heavy alignment pipeline (`align` extra, `tradurre-align`) needs a GPU. Run it on e.g. Google Colab and
   import the resulting JSON in your local Tradurre.
 
 ## Development
 
-You need [uv](https://docs.astral.sh/uv/) and [Node.js](https://nodejs.org/) 22+.
+You need [Git](https://git-scm.com/), [uv](https://docs.astral.sh/uv/) and [Node.js](https://nodejs.org/) 22+.
+The commands below work in any shell, including Windows PowerShell 5.1 (which doesn't support `&&`).
 
 ```sh
 git clone https://github.com/yamatteo/tradurre.git
 cd tradurre
 uv sync
-cd frontend && npm install && cd ..
+npm --prefix frontend install
 
-uv run tradurre --dev            # backend with auto-reload on :8000
-cd frontend && npm run dev       # frontend with hot reload on :5173 (proxies /api to :8000)
+uv run tradurre --dev                  # backend with auto-reload on :8000
+npm --prefix frontend run dev          # frontend with hot reload on :5173 (proxies /api to :8000)
 
-uv run pytest                    # backend tests
-cd frontend && npm run test:e2e  # end-to-end tests
+uv run pytest                          # backend tests
+npm --prefix frontend run test:e2e     # end-to-end tests
 ```
 
-`npm run build` builds the frontend into `tradurre/static/`. `uv run tradurre` (without `--dev`) serves it from
+`npm --prefix frontend run build` builds the frontend into `tradurre/static/`. `uv run tradurre` (without `--dev`) serves it from
 there, which is also how it ships in the wheel.
 
 ### Releasing
@@ -85,8 +101,10 @@ there, which is also how it ships in the wheel.
 Bump `version` in `pyproject.toml`, commit, then tag and push:
 
 ```sh
-git tag v0.2.0 && git push origin v0.2.0
+git tag v0.2.0
+git push origin v0.2.0
 ```
 
 The `Release` workflow builds the frontend, builds the wheel with the frontend inside it, and publishes a
-GitHub Release with the wheel, `tradurre.bat`, and the install command.
+GitHub Release with the wheel, `start-tradurre.bat` (the launcher with that release's wheel URL filled in), and
+the install command.

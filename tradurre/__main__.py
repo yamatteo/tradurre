@@ -3,6 +3,7 @@ import socket
 import threading
 import time
 import webbrowser
+from importlib.metadata import version
 
 import uvicorn
 
@@ -29,6 +30,7 @@ def main():
     parser = argparse.ArgumentParser(prog="tradurre", description="Literary translation workbench")
     parser.add_argument("--dev", action="store_true", help="Development mode: auto-reload on code changes, don't open a browser")
     parser.add_argument("--no-browser", action="store_true", help="Don't open the browser on startup")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {version('tradurre')}")
     parser.add_argument("--port", type=int, default=PORT, help=f"Port to listen on (default {PORT})")
     args = parser.parse_args()
 
