@@ -704,7 +704,7 @@ operation (`Recorder.update` + `record`, kind `"test"`), so the check can tell; 
 Report: 2026-10-03 — `blocks.py` no longer calls `_corrected` (import dropped, docstring states the rule); block tests updated to the fixture values and the `0.4` include case; 7 passed; pytest 143 passed, 1 skipped.
 
 #### Replace beads
-Status: todo
+Status: done
 **Done when:** `tests/test_domain_replace.py` passes (cases below); `uv run pytest` otherwise unchanged.
 
 The bulk primitive behind re-align range (Stage 3) and loading a Colab alignment (Stage 4). It replaces a run of
@@ -753,6 +753,7 @@ beads; which runs may be replaced (e.g. only unreviewed ones) is the caller's ru
     first, `3` → siblings renumbered to `1024, 5120`, result `2048, 3072, 4096`; ords `0, 1`, `None`, `2` →
     siblings `3072, 4096`, result `1024, 2048`; after the last, `2` → `last + 1024, last + 2048`; `count = 0` →
     `ValueError`.
+Report: 2026-10-03 — `ordering.ords_after` (prev/next lookup factored into `_neighbours`, shared with `ord_after`, behaviour unchanged); `tradurre/domain/replace.py` (`_replace`, `replace_beads`); `tests/test_domain_replace.py` 10 passed (listed cases plus `ValueError` for bad confidence/method); pytest 153 passed, 1 skipped.
 
 #### Randomized round trip
 Status: todo
