@@ -99,8 +99,9 @@ the PDF tasks in Stage 3:
   copyrighted text. That needs PyMuPDF in the dev environment (first PDF task).
 
 #### Text and docx extraction
-Status: todo
+Status: done
 **Done when:** `tests/test_extract.py` passes; `uv run pytest` otherwise unchanged.
+Report: 2026-10-03 — `tradurre/services/extract.py` (`ExtractedBlock`, `Extraction`, `EXCLUDED_KINDS`, `extract` for txt/docx; pdf → `NotImplementedError`); `tests/test_extract.py` 8 passed; pytest 214 passed (206 before).
 
 - `tradurre/services/extract.py` with `ExtractedBlock`, `Extraction`, `EXCLUDED_KINDS`, `extract` as in the
   design; `.pdf` raises `NotImplementedError` for now (next tasks), other extensions `ValueError`.
