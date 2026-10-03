@@ -160,7 +160,7 @@ function debouncedResplit(group: PairGroup, targetHtml: string) {
       const pairIds = group.pairs.map(p => p.id)
       const result = await api.resplit(pairIds, targetHtml)
       // Replace the group's pairs in the main pairs array
-      const firstIdx = pairs.value.findIndex(p => p.id === group.pairs[0].id)
+      const firstIdx = pairs.value.findIndex(p => p.id === group.pairs[0]!.id)
       if (firstIdx >= 0) {
         pairs.value.splice(firstIdx, group.pairs.length, ...result.pairs)
       }
@@ -225,13 +225,13 @@ function exportFile(format: string, mode: string) {
 
 // --- Section/paragraph boundaries for sentence view ---
 function isSectionBoundary(i: number): boolean {
-  return i > 0 && pairs.value[i].section !== pairs.value[i - 1].section
+  return i > 0 && pairs.value[i]!.section !== pairs.value[i - 1]!.section
 }
 
 function isParagraphBoundary(i: number): boolean {
   return i > 0
     && !isSectionBoundary(i)
-    && pairs.value[i].paragraph !== pairs.value[i - 1].paragraph
+    && pairs.value[i]!.paragraph !== pairs.value[i - 1]!.paragraph
 }
 
 onMounted(() => {
@@ -448,7 +448,7 @@ onBeforeUnmount(() => {
           <div class="flex-1 overflow-y-auto">
             <template v-for="(group, gi) in (viewMode === 'paragraph' ? paragraphGroups : sectionGroups)" :key="group.key">
               <!-- Section divider in paragraph view -->
-              <div v-if="viewMode === 'paragraph' && gi > 0 && group.section !== (viewMode === 'paragraph' ? paragraphGroups : sectionGroups)[gi - 1].section"
+              <div v-if="viewMode === 'paragraph' && gi > 0 && group.section !== (viewMode === 'paragraph' ? paragraphGroups : sectionGroups)[gi - 1]!.section"
                 class="bg-blue-50 border-y border-blue-200 py-1 px-4 text-xs text-blue-600 font-medium">
                 Section {{ group.section + 1 }}
               </div>

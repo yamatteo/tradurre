@@ -165,12 +165,12 @@ async function confirm() {
 }
 
 // --- Alignment adjustment controls ---
-function insertBlank(side: 'source' | 'target', arr: { value: ImportUnit[] }, index: number) {
-  arr.value.splice(index, 0, { html: '<p></p>', text: '', index: 0, section: 0, paragraph: 0 })
+function insertBlank(side: 'source' | 'target', arr: ImportUnit[], index: number) {
+  arr.splice(index, 0, { html: '<p></p>', text: '', index: 0, section: 0, paragraph: 0 })
 }
 
-function removeRow(side: 'source' | 'target', arr: { value: ImportUnit[] }, index: number) {
-  arr.value.splice(index, 1)
+function removeRow(side: 'source' | 'target', arr: ImportUnit[], index: number) {
+  arr.splice(index, 1)
 }
 
 // Current step's data

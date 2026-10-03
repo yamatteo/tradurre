@@ -27,8 +27,9 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
 - UI: three-step import wizard, a TipTap editor per pair, FTS5 search over pairs (no context).
 - One shared `sqlite3` connection across FastAPI's threadpool, no explicit transactions; no undo/history.
 - `uv run pytest`: 70 passed, 1 skipped, also on a fresh clone (tests read only committed synthetic fixtures).
-- `uv.lock` is gitignored and untracked (removed in `2b47438`, reason unknown); "Repo hygiene" tracks it again
-  (user, 2026-10-03). The Windows launcher's `uv tool install` resolves from PyPI and never reads it.
+- `uv.lock` is tracked; `pytest`/`httpx` are in the `dev` group. The Windows launcher's `uv tool install` resolves
+  from PyPI and never reads the lock.
+- `npm run type-check` fails with 10 errors (fixed by "Frontend type-check"); releases build with `build-only`.
 - No user data needs migrating: the new model can start from an empty database.
 - A real book pair is available **locally only**: `library/contrefeu.fr.pdf` / `contrefeu.it.pdf` (gitignored,
   copyrighted: never commit it or excerpts of it; the repo is public). See "Reference book" in Stage 2.
@@ -121,6 +122,37 @@ passes and `uv.lock` is committed (`git ls-files uv.lock` prints it); `grep -rn
   to that, and report any upgrade it made) and commit `uv.lock` with the rest of the task.
 - Don't touch the `pdf`/`ocr`/`align` extras or any other endpoint.
 Report: 2026-10-03 — pytest/httpx moved to dev group, `uv.lock` tracked (relock moved only those two, no version changes); removed `/import/preview` (+ now-dead `_extract` helper and its imports), the unreachable return, `importPreview` in client.ts; `!tests/fixtures/**` added; pytest 70 passed, 1 skipped. `npm run type-check`: 10 errors in `ImportWizard.vue`/`ProjectEditor.vue`, identical before this task (checked on `ad0c8e1`), none from it.
+Verified (/pauli, 2026-10-03): every check holds except the type-check, which moves to "Frontend type-check"
+below. (`git check-ignore -v` prints the `!tests/fixtures/**` negation match; without `-v` it prints nothing, exit
+1: not ignored, as intended.) `httpx` still appears in `uv tree --no-dev`, but only under `huggingface-hub` from the
+`align` extra: fine. Side effect: with `_extract` gone, nothing imports `tradurre/services/importer.py` any more;
+it is dead code, removed in Stage 6.
+
+### Frontend type-check
+Status: done
+**Done when:** `npm run type-check` (in `frontend/`) exits 0; `npm run build` succeeds; `release.yml` runs `npm run
+build` with the TODO comment gone; `uv run pytest` unchanged (70 passed, 1 skipped); the wizard's "+"/"x" buttons
+work (see below).
+
+Why now: two of the 10 errors are a **runtime bug**, not type noise. In `ImportWizard.vue` `currentSourceArr` /
+`currentTargetArr` (`:177-186`) are computeds returning a ref; the template unwraps the computed, so
+`currentSourceArr.value` there is already the array, and `insertBlank`/`removeRow` (`:168-174`) then call
+`arr.value.splice` on an array: `TypeError`, so "Insert blank above" and "Remove" in the alignment step never
+worked. A green type-check also lets every later frontend task say "type-check passes" instead of diffing an error
+list.
+
+- `ImportWizard.vue`: change `insertBlank` and `removeRow` to take `arr: ImportUnit[]` and splice `arr` directly
+  (the array reached through the ref is reactive, so the splice re-renders). Leave the template calls (`:321-333`)
+  as they are; they then type-check. Don't restructure the computeds.
+- `ProjectEditor.vue` (`:163`, `:228`, `:234`, `:451`): "possibly undefined" from indexed access where the index is
+  in range by construction (`i > 0`, `gi > 0`, a group always has a first pair). Add non-null assertions (`!`) at
+  those accesses; no other change. Don't touch `tsconfig*.json`.
+- `.github/workflows/release.yml:28`: `npm run build-only  # TODO…` → `npm run build`.
+- Check the bug fix by hand: `uv run tradurre --dev` + `npm run dev`, import two small `.txt` files, and in the
+  sentence step press "+" and "x" once each; the row count shown above the table changes by +1 and −1 and the
+  browser console shows no error. Say in the Report that you did (or, if you could not run a browser, say so; the
+  type-check alone then stands as the evidence). No e2e test: the wizard is deleted in Stage 6.
+Report: 2026-10-03 — `insertBlank`/`removeRow` take `ImportUnit[]`, `!` at the 4 `ProjectEditor.vue` sites (6 errors), `release.yml` runs `npm run build`; type-check 0 errors (was 10), `npm run build` ok, pytest 70 passed, 1 skipped. Browser check not done: no browser installed (Playwright's Chromium missing, no system Chrome); type-check is the evidence.
 
 ### Database access
 Status: todo
@@ -324,5 +356,5 @@ per-edition .txt/.docx, project bundle as backup (SPEC §3.5).
 
 ## Stage 6 — Retire the old model
 
-Remove the `pairs` table and its API, the old import wizard, `resplit`, the TipTap per-pair editor and the
-old artifact format; update `CLAUDE.md`, `README.md` and the e2e tests. Release v0.2.0.
+Remove the `pairs` table and its API, the old import wizard, `resplit`, the TipTap per-pair editor, the
+old artifact format and `services/importer.py` (unused since "Repo hygiene"); update `CLAUDE.md`, `README.md` and the e2e tests. Release v0.2.0.
