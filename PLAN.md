@@ -27,7 +27,7 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
 - UI: three-step import wizard, a TipTap editor per pair, FTS5 search over pairs (no context).
 - One connection per request; every write handler is one `BEGIN IMMEDIATE` transaction. No undo/history.
 - Python 3.14 only (`.python-version`, `requires-python`, launcher). Stage 0 is complete.
-- `uv run pytest`: 125 passed, 1 skipped, also on a fresh clone (tests read only committed synthetic fixtures).
+- `uv run pytest`: 136 passed, 1 skipped, also on a fresh clone (tests read only committed synthetic fixtures).
 - `uv.lock` is tracked; `pytest`/`httpx` are in the `dev` group. The Windows launcher's `uv tool install` resolves
   from PyPI and never reads the lock.
 - `npm run type-check` passes; releases build with `npm run build`. Playwright's Chromium is not installed on the
@@ -646,9 +646,14 @@ and document; `DomainError` otherwise). Segments of excluded blocks may be edite
     (X wasn't); X and B gone; one undo restores everything with the old ids.
   - `join_with_next(s3)` (last of its block) → `DomainError`; a segment of another project → `DomainError`.
 Report: 2026-10-03 — `tradurre/domain/segments.py` (`edit_text`, `_map_offset`, `split_segment`, `join_with_next` merging the bead run via `beads._next`/`_merge`); `tests/test_domain_segments.py` 11 passed (listed cases, plus editing an excluded segment and refusals for another project's segment on every op); pytest 136 passed, 1 skipped.
+Verified (/pauli, 2026-10-03, `0edd8b1`): matches the task; pytest 136 passed, 1 skipped. The join loop relies on I4
+(`b`'s bead follows `a`'s), which every operation preserves. Minor, accepted: joining onto an empty `original_text`
+part (text the translator added) yields an original with a leading space; harmless, revisit only if the review
+view shows it. Braun's note on `"Bon-" + "jour"` joining as `"Bon- jour"`: correct per the rule; the translator
+fixes it with an edit, and real hyphenation is repaired at extraction (Stage 2).
 
 #### Block operations
-Status: todo
+Status: done
 **Done when:** `tests/test_domain_blocks.py` passes (cases below); `uv run pytest` otherwise unchanged.
 
 `tradurre/domain/blocks.py`. Every function checks that the block belongs to `project_id` (through its document;
@@ -672,6 +677,7 @@ Status: todo
     0, so this renumbers); the project stays valid.
   - excluding an excluded block / including an included one → `DomainError`; a block of another project →
     `DomainError`.
+Report: 2026-10-03 — `tradurre/domain/blocks.py` (`exclude_block`, `include_block`); `tests/test_domain_blocks.py` 7 passed; pytest 143 passed, 1 skipped. Deviation: with this fixture C is `(s4 | t4)`, so excluding S3 leaves C as `( | t4)` (tested so); the emptied-bead case is tested by excluding target block T1, which deletes X, and undo restores it with its id.
 
 #### Replace beads
 Status: todo
@@ -725,8 +731,32 @@ beads; which runs may be replaced (e.g. only unreviewed ones) is the caller's ru
     `ValueError`.
 
 #### Randomized round trip
-Not ready: a seeded random sequence of all the operations above on a fixture project; invariants after every step;
-undoing everything restores the initial snapshot, redoing everything the final one.
+Status: todo
+**Done when:** `tests/test_domain_roundtrip.py` passes for 20 seeds in under 10 s total; `uv run pytest` otherwise
+unchanged. A failure found here is fixed in the operation at fault only if the fix is a few lines and clearly
+within the design above; otherwise stop and report it (with the seed and step) as `blocked`.
+
+A property test of the whole step: every operation keeps the invariants, and the history round-trips exactly
+whatever the mix. Test code only; no new production code.
+- `tests/test_domain_roundtrip.py`, `@pytest.mark.parametrize("seed", range(20))`, each with its own
+  `random.Random(seed)` and a fresh project built with the layer builder: source blocks P1 (5 segments), F
+  (footnote, 1 segment, `excluded=True`), P2 (4 segments); target blocks Q1 (4 segments), Q2 (5 segments); nine 1:1
+  beads over the non-excluded segments in order. Segment texts are three or four short words (`"w1 w2 w3"`), so
+  random split offsets often succeed.
+- 60 steps. Each step picks, uniformly, one of: `edit_text`, `split_segment`, `join_with_next`,
+  `move_first_to_previous`, `move_last_to_next`, `merge_with_next`, `split_bead`, `set_reviewed` (random flag;
+  `skim=True` half the time when setting), `exclude_block`, `include_block`, `replace_beads`, `undo`, `redo`, with
+  random arguments drawn from the current database (any segment / bead / block of the project, any side, any
+  offset in `1 .. len(text) - 1`, `split_bead` points drawn from the bead's own segments or `None`). For
+  `replace_beads`: a random run of 1–3 consecutive beads; per side, cut the run's coverage (`beads._segments` of
+  each bead, concatenated) at random points into `k = randint(1, 3)` parts, pair the parts index by index, drop
+  pairs empty on both sides; `method = "length"`, `confidence = rng.random()`.
+- Every step runs in its own `history.transaction`. A `DomainError` is a legal outcome: the snapshot and the
+  number of operation rows must then be unchanged. After every step, `check_project(conn, "p1") == []`.
+- At the end: redo until `redo` returns `None` (state R); undo until `undo` returns `None` → snapshot equals the
+  initial one; redo all → snapshot equals R. Assert also that at least 20 of the 60 steps changed something (so a
+  test where everything is refused can't pass silently).
+- On failure, the assertion message names the seed, the step number and the operation with its arguments.
 
 ### Search index
 FTS5 over beads (concatenated source / target text of each bead), kept in sync by the domain operations and by
