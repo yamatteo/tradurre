@@ -436,16 +436,22 @@ def _align_gap(s_gap: list[str], t_gap: list[str]) -> list[tuple[str, str]]:
     still in scope. So re-run anchor-finding scoped to just this gap before
     giving up and falling back to positional padding, which only produces
     a sane result when both sides are close in length. Recursion always
-    terminates: each anchor found strictly splits the gap into smaller
-    sub-gaps (a unit list can't contain itself), and the length-<=1 and
-    no-anchors-found cases are direct base cases.
+    terminates: `align` only turns anchors occurring in exactly one unit per
+    side into constraints, so only those are passed on. With at least one,
+    the first survives `align`'s monotonic filter, and the sub-gaps it leaves
+    exclude the anchored units, so each recursion works on strictly fewer
+    units. With none (no anchors, or only repeated ones), padding is the base
+    case, as are empty and 1:1 gaps.
     """
     if not s_gap or not t_gap:
         return _pad_align(s_gap, t_gap)
     if len(s_gap) == 1 and len(t_gap) == 1:
         return [(s_gap[0], t_gap[0])]
 
-    sub_anchors = find_anchors(s_gap, t_gap)
+    sub_anchors = [
+        a for a in find_anchors(s_gap, t_gap)
+        if _count_in_units(a, s_gap) == 1 and _count_in_units(a, t_gap) == 1
+    ]
     if sub_anchors:
         return align(s_gap, t_gap, sub_anchors)
     return _pad_align(s_gap, t_gap)

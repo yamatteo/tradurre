@@ -1,4 +1,4 @@
-"""Tests for the smart alignment pipeline using library/easy.source.txt and library/easy.target.txt."""
+"""Tests for the smart alignment pipeline using the synthetic fixtures tests/fixtures/easy.source.txt and easy.target.txt."""
 
 from pathlib import Path
 
@@ -21,7 +21,7 @@ from tradurre.services.aligner import (
     _detect_sections,
 )
 
-LIBRARY = Path(__file__).resolve().parent.parent / "library"
+LIBRARY = Path(__file__).parent / "fixtures"
 EASY_SOURCE = (LIBRARY / "easy.source.txt").read_text(encoding="utf-8")
 EASY_TARGET = (LIBRARY / "easy.target.txt").read_text(encoding="utf-8")
 
@@ -175,8 +175,6 @@ class TestFindAnchors:
         anchors = find_anchors(source_units, target_units)
 
         # These proper nouns appear identically in both source and target
-        # Note: "Marie-Ange" may be excluded because source has some "MarieAnge"
-        # (missing hyphen from PDF extraction), causing count mismatch
         expected = {"Guillaume", "Pontorgueil", "Sainte-Guénulphe", "Sibylle Stoltz"}
         anchor_set = set(anchors)
 
@@ -239,6 +237,13 @@ class TestAlign:
         result = align(source, target, [])
         assert len(result) == 3
         assert result[2][1] == ""  # target padded
+
+    def test_repeated_anchors_terminate(self):
+        """An anchor repeated on both sides gives no constraint; must pad, not recurse forever."""
+        source = ["Hello Marie.", "Bye Marie."]
+        target = ["Ciao Marie.", "Addio Marie."]
+        result = align(source, target, ["Marie"])
+        assert result == [("Hello Marie.", "Ciao Marie."), ("Bye Marie.", "Addio Marie.")]
 
 
 # ---------------------------------------------------------------------------
