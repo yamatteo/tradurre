@@ -27,7 +27,7 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
 - UI: three-step import wizard, a TipTap editor per pair, FTS5 search over pairs (no context).
 - One connection per request; every write handler is one `BEGIN IMMEDIATE` transaction. No undo/history.
 - Python 3.14 only (`.python-version`, `requires-python`, launcher). Stage 0 is complete.
-- `uv run pytest`: 143 passed, 1 skipped, also on a fresh clone (tests read only committed synthetic fixtures).
+- `uv run pytest`: 153 passed, 1 skipped, also on a fresh clone (tests read only committed synthetic fixtures).
 - `uv.lock` is tracked; `pytest`/`httpx` are in the `dev` group. The Windows launcher's `uv tool install` resolves
   from PyPI and never reads the lock.
 - `npm run type-check` passes; releases build with `npm run build`. Playwright's Chromium is not installed on the
@@ -702,6 +702,7 @@ include-into-bead case, after `merge_with_next(B)` set the merged bead's `confid
 operation (`Recorder.update` + `record`, kind `"test"`), so the check can tell; after `include_block` it is still
 `manual`/`0.4`.
 Report: 2026-10-03 — `blocks.py` no longer calls `_corrected` (import dropped, docstring states the rule); block tests updated to the fixture values and the `0.4` include case; 7 passed; pytest 143 passed, 1 skipped.
+Verified (/pauli, 2026-10-03, `a73cc65`): matches the task; pytest 143 passed, 1 skipped.
 
 #### Replace beads
 Status: done
@@ -754,9 +755,12 @@ beads; which runs may be replaced (e.g. only unreviewed ones) is the caller's ru
     siblings `3072, 4096`, result `1024, 2048`; after the last, `2` → `last + 1024, last + 2048`; `count = 0` →
     `ValueError`.
 Report: 2026-10-03 — `ordering.ords_after` (prev/next lookup factored into `_neighbours`, shared with `ord_after`, behaviour unchanged); `tradurre/domain/replace.py` (`_replace`, `replace_beads`); `tests/test_domain_replace.py` 10 passed (listed cases plus `ValueError` for bad confidence/method); pytest 153 passed, 1 skipped.
+Verified (/pauli, 2026-10-03, `4cdda47`): matches the task; pytest 153 passed, 1 skipped. The `_neighbours`
+refactor is inside the module and keeps `ord_after`'s tests green; accepted. Coverage is checked before any write,
+so a refused replace leaves no trace (tested).
 
 #### Randomized round trip
-Status: todo
+Status: done
 **Done when:** `tests/test_domain_roundtrip.py` passes for 20 seeds in under 10 s total; `uv run pytest` otherwise
 unchanged. A failure found here is fixed in the operation at fault only if the fix is a few lines and clearly
 within the design above; otherwise stop and report it (with the seed and step) as `blocked`.
@@ -782,12 +786,95 @@ whatever the mix. Test code only; no new production code.
   initial one; redo all → snapshot equals R. Assert also that at least 20 of the 60 steps changed something (so a
   test where everything is refused can't pass silently).
 - On failure, the assertion message names the seed, the step number and the operation with its arguments.
+Report: 2026-10-03 — `tests/test_domain_roundtrip.py` (20 seeds × 60 steps, all operations plus undo/redo); passed first time, no production change; 1.1 s for all seeds; per seed at least 33 steps changed something; across seeds every operation succeeded 12–94 times (redo least, since new operations drop the redo stack) and was refused many times too; pytest 173 passed, 1 skipped.
 
 ### Search index
-FTS5 over beads (concatenated source / target text of each bead), kept in sync by the domain operations and by
-undo/redo (reindex the beads a change list touches, directly or through their segments); excluded blocks not
-indexed. Tokenizer `unicode61 remove_diacritics 2` so matching ignores case and accents (SPEC §3.4);
-test with "desoeuvrement"/"désœuvrement" (note œ is not a diacritic: decide folding explicitly).
+FTS5 over beads (SPEC §3.4): one row per bead, its source and target text. The old `translation_memory` table and
+`api/search.py` stay as they are until Stage 6; the search API and UI over beads come in Stage 5.
+
+Design (/pauli, 2026-10-03):
+- **Kept in sync by SQL triggers** on `segments` and `beads`, not by the domain operations: triggers also fire
+  for undo/redo's raw writes, the layer builder and cascading deletes, so nothing can forget to reindex.
+  Excluded segments have no bead (I1), so they are never indexed, with no extra rule.
+- **Bead text** on a side = its segments' `text` in document order joined with `" "` (empty string if none).
+- **Folding**: tokenizer `unicode61 remove_diacritics 2` (case and accents: `é`→`e`, `à`→`a`; verified in SQLite
+  3.46). Ligatures are not diacritics, so the indexed text is also folded `œ`→`oe`, `Œ`→`OE`, `æ`→`ae`, `Æ`→`AE`
+  (in the trigger SQL, with nested `replace`), and queries get the same folding in Python. "desoeuvrement" then
+  finds "désœuvrement". Apostrophes (`'` and `’`) are token separators, so `"l homme"` finds "l’homme" (verified).
+- Search results show the **real** text: highlights are computed on the folded index text and mapped back onto
+  the unfolded bead text in Python (folding only ever turns one character into two, so the map is a simple walk).
+
+#### Bead index
+Status: todo
+**Done when:** `tests/test_bead_index.py` passes; the randomized round trip also checks the index after every
+step; `uv run pytest` otherwise unchanged.
+
+- Migration 4 in `tradurre/db.py` (`_m004_bead_index`, appended to `MIGRATIONS`), via `_run_script`:
+  - `CREATE VIRTUAL TABLE bead_index USING fts5(source, target, project_id UNINDEXED, tokenize = 'unicode61
+    remove_diacritics 2')`; `rowid` = bead id.
+  - "Reindex bead `X`" = `DELETE FROM bead_index WHERE rowid = X;` then `INSERT INTO bead_index (rowid, source,
+    target, project_id) SELECT b.id, <fold>(<side text 'source'>), <fold>(<side text 'target'>), b.project_id FROM
+    beads b WHERE b.id = X;` with `<side text>` = `coalesce((SELECT group_concat(s.text, ' ' ORDER BY bl.ord,
+    s.ord) FROM segments s JOIN blocks bl ON bl.id = s.block_id JOIN documents d ON d.id = bl.document_id WHERE
+    s.bead_id = b.id AND d.side = '…'), '')` and `<fold>(x)` = the four nested `replace`s above. A bead that
+    doesn't exist yet (undo/redo re-points segments before re-inserting the bead) simply gets no row; its insert
+    trigger indexes it.
+  - Triggers: `segments_bi_ai` AFTER INSERT ON segments → reindex `new.bead_id`; `segments_bi_ad` AFTER DELETE →
+    reindex `old.bead_id`; `segments_bi_au` AFTER UPDATE OF text, ord, bead_id → reindex `old.bead_id`, then
+    `new.bead_id`; `beads_bi_ai` AFTER INSERT ON beads → reindex `new.id`; `beads_bi_ad` AFTER DELETE ON beads →
+    `DELETE FROM bead_index WHERE rowid = old.id`. (Reindexing `NULL` is a no-op.) Bead `UPDATE`s (ord,
+    confidence, method, reviewed) change no text and need no trigger.
+  - Finally reindex every existing bead (`INSERT … SELECT` over all beads), so the migration is correct on a
+    database that already has beads.
+- `tradurre/domain/search.py` (new): `fold(text) -> str`, the same four replacements in Python (the module the
+  next task extends). Nothing else yet.
+- `tests/test_bead_index.py`: a helper `expected_index(conn)` that rebuilds, in Python from `segments`/`blocks`/
+  `documents`/`beads`, the set `{(bead_id, fold(source), fold(target), project_id)}`, and compares it with
+  `SELECT rowid, source, target, project_id FROM bead_index`. Cases (layer builder fixture with an excluded block
+  and a `"désœuvrement"` segment):
+  - after building: index == expected; the excluded segment's text is not in the index;
+  - after each of `edit_text`, `split_segment`, `join_with_next` (cross-bead), `merge_with_next`, `split_bead`,
+    `exclude_block`, `include_block`, `replace_beads`, and after undoing and redoing each: index == expected;
+  - `MATCH 'desoeuvrement'`, `MATCH 'DESŒUVREMENT'` folded through `fold` → `'DESOEUVREMENT'`, and a
+    `MATCH 'source : (…)'` / `'target : (…)'` column filter each find the right bead;
+  - deleting the project leaves no row for its beads in `bead_index` (cascade fires the triggers);
+  - `test_migrations.py`'s legacy case still passes; and a database at `user_version = 3` holding beads, then
+    `init_db`, has them indexed;
+  - building a 10,000-bead project (one segment per side per bead) with the layer builder takes under 5 s
+    including triggers; put the measured time in the Report.
+- `tests/test_domain_roundtrip.py`: after every step, also assert the index equals `expected_index` (import the
+  helper from `tests/test_bead_index.py`, or move it to a small `tests/helpers.py`; either is fine).
+- `test_schema.py`/`test_migrations.py` use `len(MIGRATIONS)`, so they need no change.
+
+#### Search function
+Status: todo
+**Done when:** `tests/test_search.py` passes; `uv run pytest` otherwise unchanged.
+
+`tradurre/domain/search.py`, read-only (no Recorder, no transaction):
+- `fts_query(text: str, side: str = "both") -> str | None`: turns what the translator typed into an FTS5
+  expression. Double-quoted stretches are phrases; every other whitespace-separated word is one term; each phrase
+  or term is folded, has internal `"` doubled, and is wrapped in `"…"`; they are joined with spaces (implicit AND);
+  wrapped as `source : (…)`, `target : (…)` or `{source target} : (…)` for `side` `"source"`, `"target"`,
+  `"both"`. Returns `None` if nothing is left (empty or only quotes/whitespace). `ValueError` for another `side`.
+  Typed FTS operators (`OR`, `NEAR`, `*`, `-`) are therefore literal words, never syntax: a query can't raise an
+  FTS syntax error.
+- `_unfold_highlight(display: str, highlighted: str) -> str`: `highlighted` is `fold(display)` with marker
+  characters `\x02` (start) / `\x03` (end) inserted (FTS5 `highlight()` output); return `display` with the
+  markers at the corresponding positions (a marker never splits the two characters a ligature folded into:
+  a start marker goes before the original character, an end marker after it).
+- `search_beads(conn, text, side="both", project_id=None, limit=50) -> list[dict]`: `[]` if `fts_query` gives
+  `None`. Matches `bead_index` (restricted to `project_id` if given), ordered by `bm25`, at most `limit` results,
+  each `{"bead_id", "project_id", "title", "position", "source", "target", "reviewed"}`: `title` from `projects`,
+  `position` = 1-based index of the bead in its project by `ord`, `source`/`target` = the real bead text (same
+  joining as the index) with highlight markers via `_unfold_highlight`, `reviewed` a bool.
+- `tests/test_search.py` (fixture: two projects built with the layer builder, one with `"Le désœuvrement de
+  l’homme."`, one with `"Été"`, some beads reviewed, an excluded block containing a word found nowhere else):
+  `fts_query` cases (plain words, a phrase, a stray quote, `OR`/`*`/`-` as literals, each `side`, empty →
+  `None`, bad side → `ValueError`); `_unfold_highlight` with a ligature inside, at the start and at the end of a
+  highlighted word; `search_beads`: "desoeuvrement" finds the bead and highlights `désœuvrement` in the real text;
+  `"l homme"` matches; "ete" finds "Été"; `side="target"` doesn't find a source-only word; `project_id` restricts;
+  `position` and `reviewed` correct; the excluded word finds nothing; an FTS-hostile query (`"a" OR NEAR(`) returns
+  without error.
 
 ---
 
