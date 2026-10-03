@@ -567,7 +567,7 @@ the `0, 1` siblings are set up by a recorded operation (so the project stays val
 project's `(id, ord)` list rather than a full snapshot (renumbering touches nothing else).
 
 #### Bead operations
-Status: todo
+Status: done
 **Done when:** `tests/test_domain_beads.py` passes (cases below); `uv run pytest` otherwise unchanged.
 
 `tradurre/domain/beads.py`. Helpers (module-level, reused by the segment operations): `_segments(conn, bead_id,
@@ -600,6 +600,7 @@ side) -> list[int]`, a bead's segment ids on one side in document order (block `
   `(s1, s2, s3 | t1, t2)`; one undo brings A back with its id, a second undo restores the start); merge A+B gives `reviewed = 0`, merge after marking B reviewed gives `1`; split B at `s3` with
   `target_at=None` → new bead `(s3 | )`; `split_bead` with both `None` raises; two skim marks then one undo clears
   both, while a `review` mark in between stops the coalescing; a bead of another project raises `DomainError`.
+Report: 2026-10-03 — `tradurre/domain/beads.py` (helpers `_segments`/`_previous`/`_next`/`_corrected`/`_merge`; move, merge, split, `set_reviewed`); `tests/test_domain_beads.py` 16 passed (each op with invariants + undo/redo snapshots, refusals leave no trace); pytest 125 passed, 1 skipped.
 
 #### Segment operations
 Status: todo
