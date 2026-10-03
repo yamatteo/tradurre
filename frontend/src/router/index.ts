@@ -15,6 +15,17 @@ const router = createRouter({
       props: true,
     },
     {
+      path: '/book/import',
+      name: 'book-import',
+      component: () => import('@/views/BookImport.vue'),
+    },
+    {
+      path: '/book/:id',
+      name: 'book',
+      component: () => import('@/views/BookView.vue'),
+      props: true,
+    },
+    {
       path: '/import',
       name: 'import',
       component: () => import('@/views/ImportWizard.vue'),

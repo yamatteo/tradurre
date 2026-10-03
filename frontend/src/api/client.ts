@@ -178,3 +178,98 @@ export const api = {
   mergePair: (pairId: string) =>
     request<Pair>(`/pairs/${pairId}/merge`, { method: 'POST' }),
 }
+
+// Books: projects in the new model (/api/v2; mirrors the `Book…` models in tradurre/models.py).
+
+const BOOKS_BASE = '/api/v2'
+
+async function booksRequest<T>(path: string, options?: RequestInit): Promise<T> {
+  const res = await fetch(`${BOOKS_BASE}${path}`, options)
+  if (!res.ok) {
+    // The server's `detail` is meant for the translator (e.g. why a correction was refused).
+    let message = `${res.status} ${res.statusText}`
+    try {
+      const body = await res.json()
+      if (typeof body.detail === 'string') message = body.detail
+    } catch {
+      // not JSON: keep the status line
+    }
+    throw new Error(message)
+  }
+  return res.json()
+}
+
+export type Side = 'source' | 'target'
+
+export interface BookImportResponse {
+  id: string
+  title: string
+  bead_count: number
+  warnings: string[]
+}
+
+export interface BookSummary {
+  id: string
+  title: string
+  source_lang: string
+  target_lang: string
+  bead_count: number
+  reviewed_count: number
+}
+
+export interface BookSegment {
+  segment_id: number
+  block_id: number
+  block_kind: string
+  text: string
+}
+
+export interface BookBead {
+  id: number
+  confidence: number
+  method: string
+  reviewed: boolean
+  source: BookSegment[]
+  target: BookSegment[]
+}
+
+export interface BookExcludedSegment {
+  segment_id: number
+  text: string
+}
+
+export interface BookExcludedBlock {
+  block_id: number
+  side: Side
+  kind: string
+  page: number | null
+  segments: BookExcludedSegment[]
+  after_bead_id: number | null
+}
+
+export interface Book {
+  id: string
+  title: string
+  source_lang: string
+  target_lang: string
+  beads: BookBead[]
+  excluded: BookExcludedBlock[]
+  can_undo: boolean
+  can_redo: boolean
+}
+
+export const booksApi = {
+  importBook: (source: File, target: File, title: string, sourceLang: string, targetLang: string) => {
+    const form = new FormData()
+    form.append('source', source)
+    form.append('target', target)
+    form.append('title', title)
+    form.append('source_lang', sourceLang)
+    form.append('target_lang', targetLang)
+    return booksRequest<BookImportResponse>('/books', { method: 'POST', body: form })
+  },
+
+  listBooks: () => booksRequest<BookSummary[]>('/books'),
+
+  getBook: (id: string) => booksRequest<Book>(`/books/${id}`),
+}

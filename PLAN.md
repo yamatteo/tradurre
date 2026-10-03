@@ -35,14 +35,18 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
 - **Re-planned with the user (2026-10-03):** a thin usable slice first (Stage 2: txt/docx → beads → correction
   screen), then better import and an in-app gold chapter (Stage 3), the full review view (Stage 4), Colab right
   after import (Stage 5). Footnotes stay excluded as SPEC says; reviewed and confidence stay separate.
+- **Stage 2 in progress:** a txt/docx pair imports into the new model and every correction works through
+  `/api/v2/books` (`tradurre/api/books.py`); no screen uses it yet.
 - Licensed AGPL-3.0-only (`LICENSE`).
 - Python 3.14 only (`.python-version`, `requires-python`, launcher). Stage 0 is complete.
-- `uv run pytest`: 247 passed with PyMuPDF installed (246 + 1 skipped without), also on a fresh clone (tests read
+- `uv run pytest`: 249 passed with PyMuPDF installed (248 + 1 skipped without), also on a fresh clone (tests read
   only committed synthetic fixtures).
 - `uv.lock` is tracked; `pytest`/`httpx` are in the `dev` group. The Windows launcher's `uv tool install` resolves
   from PyPI and never reads the lock.
-- `npm run type-check` passes; releases build with `npm run build`. Playwright's Chromium is not installed on the
-  dev machine, so `npm run test:e2e` and browser checks can't run here until `npx playwright install chromium`.
+- `npm run type-check` passes; releases build with `npm run build`. `npm run test:e2e` runs on its own
+  backend (:8001, throwaway `.e2e.db`) and Vite (:5174), never the user's database. Setup per machine: `npx
+  playwright install chromium` (on Ubuntu 26.04 with `PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=ubuntu24.04-x64`); tests
+  use the full Chromium headless (`channel: 'chromium'`), so the headless-shell build isn't needed.
 - No user data needs migrating: the new model can start from an empty database.
 - A real book pair is available **locally only**: `library/contrefeu.fr.pdf` / `contrefeu.it.pdf` (gitignored,
   copyrighted: never commit it or excerpts of it; the repo is public). See "Reference book" in Stage 3.
@@ -267,6 +271,8 @@ Status: done
 throwaway database, with the user's `~/.tradurre/tradurre.db` untouched (its mtime unchanged); `uv run pytest`
 unchanged; `npm run type-check` passes.
 Report: 2026-10-03 — `TRADURRE_DB` in `config.py` (+ `tests/test_config.py`), Vite proxy from `TRADURRE_API`, Playwright on two throwaway servers (:8001 `.e2e.db`, Vite :5174) with `channel: 'chromium'`, `books.spec.ts` smoke test, scroll-sync spec made relative (passes); Chromium installed with `PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=ubuntu24.04-x64`; e2e 2 passed, `~/.tradurre/tradurre.db` mtime unchanged; pytest 249 passed (247 before); type-check passes.
+Verified (/pauli, 2026-10-03, `8496545`): reran pytest (249 passed) and `npm run test:e2e` (2 passed); the user's
+database mtime is unchanged. Both environment workarounds are sound and recorded in "Current state".
 
 Today `npm run test:e2e` can't run (no Chromium) and would write into the user's real database through
 whatever backend is on :8000.
@@ -289,9 +295,10 @@ whatever backend is on :8000.
 - `CLAUDE.md` "Commands": one line saying e2e runs on a throwaway backend (:8001, `.e2e.db`) and Vite :5174.
 
 #### Book list and import
-Status: todo
+Status: done
 **Done when:** `npm run type-check` passes; `npm run test:e2e` passes including the new cases in
 `frontend/e2e/books.spec.ts`; `uv run pytest` unchanged.
+Report: 2026-10-03 — `booksApi` + `Book…` types in `client.ts` (errors carry the server's `detail`), routes `/book/import` and `/book/:id`, `BookImport.vue`, minimal `BookView.vue` (header + rows), `ProjectList.vue` routes books and offers the import; e2e 5 passed (4 in `books.spec.ts`, incl. a warnings case beyond the task's list); type-check passes; pytest 249 passed (unchanged).
 
 - `client.ts`: `booksApi` (see the design) with `importBook(source: File, target: File, title: string,
   sourceLang: string, targetLang: string)` (multipart; no JSON content-type header), `listBooks()`, `getBook(id)`.
