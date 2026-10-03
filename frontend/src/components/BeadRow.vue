@@ -1,22 +1,67 @@
 <script setup lang="ts">
-// One bead as a row (source left, target right). Only the current row gets non-null selection props, so moving
-// the selection re-renders two rows, not the whole book (PLAN.md, "Reading and navigation", Scale).
-import { computed } from 'vue'
+// One bead as a row (source left, target right). The selection is injected, not passed as props, and each row
+// derives its own share of it in computeds: moving the selection re-renders the two rows whose share changed, and
+// not the parent's 10,000-row list (PLAN.md, "Segment editing", scale tripwire).
+import { computed, inject, watch } from 'vue'
 import type { BookBead, BookSegment, Side } from '@/api/client'
+import { selectionKey } from '@/selection'
 
-const props = defineProps<{
-  bead: BookBead
-  current: boolean
-  currentSide: Side | null
-  currentSegmentId: number | null
-}>()
+const props = defineProps<{ bead: BookBead }>()
 
-export type Correction = 'move-previous' | 'move-next' | 'merge' | 'split' | 'reviewed' | 'exclude'
+const selection = inject(selectionKey)!
+const current = computed(() => selection.currentRow[props.bead.id] === true)
+const currentSide = computed<Side | null>(() => (current.value ? selection.currentSide.value : null))
+const currentSegmentId = computed(() => (current.value ? selection.currentSegmentId.value : null))
+const editingSegmentId = computed(() => (current.value ? selection.editingSegmentId.value : null))
 
 const emit = defineEmits<{
   select: [beadId: number, side: Side, segmentId: number | null]
-  correct: [action: Correction]
+  edit: [segmentId: number]
+  save: [segmentId: number, text: string]
+  cancel: []
+  split: [segmentId: number, text: string, offset: number]
 }>()
+
+// The editor's outcome is decided once: by Enter, Escape, Ctrl+Enter, or else by its blur (which saves).
+let finished = false
+watch(editingSegmentId, (id) => {
+  if (id !== null) finished = false  // only on opening: closing must not re-arm the blur of the closing editor
+})
+
+function grow(el: HTMLTextAreaElement) {
+  el.style.height = 'auto'
+  el.style.height = `${el.scrollHeight}px`
+}
+
+function mountEditor(el: unknown) {
+  if (!(el instanceof HTMLTextAreaElement) || document.activeElement === el) return
+  grow(el)
+  el.focus()
+  el.setSelectionRange(el.value.length, el.value.length)
+}
+
+function onEditorKey(event: KeyboardEvent, segmentId: number) {
+  const el = event.target as HTMLTextAreaElement
+  if (event.key === 'Escape') {
+    event.preventDefault()
+    finished = true
+    emit('cancel')
+  } else if (event.key === 'Enter' && event.ctrlKey) {
+    event.preventDefault()
+    finished = true
+    emit('split', segmentId, el.value, el.selectionStart)
+  } else if (event.key === 'Enter' && !event.shiftKey && !event.altKey && !event.metaKey) {
+    event.preventDefault()
+    finished = true
+    emit('save', segmentId, el.value)
+  }
+}
+
+function onEditorBlur(event: FocusEvent, segmentId: number) {
+  if (finished) return
+  finished = true
+  emit('save', segmentId, (event.target as HTMLTextAreaElement).value)
+}
 
 interface CellBlock {
   blockId: number
@@ -34,15 +79,6 @@ function blocks(segments: BookSegment[]): CellBlock[] {
   }
   return out
 }
-
-const actions = computed<{ action: Correction; label: string; key: string }[]>(() => [
-  { action: 'move-previous', label: '↑ first', key: 'Alt+↑' },
-  { action: 'move-next', label: '↓ last', key: 'Alt+↓' },
-  { action: 'merge', label: 'Merge', key: 'M' },
-  { action: 'split', label: 'Split', key: 'S' },
-  { action: 'reviewed', label: props.bead.reviewed ? 'Unreviewed' : 'Reviewed', key: 'R' },
-  { action: 'exclude', label: 'Exclude', key: 'X' },
-])
 
 const cells = computed(() =>
   (['source', 'target'] as const).map((side) => ({ side, blocks: blocks(props.bead[side]) })),
@@ -65,15 +101,16 @@ const cells = computed(() =>
         :class="block.kind === 'heading' ? 'font-bold' : ''">
         <template v-for="(seg, i) in block.segments" :key="seg.segment_id">
           <span v-if="i > 0">{{ ' ' }}</span>
-          <span :data-segment-id="seg.segment_id" :data-current-segment="currentSegmentId === seg.segment_id"
+          <textarea v-if="editingSegmentId === seg.segment_id" :ref="mountEditor" :value="seg.text" rows="1"
+            data-testid="segment-editor"
+            class="block w-full resize-none overflow-hidden border border-blue-400 rounded px-1 font-normal"
+            @input="grow($event.target as HTMLTextAreaElement)" @click.stop
+            @keydown="onEditorKey($event, seg.segment_id)" @blur="onEditorBlur($event, seg.segment_id)" />
+          <span v-else :data-segment-id="seg.segment_id" :data-current-segment="currentSegmentId === seg.segment_id"
             :class="currentSegmentId === seg.segment_id ? 'underline decoration-blue-500 decoration-2' : ''"
-            @click.stop="emit('select', bead.id, cell.side, seg.segment_id)">{{ seg.text }}</span>
+            @click.stop="emit('select', bead.id, cell.side, seg.segment_id)"
+            @dblclick.stop="emit('edit', seg.segment_id)">{{ seg.text }}</span>
         </template>
-      </div>
-      <div v-if="current && currentSide === cell.side" class="flex flex-wrap gap-1 mt-1" data-testid="bead-actions">
-        <button v-for="a in actions" :key="a.action" type="button" :data-action="a.action" :title="a.key"
-          class="px-1.5 py-0.5 text-xs border border-gray-300 rounded bg-white text-gray-600 hover:bg-gray-100"
-          @click.stop="emit('correct', a.action)">{{ a.label }}</button>
       </div>
     </div>
   </div>

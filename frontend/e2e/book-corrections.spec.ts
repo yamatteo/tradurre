@@ -147,12 +147,22 @@ test('undo and redo with the keyboard and the header', async ({ page, request })
   await expect.poll(() => rows(page)).toEqual(ORIGINAL)
 })
 
-test('a button does the same as its key', async ({ page, request }) => {
+test('a header button does the same as its key', async ({ page, request }) => {
   const { id } = await importBook(request, 'Button')
   await open(page, id)
   await page.getByText('Marie arriva.').click()
-  await current(page).locator('[data-action="merge"]').click()
+  await page.getByTestId('bead-actions').locator('[data-action="merge"]').click()
   await expect.poll(() => rows(page)).toEqual(B_MERGED)
+})
+
+test('selecting a row moves no other row', async ({ page, request }) => {
+  const { id } = await importBook(request, 'Layout')
+  await open(page, id)  // A is current
+  const below = page.getByTestId('bead-row').nth(2)
+  const before = (await below.boundingBox())!.y
+  await page.getByText('Marie arriva.').click()  // B, the row above it
+  await expect(page.getByTestId('bead-row').nth(1)).toHaveAttribute('data-current', 'true')
+  expect((await below.boundingBox())!.y).toBe(before)
 })
 
 test('r on a 10,000-bead book is fast', async ({ page, request }) => {

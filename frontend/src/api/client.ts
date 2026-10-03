@@ -296,6 +296,14 @@ export const booksApi = {
 
   includeBlock: (id: string, blockId: number) => booksPost(`/books/${id}/blocks/${blockId}/include`),
 
+  editSegment: (id: string, segmentId: number, text: string) =>
+    booksPost(`/books/${id}/segments/${segmentId}/edit`, { text }),
+
+  splitSegment: (id: string, segmentId: number, offset: number) =>
+    booksPost(`/books/${id}/segments/${segmentId}/split`, { offset }),
+
+  joinNext: (id: string, segmentId: number) => booksPost(`/books/${id}/segments/${segmentId}/join-next`),
+
   undo: (id: string) => booksPost(`/books/${id}/undo`),
 
   redo: (id: string) => booksPost(`/books/${id}/redo`),

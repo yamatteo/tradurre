@@ -37,7 +37,8 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
   after import (Stage 5). Footnotes stay excluded as SPEC says; reviewed and confidence stay separate.
 - **Stage 2 in progress:** a txt/docx pair imports into the new model and every correction works through
   `/api/v2/books` (`tradurre/api/books.py`). The book screen (`BookView.vue`, `/book/:id`) imports, reads and
-  navigates a book; corrections from the screen are next.
+  navigates a book and makes the bead corrections with keys and buttons, with undo/redo; segment editing is next,
+  then Stage 3.
 - Licensed AGPL-3.0-only (`LICENSE`).
 - Python 3.14 only (`.python-version`, `requires-python`, launcher). Stage 0 is complete.
 - `uv run pytest`: 249 passed with PyMuPDF installed (248 + 1 skipped without), also on a fresh clone (tests read
@@ -255,7 +256,9 @@ views. Shared design, decided here so the tasks don't each reinvent it:
   one row per bead, source cell left, target cell right (a CSS grid with two equal columns). In a cell, segments
   run on as text; a new block starts on a new line, and a `heading` block is bold. A one-sided bead has an empty
   cell with a light grey background. A reviewed bead shows a green left border. A header bar shows title,
-  "reviewed X / N", Undo/Redo buttons (disabled from `can_undo`/`can_redo`) and a "Show excluded" toggle.
+  "reviewed X / N", Undo/Redo buttons (disabled from `can_undo`/`can_redo`), the correction buttons for the
+  current bead (see "Segment editing", decision) and a "Show excluded" toggle. Rows never change height when the
+  selection moves.
 - **Selection:** a current bead (outlined), a current side (`source`|`target`, its cell tinted) and a current
   segment (underlined) inside the current cell. Clicking a segment selects all three. Keys (ignored while a text
   field has focus): ↑/↓ previous/next bead (current segment = first of the cell), ←/→ side, Tab/Shift+Tab next/
@@ -356,6 +359,10 @@ Status: done
 **Done when:** `npm run type-check` passes; `npm run test:e2e` passes including `frontend/e2e/book-corrections.spec.ts`;
 `uv run pytest` unchanged.
 Report: 2026-10-03 — `booksApi` correction functions (`client.ts`), button bar in the current cell (`BeadRow.vue`), `BookView.vue`: Alt+↑/↓ m s r x Ctrl+Z/Y/Shift+Z, Include on excluded rows, Undo/Redo in the header, `busy`, selection rule, `reconcile`, guard narrowed to text entry; `book-corrections.spec.ts` 8 tests; 10k book: `r` to border 274–487 ms, 20 ↓ now 1638–1736 ms (was ≈1440); e2e 19 passed; type-check passes; pytest 249 passed (unchanged).
+Verified (/pauli, 2026-10-03, `b5193ab`): type-check passes, pytest 249, e2e 19 (rerun by Braun serially; the
+code is what was tested). Every case the task listed is covered. Two things carried into "Segment editing":
+`correct()` captures side and segment before the request but reads the current bead after it, so ↓ pressed
+during a slow request mixes old and new selection; and 20 ↓ on the 10k book rose to ≈1650 ms (limit 2 s).
 
 Keyboard first (SPEC §3.3); keys ignored while a text field has focus:
 - Alt+↑: move the current side's first segment to the previous bead (`move`, `to: previous`); Alt+↓: its last
@@ -414,20 +421,57 @@ Spec `book-corrections.spec.ts`, on the book of `book-view.spec.ts` (copy its he
   border appearing: recorded in the `Report:`, under 1.5 s, else `blocked` (as in the previous task).
 
 #### Segment editing
-Status: todo
-**Done when:** `npm run type-check` passes; `npm run test:e2e` passes including `frontend/e2e/segment-editing.spec.ts`;
-`uv run pytest` unchanged.
+Status: done
+**Done when:** `npm run type-check` passes; `npm run test:e2e` passes including `frontend/e2e/segment-editing.spec.ts`
+and the existing 10k navigation limit (20 ↓ under 2 s); `uv run pytest` unchanged.
+Report: 2026-10-03 — inline editor (Enter/double-click; Enter saves, Escape cancels, Ctrl+Enter splits, blur saves), `j`, segment client functions, `correct()` reads the selection after the request, selection injected (`selection.ts`, `currentRow` map), correction buttons moved to a header bar (`BeadActions.vue`, injects the selection so the list doesn't re-render), header buttons disabled while editing; `segment-editing.spec.ts` 8 tests, button case moved to the header bar plus a no-layout-shift case; 10k: 20 ↓ 1144–1358 ms (was ≈1650), `r` 298–580 ms, load 1.8–2.3 s (was 1.6–1.7); e2e 28 passed; type-check passes; pytest 249 passed (unchanged).
+Report: 2026-10-03 — blocked on a layout shift: the button bar ("Bead corrections") lives in the current cell, so when a click moves the selection down, the old row loses its bar and everything below rises by its height; a double-click's second click then lands on the new row's "↑ first" button and moves a segment (event log: `click SPAN`, then `mousedown/click/dblclick BUTTON ↑ first`). Needs a decision on where the bar goes. Everything else is in place, uncommitted: editor, `j`, client functions, the `correct()` fix, the selection via `provide`/`inject`; segment-editing 7/8 pass, the rest of e2e passes. Scale: the tripwire's "`current` a computed comparing its bead id" made 20 ↓ slower (1964–2083 ms; 10k computeds all depend on one ref); a per-id `shallowReactive` map (`currentRow`, only two rows woken) brought JS per press from ≈60 to ≈25 ms and 20 ↓ to 1633 ms in the full parallel run (dev-mode Vite).
+Answered (/pauli, 2026-10-03): resume from the uncommitted tree; it is sound. Decisions:
+- **The correction buttons move to the sticky header**, one bar acting on the current bead and side, right of the
+  title (same labels, `title`s and `data-action`s; `data-testid="bead-actions"` on the bar). `BeadRow.vue` loses
+  its bar and the `correct` emit; `BookView.vue` calls `runCorrection` directly. Reason: nothing in a row may
+  change height with the selection (see the shared design), and a bar per row was the only thing that did. The
+  header is already sticky, so the buttons stay in reach; the screen is keyboard-first anyway (SPEC §3.3). The
+  Reviewed/Unreviewed label follows the current bead. In `book-corrections.spec.ts`, the button case clicks
+  `getByTestId('bead-actions').locator('[data-action="merge"]')`.
+- **Header buttons (corrections and Undo/Redo) are disabled while a segment is being edited** as well as while
+  `busy`. A click on them still blurs and saves the editor, and the click itself does nothing, visibly, instead
+  of silently racing the save.
+- **The `currentRow` map is accepted** and replaces the tripwire's "computed comparing its bead id", which wakes
+  every row: keep `selection.ts` as it is. A note on its design goes in the "Scale" paragraph below.
+- **Window blur saving an open edit is accepted** (it saves, it never loses text).
+- Spec additions: in `segment-editing.spec.ts`, a double-click on a row below the current one opens the editor
+  (the existing case starts on bead A and double-clicks B's target, so it already covers this once the bar
+  moves); in `book-view.spec.ts` or `book-corrections.spec.ts`, one check that selecting a row leaves the
+  bounding box of the row below it unchanged (`boundingBox().y` before and after a click on the row above).
 
-- `Enter` on the current segment (or double-click) replaces it with a `textarea` holding its text, focused, caret
-  at the end. In it: Enter saves (`edit`; unchanged text sends nothing), Escape cancels, Ctrl+Enter splits at the
-  caret: if the text was changed, save it first, then `split` with the caret's offset (two operations, two undo
-  steps). Blur cancels.
-- `j`: join the current segment with the next (`join-next`); the result keeps the current segment.
+SPEC §3.3: "split a segment at the cursor, join with the next segment; edit segment text inline (plain text)".
+- **Opening:** `Enter` on the current segment, or a double-click on a segment (the first click selects it),
+  replaces its span with a `textarea` holding its text, focused, caret at the end, as wide as the cell and
+  growing with the text. State: `editingSegmentId` in `BookView.vue`, passed to `BeadRow.vue` as a prop that is
+  null on every row but the current one (same scale rule as the selection props). While editing, the window key
+  handler already ignores keys (the target is a textarea).
+- **In the textarea:** Enter saves; Escape cancels; Ctrl+Enter splits at the caret; **blur saves** (changed from
+  "blur cancels": clicking elsewhere must not throw away typed text; Escape sets a cancel flag before the
+  textarea goes, so its blur doesn't save). Saving sends `edit` only if the text changed (newlines replaced by
+  spaces first, which keeps offsets); the server refuses an empty text and its message goes to the status line,
+  with the textarea closed and the old text shown. Ctrl+Enter: if the text changed, `edit` then `split` at the
+  caret's offset (two requests inside one `busy` period, two undo steps; if `edit` fails, no split); else only
+  `split`. After either, the current segment is the first part (it keeps its id).
+- `j`: join the current segment with the next (`join-next`); the current segment stays.
 - `client.ts`: `editSegment(id, segmentId, text)`, `splitSegment(id, segmentId, offset)`, `joinNext(id,
   segmentId)`, each returning `Promise<Book>`. The `busy`, selection and `reconcile` rules of "Bead corrections"
-  apply unchanged.
-Spec: edit and save, Escape cancels, Ctrl+Enter splits at the caret, `j` joins, an empty edit shows the server's
-message.
+  apply.
+- **Fix in `correct()` (`BookView.vue`):** read the selection (bead, side, segment) after the request returns,
+  not before, and take the fallback index from the old book; so navigation during a request is respected.
+- **Scale:** the selection is provided by `BookView.vue` and injected by `BeadRow.vue` (`frontend/src/
+  selection.ts`); a row knows it is current from `currentRow[bead.id]`, a `shallowReactive` map with one key, so a
+  move wakes two rows; side, segment and editing are read only by the current row. (Comparing every row's id
+  with one ref was tried and was slower: it wakes all 10,000.) Report the 20 ↓ timing.
+Spec `segment-editing.spec.ts` (book and helpers as in `book-corrections.spec.ts`): Enter, type, Enter saves
+(rows); Escape cancels (no change, Undo still disabled); clicking another row saves; Ctrl+Enter splits at the
+caret (two segments in the cell; one Ctrl+Z restores one segment); `j` joins; saving an empty text shows "A
+segment can't be empty; join it with its neighbour instead"; a double-click opens the editor.
 
 ---
 

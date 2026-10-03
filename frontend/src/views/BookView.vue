@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, provide, ref, shallowReactive, shallowRef, watch } from 'vue'
 import { booksApi, type Book, type BookBead, type BookExcludedBlock, type Side } from '@/api/client'
-import BeadRow, { type Correction } from '@/components/BeadRow.vue'
+import BeadActions, { type Correction } from '@/components/BeadActions.vue'
+import BeadRow from '@/components/BeadRow.vue'
+import { selectionKey } from '@/selection'
 
 const props = defineProps<{ id: string }>()
 
@@ -15,6 +17,13 @@ const busy = ref(false)
 const currentBeadId = ref<number | null>(null)
 const currentSide = ref<Side>('source')
 const currentSegmentId = ref<number | null>(null)
+const editingSegmentId = ref<number | null>(null)
+const currentRow = shallowReactive<Record<number, true>>({})
+watch(currentBeadId, (id, old) => {
+  if (old !== null && old !== undefined) delete currentRow[old]
+  if (id !== null) currentRow[id] = true
+}, { flush: 'sync' })
+provide(selectionKey, { currentRow, currentBeadId, currentSide, currentSegmentId, editingSegmentId })
 
 const reviewedCount = computed(() => book.value?.beads.filter((b) => b.reviewed).length ?? 0)
 const beadIndex = computed(() => new Map(book.value?.beads.map((b, i) => [b.id, i]) ?? []))
@@ -117,11 +126,14 @@ function reconcile(old: Book, next: Book): Book {
 async function correct(request: (id: string) => Promise<Book>, selectIndex?: number) {
   if (busy.value || !book.value) return
   busy.value = true
-  const oldIndex = currentBeadId.value === null ? 0 : (beadIndex.value.get(currentBeadId.value) ?? 0)
-  const side = currentSide.value
-  const segmentId = currentSegmentId.value
+  const old = book.value
   try {
-    book.value = reconcile(book.value, await request(book.value.id))
+    const next = await request(old.id)
+    // The selection is read now, not before the request: the translator may have moved meanwhile.
+    const oldIndex = currentBeadId.value === null ? 0 : (beadIndex.value.get(currentBeadId.value) ?? 0)
+    const side = currentSide.value
+    const segmentId = currentSegmentId.value
+    book.value = reconcile(old, next)
     const beads = book.value.beads
     if (!beads.length) {
       currentBeadId.value = null
@@ -172,6 +184,57 @@ function runCorrection(action: Correction) {
   }
 }
 
+function startEditing(segmentId: number | null = currentSegmentId.value) {
+  if (segmentId === null || busy.value) return
+  editingSegmentId.value = segmentId
+}
+
+/** Opened by a double-click: select the segment first (its bead and side are the current ones). */
+function editSegment(segmentId: number) {
+  if (currentBead.value) select(currentBead.value.id, currentSide.value, segmentId)
+  startEditing(segmentId)
+}
+
+function segmentText(segmentId: number): string | undefined {
+  for (const side of ['source', 'target'] as const) {
+    const seg = currentBead.value?.[side].find((s) => s.segment_id === segmentId)
+    if (seg) return seg.text
+  }
+}
+
+function saveEdit(segmentId: number, value: string) {
+  editingSegmentId.value = null
+  const text = value.replace(/\n/g, ' ')
+  if (text === segmentText(segmentId)) return
+  correct((id) => booksApi.editSegment(id, segmentId, text))
+}
+
+function cancelEdit() {
+  editingSegmentId.value = null
+}
+
+/** Ctrl+Enter: save the text if changed, then split at the caret (two operations, two undo steps). */
+function splitEdit(segmentId: number, value: string, offset: number) {
+  editingSegmentId.value = null
+  const text = value.replace(/\n/g, ' ')
+  const changed = text !== segmentText(segmentId)
+  correct(async (id) => {
+    if (changed) await booksApi.editSegment(id, segmentId, text)
+    try {
+      return await booksApi.splitSegment(id, segmentId, offset)
+    } catch (e) {
+      if (!changed) throw e
+      say((e as Error).message)  // the edit was saved: show it anyway
+      return booksApi.getBook(id)
+    }
+  })
+}
+
+function joinNext() {
+  const segmentId = currentSegmentId.value
+  if (segmentId !== null) correct((id) => booksApi.joinNext(id, segmentId))
+}
+
 function isTextEntry(target: HTMLElement | null): boolean {
   if (!target) return false
   if (target.isContentEditable || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT') return true
@@ -204,6 +267,8 @@ function onKey(event: KeyboardEvent) {
     s: () => runCorrection('split'),
     r: () => runCorrection('reviewed'),
     x: () => runCorrection('exclude'),
+    j: joinNext,
+    Enter: () => startEditing(),
   }
   const action = actions[event.key]
   if (!action) return
@@ -249,13 +314,14 @@ onBeforeUnmount(() => {
           <div class="flex items-center gap-3">
             <router-link to="/" class="text-gray-400 hover:text-gray-600">&larr;</router-link>
             <h1 class="text-xl font-bold text-gray-900" data-testid="book-title">{{ book.title }}</h1>
+            <BeadActions :book="book" :disabled="busy || editingSegmentId !== null" @correct="runCorrection" />
           </div>
           <div class="flex items-center gap-4 text-sm text-gray-600">
-            <button type="button" data-testid="undo" title="Ctrl+Z" :disabled="!book.can_undo || busy" @click="undo"
+            <button type="button" data-testid="undo" title="Ctrl+Z" :disabled="!book.can_undo || busy || editingSegmentId !== null" @click="undo"
               class="px-2 py-1 border border-gray-300 rounded bg-white hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed">
               Undo
             </button>
-            <button type="button" data-testid="redo" title="Ctrl+Y" :disabled="!book.can_redo || busy" @click="redo"
+            <button type="button" data-testid="redo" title="Ctrl+Y" :disabled="!book.can_redo || busy || editingSegmentId !== null" @click="redo"
               class="px-2 py-1 border border-gray-300 rounded bg-white hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed">
               Redo
             </button>
@@ -271,10 +337,9 @@ onBeforeUnmount(() => {
 
       <div class="bg-white border border-gray-200 rounded-lg divide-y divide-gray-100">
         <template v-for="item in items" :key="item.type === 'bead' ? `b${item.bead.id}` : `x${item.block.block_id}`">
-          <BeadRow v-if="item.type === 'bead'" :bead="item.bead" :current="item.bead.id === currentBeadId"
-            :current-side="item.bead.id === currentBeadId ? currentSide : null"
-            :current-segment-id="item.bead.id === currentBeadId ? currentSegmentId : null"
-            @select="select" @correct="runCorrection" />
+          <BeadRow v-if="item.type === 'bead'" :bead="item.bead"
+            @select="select" @edit="editSegment" @save="saveEdit" @cancel="cancelEdit"
+            @split="splitEdit" />
           <div v-else :data-excluded-block-id="item.block.block_id" data-testid="excluded-row"
             class="grid grid-cols-2 gap-4 px-4 py-2 text-sm border-l-4 border-transparent text-gray-400 italic">
             <div v-for="side in (['source', 'target'] as const)" :key="side">
