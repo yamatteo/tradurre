@@ -5,6 +5,7 @@ never text (not in assertions, not in messages).
 """
 
 import re
+import time
 from pathlib import Path
 
 import pytest
@@ -54,3 +55,28 @@ def test_same_number_of_chapter_numbers_on_both_sides(both):
     counts = {lang: sum(b.kind == "heading" and bool(_NUMBER_ONLY.match(b.text)) for b in blocks)
               for lang, blocks in both.items()}
     assert counts["fr"] == counts["it"], f"number-only headings: {counts}"
+
+
+def test_import_through_the_api(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from tradurre.app import app
+
+    paths = [LIBRARY / f"contrefeu.{lang}.pdf" for lang in ("fr", "it")]
+    for path in paths:
+        if not path.exists():
+            pytest.skip(f"{path.name} is not present")
+    monkeypatch.setattr("tradurre.config.DB_PATH", tmp_path / "library.db")
+    monkeypatch.setattr("tradurre.app.DB_PATH", tmp_path / "library.db")
+    with TestClient(app) as client:
+        start = time.perf_counter()
+        resp = client.post("/api/v2/books", files={
+            "source": (paths[0].name, paths[0].read_bytes()), "target": (paths[1].name, paths[1].read_bytes()),
+        })
+        elapsed = time.perf_counter() - start
+        assert resp.status_code == 201, resp.status_code
+        book = client.get(f"/api/v2/books/{resp.json()['id']}").json()
+    beads = book["beads"]
+    one_sided = sum(not b["source"] or not b["target"] for b in beads)
+    print(f"\nimport: {elapsed:.1f} s, {len(beads)} beads, {one_sided} one-sided")
+    assert len(beads) > 1000, f"{len(beads)} beads"

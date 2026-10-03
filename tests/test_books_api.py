@@ -122,10 +122,48 @@ def test_excluded_block_sits_after_previous_bead(client, db_path):
     }]
 
 
-def test_pdf_is_refused_and_writes_nothing(client):
+def _pdf(pages) -> bytes:
+    """PDF bytes, one portrait page per list of `(x, baseline_y, text, fontsize)`, in an embedded font (as in
+    `tests/test_extract_pdf.py`)."""
+    pymupdf = pytest.importorskip("pymupdf")
+    font = pymupdf.Font("helv")
+    doc = pymupdf.open()
+    for lines in pages:
+        page = doc.new_page(width=439, height=651)
+        page.insert_font(fontname="F0", fontbuffer=font.buffer)
+        for x, y, text, size in lines:
+            page.insert_text((x, y), text, fontsize=size, fontname="F0")
+    return doc.tobytes()
+
+
+def _pdf_book(paragraphs):
+    """One indented paragraph per page, and the page number at the bottom."""
+    return _pdf([[(74, 120, text, 11.9), (210, 576, str(k + 1), 10)] for k, text in enumerate(paragraphs)])
+
+
+def test_import_pdf_excludes_page_numbers(client):
+    resp = _import(
+        client,
+        source=("livre.pdf", _pdf_book(["Marie arriva.", "Il pleuvait.", "Paul partit."])),
+        target=("libro.pdf", _pdf_book(["Marie arrivò.", "Pioveva.", "Paul partì."])),
+    )
+    assert resp.status_code == 201
+    book = client.get(f"/api/v2/books/{resp.json()['id']}").json()
+    assert [(_texts(b, "source"), _texts(b, "target")) for b in book["beads"]] == [
+        (["Marie arriva."], ["Marie arrivò."]),
+        (["Il pleuvait."], ["Pioveva."]),
+        (["Paul partit."], ["Paul partì."]),
+    ]
+    assert book["beads"][0]["source"][0]["block_kind"] == "paragraph"
+    assert sorted((b["side"], b["kind"], b["page"], b["segments"][0]["text"]) for b in book["excluded"]) == sorted(
+        (side, "page_number", k, str(k)) for side in ("source", "target") for k in (1, 2, 3)
+    )
+
+
+def test_unreadable_pdf_is_refused_and_writes_nothing(client):
     resp = _import(client, source=("livre.pdf", b"%PDF-1.4"))
-    assert resp.status_code == 415
-    assert "PDF" in resp.json()["detail"]
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "The file is not a readable PDF"
     assert client.get("/api/v2/books").json() == []
 
 

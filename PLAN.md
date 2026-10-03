@@ -42,8 +42,10 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
   after Stage 3's "PDF import in the app".
 - Licensed AGPL-3.0-only (`LICENSE`).
 - Python 3.14 only (`.python-version`, `requires-python`, launcher). Stage 0 is complete.
-- `uv run pytest`: 253 passed (PyMuPDF is in the `dev` group), also on a fresh clone (tests read only committed
-  synthetic fixtures).
+- `uv run pytest`: 266 passed (PyMuPDF is in the `dev` group), also on a fresh clone (tests read only committed
+  synthetic fixtures; `-m library` tests run only where `library/contrefeu.*.pdf` exists, and assert counts only).
+- PDF extraction (`extract.py`) works on the reference book (page numbers, chapter numbers, two-up spreads); the
+  app still refuses PDFs until "PDF import in the app".
 - `uv.lock` is tracked; `pytest`/`httpx` are in the `dev` group. The Windows launcher's `uv tool install` resolves
   from PyPI and never reads the lock.
 - `npm run type-check` passes; releases build with `npm run build`. `npm run test:e2e` runs on its own
@@ -94,8 +96,8 @@ throwaway backend (:8001, `.e2e.db`) and Vite :5174, including 10,000-bead timin
 ## Stage 3 — Better import
 
 **Decided (user, 2026-10-03): tradurre is AGPL-3.0-only** (`LICENSE`, `pyproject.toml`), so PyMuPDF (AGPL-3.0)
-stays the PDF library. The launcher already installs `tradurre[pdf]` (`EXTRAS=pdf`); "PDF import in the app" moves
-`pymupdf` from the `pdf` extra into the core dependencies. Until then it is a dev dependency so tests run.
+stays the PDF library. The launcher already installs `tradurre[pdf]` (`EXTRAS=pdf`); "PDF import in the app" makes
+`pymupdf` a core dependency (the `pdf` extra stays, redundant, for the launcher). Until then it is a dev dependency so tests run.
 
 ### Reference book
 (Context for the whole stage, not a task.) `library/contrefeu.fr.pdf` (Emmanuel Venet, *Contrefeu*) and `library/contrefeu.it.pdf` (*Sacro fuoco*), both
@@ -158,6 +160,10 @@ Status: done
 **Done when:** `tests/test_extract_pdf.py` passes with the cases below; `uv run pytest -m library` passes on this
 machine (the reference book is present); `uv run pytest` otherwise unchanged.
 Report: 2026-10-03 — rule (a) applied (non-paragraph blocks end at a page boundary) on top of the blocked tree: `_extract_pdf`, `extract` reads `.pdf`, API refuses `.pdf` by extension, obsolete test removed; `tests/test_extract_pdf.py` 13 pass (2 new for rule (a)); `tests/test_library.py` passes: FR 208 paragraph / 120 page_number / 27 heading / 3 footnote, IT 197 / 157 / 27 / 2, chapter numbers 25 = 25, no stray numbers, 0 warnings; `uv run pytest` 266 passed (253 − 1 obsolete + 9 PDF + 5 library runs); e2e `books.spec.ts` 4 passed.
+Verified (/pauli, 2026-10-03, `520747c`): pytest 266, library tests pass. Checked on the reference book (counts
+only): extraction takes 1.75 s (FR) / 1.89 s (IT); hard line-end hyphens kept by the join rule never produce a
+word whose unhyphenated form also occurs in the book (0 of 505 FR, 0 of 221 IT hyphenated tokens), so keeping
+them is right for this book.
 Report: 2026-10-03 — blocked on one library test: number-only headings FR 25, IT 24. The missing IT one (size 11.3, top of logical page 7) merges into the preceding heading block (a 9-word front-matter heading on page 5; page 6 is blank), because "consecutive lines of the same kind form one block" has no page condition. Needs a rule: e.g. non-paragraph blocks don't continue across a page boundary, or a chapter-number line is always its own block. Everything else is done, uncommitted: `_extract_pdf` (classification, assembly, joining, glyphs), `extract` reads `.pdf`; the API still refuses `.pdf` with 415 (now by extension, since `extract` no longer raises) and the obsolete `test_pdf_not_implemented_yet` is removed; `tests/test_extract_pdf.py` 11 pass; `tests/test_library.py` 3 tests (marker registered), 2 pass: page numbers FR 120, IT 157; stray included numbers 0 both sides; blocks FR 208 paragraph / 120 page_number / 27 heading / 3 footnote, IT 197 / 157 / 26 / 2; `uv run pytest` here: 263 passed, 1 failed (that library test; on a fresh clone the library tests skip).
 Answered (/pauli, 2026-10-03, user agreeing): resume from the uncommitted tree. **Rule (a): a block of any kind
 other than `paragraph` never continues onto another logical page** (in `_extract_pdf`'s assembly, a line starts a
@@ -221,16 +227,49 @@ import in the app"; test PDFs embed the font to keep U+00AD.
   assertions or messages (the book is copyrighted). Report the actual numbers.
 
 #### Front and back matter
-Not ready: half title, "Du même auteur", colophon/ISBN, series blurb → `front_matter`/`back_matter`. Planned
-after "PDF blocks", with `tests/test_library.py` on the reference book, so the rule is fitted to a real book
-rather than guessed.
+Not ready; after "PDF import in the app", so the translator can see the real book in the screen meanwhile (front
+and back matter show up as short one-sided beads at both ends, which `x` excludes one block at a time).
+Measured after "PDF blocks" (counts only): FR has ~25 short blocks (1–7 words, plus a 43-word small-print block
+classified `footnote`) on logical pages 3–6 before the first chapter number, and ~6 short blocks on the last page;
+IT ~9 blocks on pages 3–5, ~7 on the last page. A rule can't simply exclude everything before chapter 1: SPEC §2
+counts a preface as real one-sided material to align. To decide when writing the task: short-block density per
+page, and whether the user wants a bulk "exclude this page" correction instead (a SPEC change).
 
 Decided (user, 2026-10-03): sources are mixed and unknown per book (PDF, sometimes the translator's own .docx for
 the Italian side), so both paths stay first-class: the PDF pipeline is not the only road, and docx import keeps
 its tests.
 
 ### PDF import in the app
-Not ready: `POST /books` accepts `.pdf`; `pymupdf` becomes a core dependency (see the decision above).
+Status: done
+Report: 2026-10-03 — pymupdf core dependency (`pdf` extra kept, commented); unreadable PDF → 400; extraction via `run_in_threadpool`; form accepts .pdf; API test on a built PDF pair, library import test (reference pair: 201, 4.3 s wall, 1354 beads, 185 one-sided); pytest 268 passed, `-m library` 6 passed, type-check clean, e2e 28 passed (the form test's button label updated too).
+**Done when:** `uv run pytest` passes (including the new tests); `uv run pytest -m library` passes on this machine
+with the new import test; `npm run type-check` passes; `npm run test:e2e` passes.
+
+The reference book becomes importable in the app (SPEC §3.1.1: born-digital PDF, .docx or .txt).
+- `pyproject.toml`: `pymupdf>=1.24` moves into `[project].dependencies` and out of the `dev` group (`uv.lock`
+  updated). The `pdf` extra **stays** with its current content: the Windows launcher installs `tradurre[pdf]`
+  (`packaging/start-tradurre.bat:14`), and dropping the extra would break that line; it is now redundant, say so in
+  a comment above it. Do not change the launcher.
+- `tradurre/services/extract.py`: `_extract_pdf` turns a file PyMuPDF can't open into `ValueError("The file is
+  not a readable PDF")` (catch the exception `pymupdf.open` raises; don't catch broadly around the rest).
+- `tradurre/api/books.py`: remove the `.pdf` refusal in `_extract` (the 415 goes away); `ValueError` already maps
+  to 400. Extraction is CPU work of seconds per PDF inside an `async def` handler, which would freeze every other
+  request meanwhile: call `extract` through `starlette.concurrency.run_in_threadpool`. Nothing else in the import
+  changes.
+- Frontend: `BookImport.vue` file inputs `accept=".txt,.docx,.pdf"`; `ProjectList.vue` button "Import a book
+  (txt/docx/pdf)".
+- Tests:
+  - `tests/test_books_api.py`: `test_pdf_is_refused_and_writes_nothing` becomes: an unreadable `.pdf`
+    (`b"%PDF-1.4"`) → 400 "The file is not a readable PDF", nothing written; plus a new test importing a small
+    PDF pair built in the test (reuse the embedded-font helper pattern of `tests/test_extract_pdf.py`; a few
+    paragraphs and page numbers per side) → 201, beads present, page-number blocks excluded (`GET` shows them in
+    `excluded`).
+  - `tests/test_library.py`: importing the reference pair through `POST /api/v2/books` (TestClient on a temporary
+    database, as in the API tests) returns 201; record in the `Report:` the wall time of the request, the bead
+    count, and how many beads are one-sided. Assert only 201 and bead count > 1000 (counts, no text).
+  - `frontend/e2e/books.spec.ts`: the PDF case now expects "The file is not a readable PDF".
+- After this task, tell the user in the report how to try it: `uv run tradurre --dev` plus `npm run dev`, import
+  `library/contrefeu.fr.pdf` / `contrefeu.it.pdf`.
 
 ### Import warnings and run metadata
 Not ready: warnings and run metadata (counts, timings; SPEC §3.1.5, §4 "Debuggable") stored on the project in

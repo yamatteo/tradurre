@@ -23,7 +23,7 @@ function txt(name: string, text: string) {
 
 test('importing through the form opens the book, which the project list then opens', async ({ page }) => {
   await page.goto('/')
-  await page.getByRole('button', { name: 'Import a book (txt/docx)' }).click()
+  await page.getByRole('button', { name: 'Import a book (txt/docx/pdf)' }).click()
   await expect(page).toHaveURL(/\/book\/import$/)
 
   const importButton = page.getByRole('button', { name: 'Import' })
@@ -49,14 +49,14 @@ test('importing through the form opens the book, which the project list then ope
   await expect(page.getByTestId('bead-row')).toHaveCount(3)
 })
 
-test('importing a PDF shows the server message', async ({ page }) => {
+test('importing an unreadable PDF shows the server message', async ({ page }) => {
   await page.goto('/book/import')
   await page.getByLabel('Original (French)').setInputFiles({
     name: 'livre.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4'),
   })
   await page.getByLabel('Translation (Italian)').setInputFiles(txt('libro.txt', TARGET))
   await page.getByRole('button', { name: 'Import' }).click()
-  await expect(page.getByTestId('import-error')).toHaveText('PDF import is not available yet')
+  await expect(page.getByTestId('import-error')).toHaveText('The file is not a readable PDF')
   await expect(page).toHaveURL(/\/book\/import$/)
 })
 

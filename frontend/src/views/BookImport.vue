@@ -70,11 +70,11 @@ async function importBook() {
     <div v-else class="bg-white rounded-lg border border-gray-200 p-4 space-y-4">
       <div>
         <label for="source-file" class="block text-sm text-gray-600 mb-1">Original (French)</label>
-        <input id="source-file" type="file" accept=".txt,.docx" @change="pickSource" class="text-sm" />
+        <input id="source-file" type="file" accept=".txt,.docx,.pdf" @change="pickSource" class="text-sm" />
       </div>
       <div>
         <label for="target-file" class="block text-sm text-gray-600 mb-1">Translation (Italian)</label>
-        <input id="target-file" type="file" accept=".txt,.docx" @change="pickTarget" class="text-sm" />
+        <input id="target-file" type="file" accept=".txt,.docx,.pdf" @change="pickTarget" class="text-sm" />
       </div>
       <div class="flex gap-3 items-end">
         <div class="flex-1">

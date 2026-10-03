@@ -209,7 +209,10 @@ def _extract_pdf(content: bytes) -> Extraction:
 
     from tradurre.services.glyph_resolver import apply_resolution, resolve_pua_glyphs
 
-    doc = pymupdf.open(stream=content, filetype="pdf")
+    try:
+        doc = pymupdf.open(stream=content, filetype="pdf")
+    except pymupdf.FileDataError:  # also an empty file (EmptyFileError is a subclass)
+        raise ValueError("The file is not a readable PDF") from None
     mapping, warnings = resolve_pua_glyphs(doc)
     lines, sizes = _pdf_lines(doc)
     if not lines:

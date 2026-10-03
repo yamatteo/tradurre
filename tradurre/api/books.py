@@ -11,6 +11,7 @@ from pathlib import PurePath
 from collections.abc import Callable
 
 from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
+from starlette.concurrency import run_in_threadpool
 
 from tradurre.db import get_db
 from tradurre.domain import DomainError, history
@@ -39,14 +40,12 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _extract(upload: UploadFile, content: bytes) -> tuple[str, str, Extraction]:
+async def _extract(upload: UploadFile, content: bytes) -> tuple[str, str, Extraction]:
     """(filename, format, extraction) of an uploaded file, or the HTTP error the import answers with."""
     filename = upload.filename or ""
-    if filename.lower().endswith(".pdf"):
-        # `extract` reads PDFs, but importing them is enabled by PLAN.md "PDF import in the app".
-        raise HTTPException(status_code=415, detail="PDF import is not available yet")
     try:
-        extraction = extract(filename, content)
+        # Seconds of CPU work for a PDF: off the event loop, so other requests aren't frozen meanwhile.
+        extraction = await run_in_threadpool(extract, filename, content)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     if not any(block.kind not in EXCLUDED_KINDS for block in extraction.blocks):
@@ -63,8 +62,8 @@ async def import_book(
     target_lang: str = Form("it"),
     db: sqlite3.Connection = Depends(get_db),
 ):
-    source_file = _extract(source, await source.read())
-    target_file = _extract(target, await target.read())
+    source_file = await _extract(source, await source.read())
+    target_file = await _extract(target, await target.read())
     title = title or PurePath(source_file[0]).stem
 
     book_id = str(uuid.uuid4())

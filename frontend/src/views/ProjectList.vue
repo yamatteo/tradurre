@@ -48,7 +48,7 @@ onMounted(load)
       <div class="flex gap-2">
         <button @click="router.push({ name: 'book-import' })"
           class="px-4 py-2 bg-white border border-blue-600 text-blue-700 rounded-lg hover:bg-blue-50 text-sm">
-          Import a book (txt/docx)
+          Import a book (txt/docx/pdf)
         </button>
         <button @click="showCreate = !showCreate"
           class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm">
