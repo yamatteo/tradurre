@@ -42,7 +42,7 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
   import through the form too (4.3 s, 1354 beads, 185 one-sided).
 - Licensed AGPL-3.0-only (`LICENSE`).
 - Python 3.14 only (`.python-version`, `requires-python`, launcher). Stage 0 is complete.
-- `uv run pytest`: 364 passed (PyMuPDF is a core dependency), also on a fresh clone (tests read only committed
+- `uv run pytest`: 359 passed (PyMuPDF is a core dependency), also on a fresh clone (tests read only committed
   synthetic fixtures; `-m library` tests run only where `library/contrefeu.*.pdf` exists, and assert counts only).
 - PDF extraction (`extract.py`) works on the reference book (page numbers, chapter numbers, two-up spreads), and
   `POST /api/v2/books` accepts PDFs (extraction in a worker thread; an unreadable PDF is a 400).
@@ -318,7 +318,8 @@ Design v2 under "Gold chapter" is binding. Start from the working tree (it holds
 - Don't touch `build_book`, the extractor, the segmenter, the aligner, the API or the frontend.
 
 ### Stale frontend warning
-Status: todo
+Status: done
+Report: 2026-10-04 — `__main__.py`: `_stale_build` + startup warning in both modes; 4 tests appended to the existing `tests/test_main.py` (the task said new; it already held the `--version` test); pytest 363 passed. The build was already current (rebuilt by the user 2026-10-03 23:43): no warning. After touching `BookView.vue` (no content change): "warning: the built frontend in …/tradurre/static is older than frontend/src; run 'npm run build' in frontend/ (or use the Vite dev server on http://localhost:5173 with --dev)."; after `npm run build`: no warning.
 **Done when:** `uv run pytest` passes with the new test; the `Report:` shows the startup line printed by `uv run
 tradurre --no-browser` on this machine before and after `npm run build`.
 
@@ -333,71 +334,6 @@ Found 2026-10-03: the user opened the app on :8000 and got the **v0.1 screens** 
 - `tests/test_main.py` (new): `_stale_build` on a `tmp_path` tree: newer source → true; older source → false; no
   `frontend/` → false; no `static/index.html` → false (the other warning covers it).
 - Nothing else changes.
-
-### Import warnings and run metadata
-Status: todo
-**Done when:** `uv run pytest` passes (new migration and API tests); `npm run type-check` passes; `npm run
-test:e2e` passes with the new test; the `Report:` quotes the stored stats JSON of a reference-book import (counts
-and timings only, no text), taken from `test_import_through_the_api` run with `-s`.
-
-SPEC §3.1.5 (warnings attached to the project, shown in the review view) and §4 "Debuggable" (runs record counts,
-timings, warnings in the project). Today the import's warnings are only in the `POST` response
-(`api/books.py:77-80`), shown once by `BookImport.vue`, then lost; nothing records counts or timings.
-
-- `tradurre/db.py`: migration 5 `_m005_runs` (append to `MIGRATIONS`, `_run_script`):
-  ```sql
-  CREATE TABLE runs (
-      id          INTEGER PRIMARY KEY,
-      project_id  TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-      kind        TEXT NOT NULL CHECK (kind IN ('import', 'align')),
-      created_at  TEXT NOT NULL,
-      app_version TEXT NOT NULL,
-      stats       TEXT NOT NULL              -- JSON object
-  );
-  CREATE INDEX idx_runs_project ON runs(project_id, id);
-  CREATE TABLE warnings (
-      id      INTEGER PRIMARY KEY,
-      run_id  INTEGER NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
-      side    TEXT CHECK (side IN ('source', 'target')),   -- NULL: the whole run
-      message TEXT NOT NULL
-  );
-  ```
-  `'align'` is reserved for Stage 5; only `'import'` is written now. Runs are not operations: not in the undo log.
-- `tradurre/api/books.py`, `import_book`: time each side's `extract` (`time.perf_counter`, around the threadpool
-  call) and `build_book`; in the same transaction as the build, insert one `import` run (`app_version` =
-  `importlib.metadata.version("tradurre")`) and one `warnings` row per extraction warning, with its side and the
-  message **without** the "source: " prefix (the `POST` response keeps its prefixed list unchanged). `stats`:
-  ```json
-  {"source": {"filename": "…", "format": "pdf", "bytes": 0, "extract_ms": 0, "pages": 0,
-              "blocks": {"paragraph": 0, "page_number": 0, …}, "excluded_blocks": 0, "segments": 0},
-   "target": {…}, "build_ms": 0, "beads": 0, "one_sided_beads": 0}
-  ```
-  `pages` = the highest block `page`, or `null` (txt/docx); `blocks` counts every kind present; `segments` counts
-  the side's included segments; ms are integers. Counts come from the database after `build_book` (one query
-  each), not from re-running segmentation.
-- `tradurre/models.py` + new endpoint `GET /api/v2/books/{id}/runs` → `list[BookRun]`, newest first: `id`,
-  `kind`, `created_at`, `app_version`, `stats` (`dict`), `warnings: list[{side: str | None, message: str}]`;
-  404 for an unknown book (as `get_book`). `BookResponse` does not change.
-- Frontend: `client.ts` `booksApi.getRuns(id)` and a `BookRun` type. `BookView.vue` fetches the runs once on
-  mount (not after corrections) and shows, in the header next to "Show excluded", a button `data-testid="import-log"`
-  labelled "Import log", or "Import log (N warnings)" / "(1 warning)" in amber when the latest import run has
-  warnings. Clicking it toggles a panel under the header (`data-testid="import-log-panel"`): the warnings as a
-  list (`data-testid="import-warning"` per item, "source: …"/"target: …"), then the latest import run's
-  `created_at`, `app_version` and `stats` as indented JSON in a `<pre data-testid="import-stats">`. Keyboard
-  navigation keeps working while it is open (the button is not a text entry).
-- Tests:
-  - `tests/test_books_api.py`: a txt import stores one run whose `stats` has the counts of the known fixture
-    (`beads` 4, `one_sided_beads` 1, `source.blocks == {"paragraph": 3}`, `pages` null, `extract_ms` ≥ 0) and no
-    warnings; the Latin-1 import stores one warning with side `target` and the unprefixed message; the PDF pair
-    test also checks `pages` 3 and `blocks.page_number` 3 per side; unknown book → 404; a refused import (empty
-    txt) writes no run.
-  - `tests/test_bead_index.py:149` already checks `user_version == len(MIGRATIONS)`; add nothing there unless it
-    fails.
-  - `tests/test_library.py` `test_import_through_the_api`: also `GET …/runs` and print its `stats` (with `-s`);
-    assert only that it has one run.
-  - `frontend/e2e/books.spec.ts`: after a Latin-1 target import through the API, the book view's button reads
-    "Import log (1 warning)", opening it shows the warning and the stats, and ↓ still moves the current bead.
-- Don't change the aligner, the segmenter, the extractor or any correction endpoint.
 
 ### Gold chapter
 Decided (user, 2026-10-03): made **in the app**, not in a spreadsheet. The translator imports the reference book,
@@ -541,15 +477,131 @@ by a closing `»`, a dialogue dash, an opening `«`, and splits after "M." or "S
 - Don't touch the aligner (`align`, `find_anchors`), the extractor, the API or the frontend.
 
 ### Baseline local aligner
-Not ready: waits for "Gold v2" and the baseline alignment F1 of the interim aligner it reports, from which the
-user and /pauli agree the target alignment F1.
-The current anchor heuristic plus a length-based (Gale–Church-style) cost, producing beads with real confidence,
-fast enough to run on import and on an arbitrary sub-range (for "re-align range"); replaces the interim
-alignment in `build_book`, scored on the gold chapter.
-Decided (user, 2026-10-03): it is not yet known whether Colab will run on every book, so this work is **capped**:
-one anchor + length aligner, a target F1 on the gold chapter agreed with the user when the task is written, no
-further tuning rounds. After the first real book has gone through import and review, /pauli asks again whether
-Colab (Stage 5) should come before any more local-aligner work.
+SPEC §3.1.4: a baseline alignment runs locally (no GPU, seconds per book), producing beads with real confidence.
+Decided (user, 2026-10-03): this work is **capped**: one anchor + length aligner, a target alignment F1 on the
+gold agreed with the user, no further tuning rounds. After the first real book has gone through import and
+review, /pauli asks again whether Colab (Stage 5) should come before any more local-aligner work.
+
+Baseline (Gold v2 report, 2026-10-04, interim anchor aligner): alignment F1 **0.870** (P 0.840, R 0.903),
+1353 predicted beads vs 1222 gold. Measured by Pauli (counts only): segmentation is identical in gold and import
+(1383/1426 segments; the user split or joined nothing); gold beads are 1204 × 1:1, 14 × 1:2, 4 others, **0
+one-sided**; the interim aligner makes only 1:1 (1173), 1:0 (87) and 0:1 (93): no 2:1/1:2 at all, and where its
+anchors run out it emits one side's run unpaired then the other's (gold beads 1099–1164, 66 beads, is one such
+gap). A length-based DP addresses exactly this.
+**Target (agreed with the user, 2026-10-04): alignment F1 ≥ 0.95.**
+The user then joined two false splits in the gold book (`Tr.`, `Com.`: abbreviations particular to this novel,
+not added to the segmenter); re-export the gold before scoring (the score is the same either way).
+
+#### Length aligner
+Status: todo
+**Done when:** `uv run pytest` passes with the new `tests/test_align.py`; `uv run python scripts/gold_score.py
+--aligner length` runs on the gold; the `Report:` gives alignment P/R/F1 and the bead count for both `--aligner
+anchor` and `--aligner length`, the aligner's own wall time on the reference book, and the predicted bead shapes
+(counts of 1:1, 1:0, 0:1, 2:1, 1:2, 2:2). The import's default does **not** change in this task.
+
+- New module `tradurre/services/align.py`, `align(source: list[str], target: list[str]) -> list[Bead]`, `Bead` a
+  dataclass `(source: list[int], target: list[int], confidence: float)` of indices into the inputs. Every index
+  appears exactly once, in order on each side (the beads tile both sequences). Either list may be empty.
+- Algorithm: dynamic programming over (i, j) with moves 1:1, 1:0, 0:1, 2:1, 1:2, 2:2 and cost = prior + length
+  + anchor:
+  - prior = −ln p, p(1:1) = 0.89, p(1:0) = p(0:1) = 0.005, p(2:1) = p(1:2) = 0.045, p(2:2) = 0.011;
+  - length (Gale–Church), for moves with both sides non-empty: `ls`, `lt` = character counts (whitespace removed)
+    of the move's source and target segments, `c` = total target chars / total source chars over the whole
+    input (1 if a side is empty), `δ = (lt − ls·c) / sqrt(ls · 6.8)`, cost = −ln max(1e-12, erfc(|δ| / √2));
+    zero for 1:0 and 0:1;
+  - anchor, for moves with both sides non-empty: −1.5 × min(3, number of distinct tokens present on both sides),
+    a token being a run of digits, or a word that starts with an uppercase letter and is not the first word of
+    its segment (compare exactly).
+  - Band: only cells with |j − i·m/n| ≤ 100 + |m − n| (n, m = input lengths; all cells if either is 0 or the band
+    covers everything); the DP must still reach (n, m).
+  - Ties broken by the move order listed above (1:1 first).
+- Confidence per bead: `round(exp(−max(0, cost − (−ln 0.89)) / 4), 3)`, so a clean 1:1 is near 1 and a 1:0 is
+  about 0.27.
+- `tradurre/services/build.py`: `build_book(..., aligner: str = "anchor")`; `"length"` uses `align.align` and
+  writes beads with method `"length"` and the bead's confidence; `"anchor"` is today's path, unchanged. The API
+  doesn't pass it (so the app stays on `"anchor"`).
+- First re-export the gold: `uv run python scripts/gold_export.py 046fb6f2-ba5d-4b6b-ac1a-d6a9caf9f38c`.
+- `scripts/gold_score.py`: `--aligner {anchor,length}` (default `anchor`), passed to `build_book`; also print the
+  predicted bead shapes (as in the Done when) and the aligner's wall time separately from extraction.
+- `tests/test_align.py` (synthetic texts only): equal sequences of similar-length sentences → all 1:1; one long
+  source sentence against two target sentences of proportional length → a 1:2 bead; a source
+  sentence with no counterpart in a run of equal-length pairs, long enough that merging it is implausible → a 1:0
+  bead; anchors (names, numbers) choose between two length-equivalent pairings; an empty side → all one-sided;
+  very different lengths (10 vs 30 segments) still tile; a randomized check (20 seeds, random lengths up to 60
+  segments a side) that every result tiles both sides in order; 1,500 × 1,500 synthetic sentences align in under
+  5 s; confidence of a clean 1:1 > 0.8 and of a 1:0 < 0.4.
+- Don't change `aligner.py`, the API, the frontend or any existing test.
+
+#### Length aligner on import
+Not ready: after "Length aligner", and only if it meets the agreed target. Then: `import_book` passes
+`aligner="length"`; every Python and e2e test whose expected bead layout changes keeps its layout by changing its
+fixture text (e.g. a longer unmatched sentence, so a 2:1 merge is implausible), not its expectations; the
+`"anchor"` path is removed from `build_book` once nothing uses it (the old v0.1 API keeps `aligner.py`).
+
+### Import warnings and run metadata
+Status: todo
+**Done when:** `uv run pytest` passes (new migration and API tests); `npm run type-check` passes; `npm run
+test:e2e` passes with the new test; the `Report:` quotes the stored stats JSON of a reference-book import (counts
+and timings only, no text), taken from `test_import_through_the_api` run with `-s`.
+
+SPEC §3.1.5 (warnings attached to the project, shown in the review view) and §4 "Debuggable" (runs record counts,
+timings, warnings in the project). Today the import's warnings are only in the `POST` response
+(`api/books.py:77-80`), shown once by `BookImport.vue`, then lost; nothing records counts or timings.
+
+- `tradurre/db.py`: migration 5 `_m005_runs` (append to `MIGRATIONS`, `_run_script`):
+  ```sql
+  CREATE TABLE runs (
+      id          INTEGER PRIMARY KEY,
+      project_id  TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      kind        TEXT NOT NULL CHECK (kind IN ('import', 'align')),
+      created_at  TEXT NOT NULL,
+      app_version TEXT NOT NULL,
+      stats       TEXT NOT NULL              -- JSON object
+  );
+  CREATE INDEX idx_runs_project ON runs(project_id, id);
+  CREATE TABLE warnings (
+      id      INTEGER PRIMARY KEY,
+      run_id  INTEGER NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+      side    TEXT CHECK (side IN ('source', 'target')),   -- NULL: the whole run
+      message TEXT NOT NULL
+  );
+  ```
+  `'align'` is reserved for Stage 5; only `'import'` is written now. Runs are not operations: not in the undo log.
+- `tradurre/api/books.py`, `import_book`: time each side's `extract` (`time.perf_counter`, around the threadpool
+  call) and `build_book`; in the same transaction as the build, insert one `import` run (`app_version` =
+  `importlib.metadata.version("tradurre")`) and one `warnings` row per extraction warning, with its side and the
+  message **without** the "source: " prefix (the `POST` response keeps its prefixed list unchanged). `stats`:
+  ```json
+  {"source": {"filename": "…", "format": "pdf", "bytes": 0, "extract_ms": 0, "pages": 0,
+              "blocks": {"paragraph": 0, "page_number": 0, …}, "excluded_blocks": 0, "segments": 0},
+   "target": {…}, "build_ms": 0, "beads": 0, "one_sided_beads": 0}
+  ```
+  `pages` = the highest block `page`, or `null` (txt/docx); `blocks` counts every kind present; `segments` counts
+  the side's included segments; ms are integers. Counts come from the database after `build_book` (one query
+  each), not from re-running segmentation.
+- `tradurre/models.py` + new endpoint `GET /api/v2/books/{id}/runs` → `list[BookRun]`, newest first: `id`,
+  `kind`, `created_at`, `app_version`, `stats` (`dict`), `warnings: list[{side: str | None, message: str}]`;
+  404 for an unknown book (as `get_book`). `BookResponse` does not change.
+- Frontend: `client.ts` `booksApi.getRuns(id)` and a `BookRun` type. `BookView.vue` fetches the runs once on
+  mount (not after corrections) and shows, in the header next to "Show excluded", a button `data-testid="import-log"`
+  labelled "Import log", or "Import log (N warnings)" / "(1 warning)" in amber when the latest import run has
+  warnings. Clicking it toggles a panel under the header (`data-testid="import-log-panel"`): the warnings as a
+  list (`data-testid="import-warning"` per item, "source: …"/"target: …"), then the latest import run's
+  `created_at`, `app_version` and `stats` as indented JSON in a `<pre data-testid="import-stats">`. Keyboard
+  navigation keeps working while it is open (the button is not a text entry).
+- Tests:
+  - `tests/test_books_api.py`: a txt import stores one run whose `stats` has the counts of the known fixture
+    (`beads` 4, `one_sided_beads` 1, `source.blocks == {"paragraph": 3}`, `pages` null, `extract_ms` ≥ 0) and no
+    warnings; the Latin-1 import stores one warning with side `target` and the unprefixed message; the PDF pair
+    test also checks `pages` 3 and `blocks.page_number` 3 per side; unknown book → 404; a refused import (empty
+    txt) writes no run.
+  - `tests/test_bead_index.py:149` already checks `user_version == len(MIGRATIONS)`; add nothing there unless it
+    fails.
+  - `tests/test_library.py` `test_import_through_the_api`: also `GET …/runs` and print its `stats` (with `-s`);
+    assert only that it has one run.
+  - `frontend/e2e/books.spec.ts`: after a Latin-1 target import through the API, the book view's button reads
+    "Import log (1 warning)", opening it shows the warning and the stats, and ↓ still moves the current bead.
+- Don't change the aligner, the segmenter, the extractor or any correction endpoint.
 
 ---
 
@@ -564,7 +616,9 @@ text unchanged and is recorded as a bead-boundary move; any other paste is a tex
 undoable). SPEC §3.3 gets a line for it when this stage is planned (wording to agree with the user then).
 
 The correction screen of Stage 2 grows into the main screen of SPEC §3.3: virtualized bead list, confidence
-and unmatched highlighting, next-problem navigation, skim-review pass, cut/copy/paste between rows, re-align
+and unmatched highlighting, next-problem navigation, a toggle that highlights beads holding more than one segment
+on either side (requested by the user, 2026-10-04: so 1:2/2:1 beads and false sentence splits are easy to spot;
+SPEC §3.3 line to agree), skim-review pass, cut/copy/paste between rows, re-align
 range, incremental updates instead of whole-book refetch, and showing a segment's original extracted text with
 "revert to original" (SPEC §2: "the translator can always compare or revert"; `original_text` is stored but not
 yet in the API). Plain text editing; TipTap is not used here.
