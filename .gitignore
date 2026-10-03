@@ -4,6 +4,6 @@ __pycache__
 *.json
 *.json.log
 *.pdf
+!tests/fixtures/**
 library
-uv.lock
 tradurre/static/

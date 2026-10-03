@@ -8,7 +8,6 @@ from pydantic import BaseModel, ValidationError
 from tradurre.models import (
     AlignedArtifact,
     ImportArtifactResponse,
-    ImportParagraph,
     ImportParagraphsRequest,
     ImportParagraphsResponse,
     ImportSectionsResponse,
@@ -27,65 +26,12 @@ from tradurre.services.aligner import (
     split_sentences,
 )
 from tradurre.services.artifact_io import parse_artifact
-from tradurre.services.importer import (
-    extract_and_align_txt,
-    extract_paragraphs_docx,
-    extract_paragraphs_txt,
-)
 
 router = APIRouter(tags=["import"])
 
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
-
-
-def _extract(file: UploadFile, content: bytes) -> list[ImportParagraph]:
-    from tradurre.services.importer import extract_paragraphs_pdf
-
-    name = (file.filename or "").lower()
-    if name.endswith(".docx"):
-        return extract_paragraphs_docx(content)
-    elif name.endswith(".txt"):
-        return extract_paragraphs_txt(content)
-    elif name.endswith(".pdf"):
-        return extract_paragraphs_pdf(content)
-    else:
-        raise HTTPException(status_code=400, detail=f"Unsupported file type: {name}")
-
-
-# ---------------------------------------------------------------------------
-# Legacy preview endpoint (kept for backward compatibility)
-# ---------------------------------------------------------------------------
-
-class ImportPreviewResponse(BaseModel):
-    source_paragraphs: list[ImportParagraph]
-    target_paragraphs: list[ImportParagraph]
-
-
-@router.post("/import/preview", response_model=ImportPreviewResponse)
-async def import_preview(source_file: UploadFile, target_file: UploadFile):
-    source_bytes = await source_file.read()
-    target_bytes = await target_file.read()
-
-    source_name = (source_file.filename or "").lower()
-    target_name = (target_file.filename or "").lower()
-
-    if source_name.endswith(".txt") and target_name.endswith(".txt"):
-        source_paragraphs, target_paragraphs = extract_and_align_txt(
-            source_bytes, target_bytes
-        )
-    else:
-        try:
-            source_paragraphs = _extract(source_file, source_bytes)
-            target_paragraphs = _extract(target_file, target_bytes)
-        except RuntimeError as e:
-            raise HTTPException(status_code=400, detail=str(e))
-
-    return ImportPreviewResponse(
-        source_paragraphs=source_paragraphs,
-        target_paragraphs=target_paragraphs,
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -345,12 +291,3 @@ async def import_artifact(artifact_file: UploadFile):
         stats=artifact.stats,
     )
 
-    return {
-        "id": project_id,
-        "title": body.title,
-        "source_lang": body.source_lang,
-        "target_lang": body.target_lang,
-        "created_at": now,
-        "updated_at": now,
-        "pair_count": len(body.pairs),
-    }

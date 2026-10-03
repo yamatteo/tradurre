@@ -59,11 +59,6 @@ export interface ImportParagraph {
   paragraph: number
 }
 
-export interface ImportPreviewResponse {
-  source_paragraphs: ImportParagraph[]
-  target_paragraphs: ImportParagraph[]
-}
-
 export interface ImportUnit {
   html: string
   text: string
@@ -140,16 +135,6 @@ export const api = {
     const params = new URLSearchParams({ q, lang })
     if (projectId) params.set('project_id', projectId)
     return request<SearchResponse>(`/search?${params}`)
-  },
-
-  // Import — legacy
-  importPreview: async (sourceFile: File, targetFile: File): Promise<ImportPreviewResponse> => {
-    const form = new FormData()
-    form.append('source_file', sourceFile)
-    form.append('target_file', targetFile)
-    const res = await fetch(`${BASE}/import/preview`, { method: 'POST', body: form })
-    if (!res.ok) throw new Error(`API error: ${res.status} ${res.statusText}`)
-    return res.json()
   },
 
   // Import — hierarchical wizard

@@ -98,7 +98,7 @@ the whole module fails to collect (the other 26 tests pass; 1 is skipped). The r
   output = not ignored).
 
 ### Repo hygiene
-Status: todo
+Status: done
 **Done when:** `uv run pytest` passes with the same counts (70 passed, 1 skipped); `npm run type-check` passes in
 `frontend/`; `git check-ignore -v tests/fixtures/x.pdf tests/fixtures/x.json uv.lock` prints nothing; `uv lock --check`
 passes and `uv.lock` is committed (`git ls-files uv.lock` prints it); `grep -rn
@@ -120,6 +120,7 @@ passes and `uv.lock` is committed (`git ls-files uv.lock` prints it); `grep -rn
   moves `pytest`/`httpx` into the dev group; no other version should change: check `git diff --stat` is limited
   to that, and report any upgrade it made) and commit `uv.lock` with the rest of the task.
 - Don't touch the `pdf`/`ocr`/`align` extras or any other endpoint.
+Report: 2026-10-03 — pytest/httpx moved to dev group, `uv.lock` tracked (relock moved only those two, no version changes); removed `/import/preview` (+ now-dead `_extract` helper and its imports), the unreachable return, `importPreview` in client.ts; `!tests/fixtures/**` added; pytest 70 passed, 1 skipped. `npm run type-check` not run: no Node.js on this machine.
 
 ### Database access
 Status: todo
