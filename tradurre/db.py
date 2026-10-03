@@ -99,6 +99,18 @@ CREATE TABLE segments (
 CREATE INDEX idx_segments_bead ON segments(bead_id);
 """
 
+_OPERATIONS_SCHEMA = """
+CREATE TABLE operations (
+    id         INTEGER PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    kind       TEXT NOT NULL,
+    changes    TEXT NOT NULL,                -- JSON list of [table, id, before, after]
+    undone     INTEGER NOT NULL DEFAULT 0 CHECK (undone IN (0, 1)),
+    created_at TEXT NOT NULL
+);
+CREATE INDEX idx_operations_project ON operations(project_id, id);
+"""
+
 
 def get_db_path() -> Path:
     path = Path.home() / ".tradurre"
@@ -159,8 +171,13 @@ def _m002_text_alignment(conn: sqlite3.Connection) -> None:
     _run_script(conn, _TEXT_SCHEMA)
 
 
+def _m003_operations(conn: sqlite3.Connection) -> None:
+    """Operation log for undo/redo (tradurre.domain.history)."""
+    _run_script(conn, _OPERATIONS_SCHEMA)
+
+
 # Applied in order; migration n sets PRAGMA user_version = n. Never edit an applied one.
-MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [_m001_pairs, _m002_text_alignment]
+MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [_m001_pairs, _m002_text_alignment, _m003_operations]
 
 
 def init_db(conn: sqlite3.Connection) -> None:

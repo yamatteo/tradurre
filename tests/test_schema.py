@@ -4,7 +4,7 @@ import sqlite3
 
 import pytest
 
-from tradurre.db import get_connection, init_db
+from tradurre.db import MIGRATIONS, get_connection, init_db
 
 NEW_TABLES = ("documents", "blocks", "segments", "beads")
 
@@ -43,7 +43,7 @@ def _count(conn, table):
 
 
 def test_user_version(conn):
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 2
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == len(MIGRATIONS)
 
 
 def test_delete_bead_with_segments_fails(conn):

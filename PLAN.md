@@ -463,9 +463,12 @@ each of the five corruptions below is reported with its invariant's code; `uv ru
   slot first if needed).
 - Don't touch `tradurre/db.py`, `tradurre/api/`.
 Report: 2026-10-03 — `tradurre/domain/` with `layer.py` (`NewBlock`, `NewBead`, `GAP`, `create_document`, `append_beads`) and `invariants.py` (`check_project`, I1–I5; I2 checked in both directions); `tests/test_domain_invariants.py` 7 passed (valid fixture, bead `ord` continuation, one test per invariant); pytest 94 passed, 1 skipped. A 10,000-bead project checks in 0.026 s.
+Verified (/pauli, 2026-10-03, `a9e9b70`): matches the task; I4's walk catches both an interleaved bead and a swapped
+order; pytest 94 passed, 1 skipped. Braun's note (a project missing a document, or with no beads) needs no new
+invariant: segments without a bead already fail I1, and a missing document is the import's to prevent (Stage 2).
 
 #### Recorder and operation log
-Status: todo
+Status: done
 **Done when:** `tests/test_domain_history.py` passes (cases below); `uv run pytest` otherwise unchanged.
 
 - Migration 3 in `tradurre/db.py` (`_m003_operations`, appended to `MIGRATIONS`), via `_run_script`:
@@ -483,7 +486,9 @@ Status: todo
   ```
   (`tests/test_schema.py`'s `user_version == 2` assertion becomes `== len(MIGRATIONS)`.)
 - `tradurre/domain/history.py`:
-  - `TABLES = {"documents", "blocks", "segments", "beads"}` (the only tables a Recorder may touch).
+  - `TABLES = {"blocks", "segments", "beads"}`: the only tables a Recorder may touch, and `insert`/`delete` only on
+    `segments` and `beads` (raise `ValueError` otherwise). Reason: deleting a block or document cascades to its
+    segments outside the Recorder, so undo would lose them; no SPEC §3.3 correction creates or deletes either.
   - `class Recorder`: `__init__(self, conn)`; `insert(table, values: dict) -> int`; `update(table, id, **fields)`;
     `delete(table, id)`. Each reads the full row before (`SELECT *`), performs the write, reads it after, and
     appends `[table, id, before, after]` to `self.changes`. Updating a row twice in one operation records two
@@ -498,7 +503,8 @@ Status: todo
     in order, using `after` as target; set `undone = 0`.
   - Applying follows the four-step procedure in the design above. The target of a row touched several times in
     one change list is the **last** `after` (redo) or the **first** `before` (undo) for that row; compute the net
-    per row first, then apply.
+    per row first, then classify it against the current database row: target `None` and row present → delete;
+    target present and row absent → insert (with its old id); both present → update (all columns).
   - None of these commit; the caller owns the transaction (`with conn:` + `BEGIN IMMEDIATE`), and calls
     `PRAGMA defer_foreign_keys = ON` itself, right after `BEGIN`. Say so in the module docstring.
 - `tests/test_domain_history.py`, on a project built with the layer builder (2 beads × 2 segments per side), with a
@@ -515,6 +521,7 @@ Status: todo
   - undo/redo survive closing and reopening the connection;
   - `check_project` returns `[]` after every step.
 - Don't touch `tradurre/api/`.
+Report: 2026-10-03 — migration 3 (`operations`), `tradurre/domain/history.py` (`Recorder`, `record` with coalescing, `undo`/`redo` via net-per-row four-step apply); `test_schema.py` version assertion now `len(MIGRATIONS)`; `tests/test_domain_history.py` 9 passed (the listed cases plus Recorder table restrictions); pytest 103 passed, 1 skipped. Deviation: the ord-swap test also swaps the two beads' segments, else the swapped state itself breaks I4 and "`check_project` after every step" can't hold. Checked ad hoc: undoing a merge without `defer_foreign_keys` raises `IntegrityError`, so the docstring's requirement is real.
 
 #### Ordering helpers
 Not ready: `ord_between`/renumber in `tradurre/domain/ordering.py`, through the Recorder, per the design above.
