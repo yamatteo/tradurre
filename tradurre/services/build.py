@@ -7,7 +7,8 @@ Segmentation is `segment.split_sentences` (French/Italian conventions); alignmen
 import sqlite3
 
 from tradurre.domain.layer import NewBead, NewBlock, append_beads, create_document
-from tradurre.services import aligner, segment
+from tradurre.services import align, segment
+from tradurre.services import aligner as anchor_aligner
 from tradurre.services.extract import EXCLUDED_KINDS, Extraction
 
 
@@ -38,10 +39,12 @@ def build_book(
     project_id: str,
     source: tuple[str, str, Extraction],
     target: tuple[str, str, Extraction],
+    aligner: str = "anchor",
 ) -> None:
     """Create both documents and the baseline beads of an existing project, inside the caller's transaction.
 
-    `source` and `target` are (filename, format, extraction). Not recorded in the operation history.
+    `source` and `target` are (filename, format, extraction). `aligner` is "anchor" (v0.1's, the import's
+    default) or "length" (`align.align`; PLAN.md, "Length aligner"). Not recorded in the operation history.
     """
     sides = []
     for side, (filename, format, extraction) in (("source", source), ("target", target)):
@@ -52,7 +55,16 @@ def build_book(
 
     source_texts = [text for _, text in source_segments]
     target_texts = [text for _, text in target_segments]
-    pairs = aligner.align(source_texts, target_texts, aligner.find_anchors(source_texts, target_texts))
+    if aligner == "length":
+        append_beads(conn, project_id, [
+            NewBead([source_segments[k][0] for k in bead.source], [target_segments[k][0] for k in bead.target],
+                    bead.confidence, "length")
+            for bead in align.align(source_texts, target_texts)
+        ])
+        return
+    if aligner != "anchor":
+        raise ValueError(f"unknown aligner {aligner!r}")
+    pairs = anchor_aligner.align(source_texts, target_texts, anchor_aligner.find_anchors(source_texts, target_texts))
 
     # `align` returns every unit once, in order, padded with "": consume the segment ids sequentially.
     remaining = {"source": iter(source_segments), "target": iter(target_segments)}

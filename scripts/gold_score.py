@@ -12,6 +12,7 @@ import json
 import sys
 import tempfile
 import time
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -19,16 +20,19 @@ from tradurre.db import get_connection, init_db
 from tradurre.domain.history import transaction
 from tradurre.services.build import build_book
 from tradurre.services.extract import extract
-from tradurre.services.gold import Layer, layer_from_json, read_layer, score
+from tradurre.services.gold import SIDES, Layer, layer_from_json, read_layer, score
 
 LIBRARY = Path(__file__).resolve().parent.parent / "library"
 
 
-def _build(source: Path, target: Path) -> Layer:
-    """The text layer of the pair, imported as `POST /api/v2/books` does."""
+def _build(source: Path, target: Path, aligner: str = "anchor") -> tuple[Layer, float, float]:
+    """The text layer of the pair, imported as `POST /api/v2/books` does with the given aligner, and the seconds
+    spent extracting and building (segmentation, alignment, database writes)."""
+    start = time.perf_counter()
     files = []
     for path in (source, target):
         files.append((path.name, path.suffix.lower().lstrip("."), extract(path.name, path.read_bytes())))
+    extracted = time.perf_counter()
     with tempfile.TemporaryDirectory() as tmp:
         conn = get_connection(Path(tmp) / "gold.db")
         try:
@@ -40,10 +44,21 @@ def _build(source: Path, target: Path) -> Layer:
                     "VALUES (?, ?, ?, ?, ?, ?)",
                     ("gold", source.stem, "fr", "it", now, now),
                 )
-                build_book(conn, "gold", files[0], files[1])
-            return read_layer(conn, "gold")
+                build_book(conn, "gold", files[0], files[1], aligner=aligner)
+            built = time.perf_counter()
+            return read_layer(conn, "gold"), extracted - start, built - extracted
         finally:
             conn.close()
+
+
+def _shapes(layer: Layer) -> Counter:
+    """How many beads have each (source segments, target segments) shape."""
+    counts = [[0, 0] for _ in layer.reviewed]
+    for k, side in enumerate(SIDES):
+        for _, bead in layer.side(side):
+            if bead is not None:
+                counts[bead][k] += 1
+    return Counter((s, t) for s, t in counts)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -51,6 +66,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--gold", type=Path, default=LIBRARY / "contrefeu.gold.json")
     parser.add_argument("--source", type=Path, default=LIBRARY / "contrefeu.fr.pdf")
     parser.add_argument("--target", type=Path, default=LIBRARY / "contrefeu.it.pdf")
+    parser.add_argument("--aligner", choices=("anchor", "length"), default="anchor")
     args = parser.parse_args(argv)
     for path in (args.gold, args.source, args.target):
         if not path.exists():
@@ -58,16 +74,16 @@ def main(argv: list[str] | None = None) -> int:
             return 1
 
     gold = layer_from_json(json.loads(args.gold.read_text(encoding="utf-8")))
-    start = time.perf_counter()
-    predicted = _build(args.source, args.target)
-    elapsed = time.perf_counter() - start
+    predicted, extract_s, build_s = _build(args.source, args.target, args.aligner)
     try:
         result = score(gold, predicted)
     except ValueError as e:
         print(e, file=sys.stderr)
         return 1
 
-    print(f"import: {elapsed:.1f} s; beads: {len(gold.reviewed)} gold, {len(predicted.reviewed)} predicted")
+    print(f"aligner: {args.aligner}; extraction {extract_s:.1f} s, build {build_s:.1f} s; "
+          f"beads: {len(gold.reviewed)} gold, {len(predicted.reviewed)} predicted")
+    print("predicted bead shapes: " + ", ".join(f"{s}:{t} {n}" for (s, t), n in _shapes(predicted).most_common()))
     print(f"alignment: precision {result.alignment_precision:.3f}  recall {result.alignment_recall:.3f}  "
           f"F1 {result.alignment_f1:.3f}  (boundaries: {result.gold_boundaries} gold, "
           f"{result.predicted_boundaries} predicted)")

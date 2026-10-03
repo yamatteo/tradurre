@@ -129,6 +129,8 @@ The translator skims **the whole book**. The review view is optimized for steady
   Performance stays smooth on a 10,000-bead book.
 - Low-confidence beads and unmatched (1:0, 0:1) beads stand out visually; there are shortcuts to jump to the next
   one.
+- On request, beads holding more than one segment on either side are highlighted too, so many-to-one beads and
+  false sentence splits are easy to spot.
 - **Reviewed marks.** Each bead is reviewed or not, and the mark can be set or cleared on any single bead. Beads
   produced by an aligner start unreviewed; a bead produced by a correction inherits the mark (a merge is reviewed
   only if all merged beads were). Progress shows the share of beads reviewed, with a shortcut to the next unreviewed

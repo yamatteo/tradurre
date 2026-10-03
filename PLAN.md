@@ -493,7 +493,7 @@ The user then joined two false splits in the gold book (`Tr.`, `Com.`: abbreviat
 not added to the segmenter); re-export the gold before scoring (the score is the same either way).
 
 #### Length aligner
-Status: todo
+Status: done
 **Done when:** `uv run pytest` passes with the new `tests/test_align.py`; `uv run python scripts/gold_score.py
 --aligner length` runs on the gold; the `Report:` gives alignment P/R/F1 and the bead count for both `--aligner
 anchor` and `--aligner length`, the aligner's own wall time on the reference book, and the predicted bead shapes
@@ -531,6 +531,7 @@ anchor` and `--aligner length`, the aligner's own wall time on the reference boo
   segments a side) that every result tiles both sides in order; 1,500 × 1,500 synthetic sentences align in under
   5 s; confidence of a clean 1:1 > 0.8 and of a 1:0 < 0.4.
 - Don't change `aligner.py`, the API, the frontend or any existing test.
+Report: 2026-10-04 — `services/align.py` (banded Gale–Church + anchors), `build_book(aligner=)`, gold_score `--aligner`/shapes/timings, 10 tests in `tests/test_align.py`. Gold: anchor P 0.840 R 0.903 F1 0.870, 1353 beads (1:1 1173, 0:1 93, 1:0 87); length P 0.991 R 0.998 **F1 0.994 ≥ 0.95**, 1256 beads vs 1222 gold (1:1 1218, 1:2 16, 2:1 10, 1:0 6, 0:1 6); exclusion unchanged (F1 0.592). `align.align` on the book's 1231×1243 included segments: 1.8 s (build step 1.9 s vs 1.0 s for anchor). pytest 373 passed (was 363).
 
 #### Length aligner on import
 Not ready: after "Length aligner", and only if it meets the agreed target. Then: `import_book` passes
@@ -617,8 +618,7 @@ undoable). SPEC §3.3 gets a line for it when this stage is planned (wording to 
 
 The correction screen of Stage 2 grows into the main screen of SPEC §3.3: virtualized bead list, confidence
 and unmatched highlighting, next-problem navigation, a toggle that highlights beads holding more than one segment
-on either side (requested by the user, 2026-10-04: so 1:2/2:1 beads and false sentence splits are easy to spot;
-SPEC §3.3 line to agree), skim-review pass, cut/copy/paste between rows, re-align
+on either side (requested by the user, 2026-10-04; SPEC §3.3 "On request, beads holding more than one segment…", agreed), skim-review pass, cut/copy/paste between rows, re-align
 range, incremental updates instead of whole-book refetch, and showing a segment's original extracted text with
 "revert to original" (SPEC §2: "the translator can always compare or revert"; `original_text` is stored but not
 yet in the API). Plain text editing; TipTap is not used here.
