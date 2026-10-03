@@ -5,6 +5,8 @@ extractor; this module only borrows its cleanup.
 """
 
 import re
+import statistics
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from io import BytesIO
 
@@ -136,6 +138,135 @@ def _pdf_lines(doc) -> tuple[list[_Line], list[tuple[float, float]]]:
     return out, sizes
 
 
+_PAGE_NUMBER = re.compile(r"^\s*([0-9]+|[ivxlcdm]+)\s*$", re.IGNORECASE)
+# Case-sensitive: lower-case Roman numerals would catch Italian words ("di", "mi", "vi") wrapped alone on a line.
+_CHAPTER_NUMBER = re.compile(r"^\s*([0-9]+|[IVXLC]+)\s*$")
+_BAND = 0.15  # top/bottom band, as a share of the page height, measured on the line's vertical centre
+_FREQUENT_SLOT = 0.25  # page numbers sit in the same (band, size) slot on at least this share of logical pages
+
+
+def _band(line: _Line, height: float) -> str | None:
+    centre = (line.y0 + line.y1) / 2
+    if centre <= _BAND * height:
+        return "top"
+    if centre >= (1 - _BAND) * height:
+        return "bottom"
+    return None
+
+
+def _classify(lines: list[_Line], sizes: list[tuple[float, float]], body_size: float) -> list[str]:
+    """The kind of every line: page_number, running_head, heading, footnote or paragraph."""
+    bands = [_band(line, sizes[line.page][1]) for line in lines]
+
+    slots: dict[tuple[str, int], set[int]] = defaultdict(set)
+    for line, band in zip(lines, bands):
+        if band and line.size <= body_size + 0.5 and _PAGE_NUMBER.match(line.text):
+            slots[(band, round(line.size))].add(line.page)
+    frequent = {slot for slot, pages in slots.items() if len(pages) >= _FREQUENT_SLOT * len(sizes)}
+
+    def head_key(line: _Line) -> str:
+        return re.sub(r"\d", "", line.text).casefold().strip()
+
+    head_pages: dict[str, set[int]] = defaultdict(set)
+    for line, band in zip(lines, bands):
+        if band == "top" and head_key(line):
+            head_pages[head_key(line)].add(line.page)
+
+    kinds: list[str] = []
+    for line, band in zip(lines, bands):
+        height = sizes[line.page][1]
+        if band and (band, round(line.size)) in frequent and _PAGE_NUMBER.match(line.text):
+            kinds.append("page_number")
+        elif band == "top" and head_key(line) and len(head_pages[head_key(line)]) >= 3:
+            kinds.append("running_head")
+        elif line.size >= body_size * 1.1 or _CHAPTER_NUMBER.match(line.text):
+            kinds.append("heading")
+        elif line.size <= body_size * 0.9 and (line.y0 + line.y1) / 2 >= 0.6 * height:
+            kinds.append("footnote")
+        else:
+            kinds.append("paragraph")
+    return kinds
+
+
+def _join_lines(texts: list[str]) -> str:
+    """Join a block's lines: soft hyphens vanish, a hard hyphen after a letter is kept, otherwise one space."""
+    out = ""
+    for text in texts:
+        text = text.rstrip()
+        if not out:
+            out = text
+        elif out.endswith("\u00ad"):
+            out = out[:-1] + text.lstrip()
+        elif re.search(r"[^\W\d_]-$", out):
+            out += text.lstrip()
+        else:
+            out += " " + text.lstrip()
+    return out.replace("\u00ad", "")
+
+
+def _extract_pdf(content: bytes) -> Extraction:
+    import pymupdf
+
+    from tradurre.services.glyph_resolver import apply_resolution, resolve_pua_glyphs
+
+    doc = pymupdf.open(stream=content, filetype="pdf")
+    mapping, warnings = resolve_pua_glyphs(doc)
+    lines, sizes = _pdf_lines(doc)
+    if not lines:
+        return Extraction([], warnings)
+
+    weights: Counter[float] = Counter()
+    for line in lines:
+        weights[round(line.size, 1)] += len(line.text)
+    body_size = weights.most_common(1)[0][0]
+
+    body_x: dict[int, Counter[int]] = defaultdict(Counter)
+    for line in lines:
+        if abs(line.size - body_size) <= 0.5:
+            body_x[line.page][round(line.x0)] += 1
+    default_left = sum(body_x.values(), Counter()).most_common(1)[0][0] if body_x else 0
+    left = {page: xs.most_common(1)[0][0] for page, xs in body_x.items()}
+
+    kinds = _classify(lines, sizes, body_size)
+    body = [line for line, kind in zip(lines, kinds) if kind == "paragraph"]
+    pitches = [b.y0 - a.y0 for a, b in zip(body, body[1:]) if a.page == b.page and b.y0 > a.y0]
+    pitch = statistics.median(pitches) if pitches else body_size * 1.2
+
+    # Blocks in order of their first line; a paragraph stays open across excluded lines (page numbers, running
+    # heads, footnotes), so it can continue over a page break.
+    blocks: list[tuple[str, list[_Line]]] = []
+    paragraph: list[_Line] | None = None
+    for line, kind in zip(lines, kinds):
+        if kind == "paragraph":
+            previous = paragraph[-1] if paragraph else None
+            indented = line.x0 >= left.get(line.page, default_left) + 0.5 * body_size
+            gap = previous is not None and previous.page == line.page and line.y0 - previous.y0 > 1.5 * pitch
+            if paragraph is None or indented or gap:
+                paragraph = []
+                blocks.append(("paragraph", paragraph))
+            paragraph.append(line)
+            continue
+        if kind not in EXCLUDED_KINDS:
+            paragraph = None  # a heading ends the paragraph
+        previous_block = blocks[-1] if blocks else None
+        if (
+            kind in ("page_number", "running_head")
+            or previous_block is None
+            or previous_block[0] != kind
+            or previous_block[1][-1].page != line.page  # only paragraphs run over a page break
+        ):
+            blocks.append((kind, [line]))
+        else:
+            blocks[-1][1].append(line)
+
+    extracted = []
+    for kind, block_lines in blocks:
+        text = _clean(apply_resolution(_join_lines([line.text for line in block_lines]), mapping))
+        if text:
+            extracted.append(ExtractedBlock(kind, text, block_lines[0].page + 1))
+    return Extraction(extracted, warnings)
+
+
 def extract(filename: str, content: bytes) -> Extraction:
     """Extract the blocks of a .txt, .docx or .pdf file, in reading order."""
     name = (filename or "").lower()
@@ -144,5 +275,5 @@ def extract(filename: str, content: bytes) -> Extraction:
     if name.endswith(".docx"):
         return _extract_docx(content)
     if name.endswith(".pdf"):
-        raise NotImplementedError("PDF extraction is not implemented yet")
+        return _extract_pdf(content)
     raise ValueError(f"Unsupported file type: {filename!r} (expected .txt, .docx or .pdf)")

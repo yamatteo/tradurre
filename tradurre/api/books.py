@@ -42,10 +42,11 @@ def _now() -> str:
 def _extract(upload: UploadFile, content: bytes) -> tuple[str, str, Extraction]:
     """(filename, format, extraction) of an uploaded file, or the HTTP error the import answers with."""
     filename = upload.filename or ""
+    if filename.lower().endswith(".pdf"):
+        # `extract` reads PDFs, but importing them is enabled by PLAN.md "PDF import in the app".
+        raise HTTPException(status_code=415, detail="PDF import is not available yet")
     try:
         extraction = extract(filename, content)
-    except NotImplementedError:
-        raise HTTPException(status_code=415, detail="PDF import is not available yet")
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     if not any(block.kind not in EXCLUDED_KINDS for block in extraction.blocks):

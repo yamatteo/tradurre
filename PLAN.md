@@ -42,8 +42,8 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
   after Stage 3's "PDF import in the app".
 - Licensed AGPL-3.0-only (`LICENSE`).
 - Python 3.14 only (`.python-version`, `requires-python`, launcher). Stage 0 is complete.
-- `uv run pytest`: 249 passed with PyMuPDF installed (248 + 1 skipped without), also on a fresh clone (tests read
-  only committed synthetic fixtures).
+- `uv run pytest`: 253 passed (PyMuPDF is in the `dev` group), also on a fresh clone (tests read only committed
+  synthetic fixtures).
 - `uv.lock` is tracked; `pytest`/`httpx` are in the `dev` group. The Windows launcher's `uv tool install` resolves
   from PyPI and never reads the lock.
 - `npm run type-check` passes; releases build with `npm run build`. `npm run test:e2e` runs on its own
@@ -128,6 +128,9 @@ Continues "Structured extraction" (Stage 2) with the same design.
 Status: done
 **Done when:** `tests/test_extract_pdf.py` passes; `uv run pytest` otherwise unchanged.
 Report: 2026-10-03 — `pymupdf` in the `dev` group (`uv.lock`), `_Line`, `_pdf_lines` with the two-up rule in `extract.py` (`extract` still refuses `.pdf`); `tests/test_extract_pdf.py` 4 tests (the two-up case needs ≥ 60% two-up spreads, so its document has 3 spreads, one with text only on the right); local check on the reference book: FR 128 logical pages, IT 184 (91 spreads × 2 + 2 portrait covers), left page before right across a spread; pytest 253 passed (249 + 4).
+Verified (/pauli, 2026-10-03, `1e3a45b`): pytest 253; the rule and tests match the task, and the test-document
+fix is correct (the task's own 60% rule required it). Measured on the reference book with `_pdf_lines` to check
+the next task's thresholds, which led to corrections there (see its "Measured" note).
 
 In `extract.py`, the first half of PDF extraction (no blocks yet):
 - Add `pymupdf` to the `dev` dependency group (`uv add --dev pymupdf`; `uv.lock` updated) so PDF tests run in
@@ -151,21 +154,50 @@ In `extract.py`, the first half of PDF extraction (no blocks yet):
   page sizes returned correctly.
 
 #### PDF blocks
-Status: todo
-**Done when:** `tests/test_extract_pdf.py` passes with the cases below; `uv run pytest` otherwise unchanged.
+Status: done
+**Done when:** `tests/test_extract_pdf.py` passes with the cases below; `uv run pytest -m library` passes on this
+machine (the reference book is present); `uv run pytest` otherwise unchanged.
+Report: 2026-10-03 — rule (a) applied (non-paragraph blocks end at a page boundary) on top of the blocked tree: `_extract_pdf`, `extract` reads `.pdf`, API refuses `.pdf` by extension, obsolete test removed; `tests/test_extract_pdf.py` 13 pass (2 new for rule (a)); `tests/test_library.py` passes: FR 208 paragraph / 120 page_number / 27 heading / 3 footnote, IT 197 / 157 / 27 / 2, chapter numbers 25 = 25, no stray numbers, 0 warnings; `uv run pytest` 266 passed (253 − 1 obsolete + 9 PDF + 5 library runs); e2e `books.spec.ts` 4 passed.
+Report: 2026-10-03 — blocked on one library test: number-only headings FR 25, IT 24. The missing IT one (size 11.3, top of logical page 7) merges into the preceding heading block (a 9-word front-matter heading on page 5; page 6 is blank), because "consecutive lines of the same kind form one block" has no page condition. Needs a rule: e.g. non-paragraph blocks don't continue across a page boundary, or a chapter-number line is always its own block. Everything else is done, uncommitted: `_extract_pdf` (classification, assembly, joining, glyphs), `extract` reads `.pdf`; the API still refuses `.pdf` with 415 (now by extension, since `extract` no longer raises) and the obsolete `test_pdf_not_implemented_yet` is removed; `tests/test_extract_pdf.py` 11 pass; `tests/test_library.py` 3 tests (marker registered), 2 pass: page numbers FR 120, IT 157; stray included numbers 0 both sides; blocks FR 208 paragraph / 120 page_number / 27 heading / 3 footnote, IT 197 / 157 / 26 / 2; `uv run pytest` here: 263 passed, 1 failed (that library test; on a fresh clone the library tests skip).
+Answered (/pauli, 2026-10-03, user agreeing): resume from the uncommitted tree. **Rule (a): a block of any kind
+other than `paragraph` never continues onto another logical page** (in `_extract_pdf`'s assembly, a line starts a
+new block when the previous block's last line is on a different page). Only paragraphs legitimately run over a
+page break, and they already have their own rule. This also fixes a second merge the same line of code allows: a
+footnote at the bottom of page n and one at the bottom of page n+1, with the paragraph continuing between them,
+currently join (the continuing paragraph doesn't end the footnote block). Not adopted: "a chapter number is always
+its own block" alone (fixes only this case; a half title and a dedication on consecutive pages would still merge);
+within one page, "IV" followed by a title line still forms one heading block, which aligns fine since the other
+side merges the same way. Add tests: two heading lines on consecutive pages (with a blank page between) → two
+heading blocks; footnotes at the bottom of two consecutive pages, with a paragraph running across the break → two
+footnote blocks and one paragraph. Braun's deviations are accepted: the API refuses `.pdf` by extension until "PDF
+import in the app"; test PDFs embed the font to keep U+00AD.
 
 `extract` for `.pdf`, from `_pdf_lines`:
-- `body_size` = the span size covering the most characters in the document (rounded to 0.1 pt). Per logical page,
+- `body_size` = the line size covering the most characters in the document (`_Line.size` rounded to 0.1 pt,
+  weighted by `len(text)`; lines carry only their largest span's size, which is good enough). Per logical page,
   `left` = the most common `round(x0)` among lines whose `size` is within 0.5 pt of `body_size`.
+- **Measured** (/pauli, 2026-10-03, reference book through `_pdf_lines`; numbers only, no text): FR page numbers
+  sit at `y0/h` 0.871 (size 10, body 11.9), so a 12% band by `y0` would catch **none** of them; IT page numbers
+  at 0.933 (size 8.2, body 12.5). Number-only lines that are **chapter numbers**: FR 25, size 14, anywhere from
+  0.13 to 0.72 of the page; IT 25, size 11 (smaller than the body!), at the top (0.08) of the chapter's first
+  page. So position and size alone can't tell IT chapter numbers from page numbers; frequency can (page numbers
+  sit in the same slot on 120/128 and 157/184 logical pages, chapter numbers on ~13%). No running heads in this
+  book. First-line indent ≈ 14 pt on both sides; body line pitch 14.0 (FR) and ≈ 16.1 (IT).
+- "In the top/bottom band" below means: the line's vertical centre `(y0 + y1) / 2` is within 15% of the logical
+  page height from its top or bottom edge.
 - Classification, per line, in this order:
-  - `page_number`: text matches `^\s*([0-9]+|[ivxlcdm]+)\s*$` (case-insensitive) and the line lies in the top or
-    bottom 12% of the logical page height;
-  - `running_head`: in the top 12%, and its text with digits removed, casefolded and stripped is non-empty and
-    occurs (so normalized) in the top 12% of at least 3 logical pages;
-  - `heading`: `size >= body_size * 1.1`;
+  - `page_number`: text matches `^\s*([0-9]+|[ivxlcdm]+)\s*$` (case-insensitive), `size <= body_size + 0.5`, in
+    the top or bottom band, **and** its slot is frequent: candidates are grouped by (band, `round(size)`), and only
+    a group with lines on at least 25% of the document's logical pages counts;
+  - `running_head`: in the top band, and its text with digits removed, casefolded and stripped is non-empty and
+    occurs (so normalized) in the top band of at least 3 logical pages;
+  - `heading`: `size >= body_size * 1.1`, or a line that is only a chapter number, `^\s*([0-9]+|[IVXLC]+)\s*$`
+    **case-sensitive** (lower-case Roman numerals would catch Italian words like "di", "mi", "vi" wrapped alone
+    onto a line; lower-case Roman page numbers are still caught by `page_number`);
   - `footnote`: `size <= body_size * 0.9` and in the bottom 40% of the page;
   - otherwise body.
-- Assembly: consecutive lines of the same kind form one block, except that body (`paragraph`) lines also start a
+- Assembly: consecutive lines of the same kind form one block (non-paragraph blocks never across a logical page
+  boundary; see "Answered" above), except that body (`paragraph`) lines also start a
   new block when `x0 >= left + 0.5 * body_size` (first-line indent) or the vertical gap to the previous body line
   exceeds 1.5 × the median body line pitch of the document; `page_number` and `running_head` lines are one block
   each. A paragraph continues across a page boundary unless the next page's first body line is indented (the
@@ -177,9 +209,16 @@ Status: todo
   block's text; its warnings go to `Extraction.warnings`.
 - Tests (PDFs built in the test, one font, sizes like the reference book): indented paragraphs become separate
   blocks; a paragraph running over a page break stays one block, with the page number between excluded as its own
-  `page_number` block; a soft hyphen and a hard hyphen at line ends; a repeated top line on 3 pages →
-  `running_head`, on 2 → not; a larger line → `heading`; small text at the bottom → `footnote`; a two-up document
-  reads left page then right page.
+  `page_number` block; a page number at 87% of the page height (FR-like) is a `page_number`; in a 10-page document
+  with page numbers at the bottom of every page, a small number-only line at the top of 2 pages (IT-like chapter
+  number) is a `heading`, not a `page_number`; a soft hyphen and a hard hyphen at line ends; a repeated top line
+  on 3 pages → `running_head`, on 2 → not; a larger line → `heading`; small text at the bottom → `footnote`; a
+  two-up document reads left page then right page.
+- `tests/test_library.py` (new; every test marked `library` and skipped when `library/contrefeu.*.pdf` is missing;
+  register the marker in `pyproject.toml` `[tool.pytest.ini_options]`): for each side, at least 110 (FR) / 150
+  (IT) `page_number` blocks; no included block whose text is number-only except `heading`s; the number of
+  number-only `heading` blocks is the same on both sides (25 each when measured). Counts only, never text in
+  assertions or messages (the book is copyrighted). Report the actual numbers.
 
 #### Front and back matter
 Not ready: half title, "Du même auteur", colophon/ISBN, series blurb → `front_matter`/`back_matter`. Planned

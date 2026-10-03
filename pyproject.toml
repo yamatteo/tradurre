@@ -42,3 +42,8 @@ artifacts = ["tradurre/static/"]
 [project.scripts]
 tradurre = "tradurre.__main__:main"
 tradurre-align = "tradurre.services.pipeline_cli:main"
+
+[tool.pytest.ini_options]
+markers = [
+    "library: tests on the local reference book (library/contrefeu.*.pdf); skipped when it is missing",
+]

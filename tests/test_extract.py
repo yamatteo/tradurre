@@ -78,11 +78,6 @@ def test_docx_line_break_and_tab_are_cleaned():
     doc.save(buffer)
     assert [b.text for b in extract("livre.docx", buffer.getvalue()).blocks] == ["Vers un vers deux"]
 
-def test_pdf_not_implemented_yet():
-    with pytest.raises(NotImplementedError):
-        extract("livre.pdf", b"%PDF-1.4")
-
-
 def test_unknown_extension():
     with pytest.raises(ValueError):
         extract("livre.epub", b"")
