@@ -37,7 +37,7 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
   after import (Stage 5). Footnotes stay excluded as SPEC says; reviewed and confidence stay separate.
 - Licensed AGPL-3.0-only (`LICENSE`).
 - Python 3.14 only (`.python-version`, `requires-python`, launcher). Stage 0 is complete.
-- `uv run pytest`: 214 passed with PyMuPDF installed (213 + 1 skipped without), also on a fresh clone (tests read
+- `uv run pytest`: 217 passed with PyMuPDF installed (216 + 1 skipped without), also on a fresh clone (tests read
   only committed synthetic fixtures).
 - `uv.lock` is tracked; `pytest`/`httpx` are in the `dev` group. The Windows launcher's `uv tool install` resolves
   from PyPI and never reads the lock.
@@ -121,6 +121,7 @@ I wrote them, fixed by "Extraction fixes" below.
 Status: done
 **Done when:** `tests/test_extract.py` passes with the three new cases below; `uv run pytest` otherwise unchanged.
 Report: 2026-10-03 — `utf-8-sig` decoding, chunk mode only for a blank line between non-blank lines, docx text through `_clean`; `tests/test_extract.py` 11 passed; pytest 217 passed (214 before).
+Verified (/pauli, 2026-10-03, `551ab56`): matches the task; pytest 217 passed.
 
 Found by /pauli reviewing `56c180d` (each reproduced against `extract`):
 - **BOM.** A UTF-8 file with a byte-order mark (Notepad's "UTF-8 with BOM", Word's plain-text export) keeps
@@ -134,8 +135,9 @@ Found by /pauli reviewing `56c180d` (each reproduced against `extract`):
   is cleaned.
 
 ### Interim build
-Status: todo
+Status: done
 **Done when:** `tests/test_build.py` passes; `uv run pytest` otherwise unchanged.
+Report: 2026-10-03 — `tradurre/services/build.py` (`build_book`: blocks via `split_sentences`, excluded per `EXCLUDED_KINDS`, v0.1 anchor alignment mapped to segment ids, beads 0.5/0.2 `anchor`); `tests/test_build.py` 3 passed; pytest 220 passed (217 before).
 
 New module `tradurre/services/build.py`, the bridge from an `Extraction` pair to a project in the new model,
 using v0.1's algorithms unchanged (Stage 3 replaces them behind the same function):
@@ -144,7 +146,9 @@ using v0.1's algorithms unchanged (Stage 3 replaces them behind the same functio
   exists already. Not recorded in the operation history (the layer builder isn't).
 - Blocks: one `NewBlock` per `ExtractedBlock`, same kind and page, `excluded = kind in EXCLUDED_KINDS`, segments
   = `aligner.split_sentences(text)`, or `[text]` if that returns nothing.
-- Alignment: over the **included** segments of each side in document order, `aligner.find_anchors` +
+- Alignment (assumptions checked by /pauli on 300 random cases with repeated names and identical texts: `align`
+  returns every unit once, in order, never an all-empty pair; 4,000 × 4,200 sentences in 0.16 s): over the
+  **included** segments of each side in document order, `aligner.find_anchors` +
   `aligner.align` on their texts. `align` returns string pairs in order, each unit exactly once plus `""`
   padding, so walk the pairs consuming segment ids sequentially per side (a non-empty string takes the next id;
   assert it equals that segment's text). Each pair becomes one bead: method `anchor`, confidence 0.5 if both sides
@@ -162,11 +166,14 @@ Status: todo
 - `POST /books` (multipart: `source`, `target` files, `title`, `source_lang` default `fr`, `target_lang`
   default `it`): `extract` both, then in one `transaction` insert the `projects` row (same id/timestamp style as
   `api/projects.py`) and `build_book`. `.pdf` → 415 with a message that PDF import comes later; extraction
-  `ValueError` → 400. Returns `{id, title, bead_count, warnings}` (warnings are not stored yet: see Stage 3).
+  `ValueError` → 400, and so is a file whose extraction has no block of an
+  included kind ("no text found in <filename>"), checked before anything is written. Returns `{id, title,
+  bead_count, warnings}` (warnings are not stored yet: see Stage 3).
 - `GET /books`: the projects that have documents, with title, languages, bead count, reviewed count.
 - `GET /books/{id}`: title, languages, and every bead in order with `{id, confidence, method, reviewed, source,
-  target}`, where each side is a list of `{segment_id, block_id, text}`; plus the excluded blocks with their
-  segments and the id of the bead they sit after (null at the start), so the client can reveal them in place.
+  target}`, where each side is a list of `{segment_id, block_id, text}`; plus the excluded blocks (`{block_id, side, kind,
+  segments}`), each with `after_bead_id`: the bead of the last included segment before it in the same document
+  (null if none), so the client can reveal them in place.
 - `GET /books/{id}/check`: `check_project`'s list (the debug endpoint of SPEC §4).
 - `GET /api/v1/projects` is not changed; the old list keeps showing every project.
 - Tests: import a txt pair and a docx pair through `TestClient`; read it back; 404 on an unknown id; `.pdf` → 415;
