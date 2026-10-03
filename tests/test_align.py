@@ -2,7 +2,9 @@
 
 import random
 import time
+import tracemalloc
 
+from tradurre.services import align as align_module
 from tradurre.services.align import Bead, align
 
 WORDS = ["la", "nuit", "tombait", "sur", "une", "ville", "silencieuse", "et", "froide", "il", "marchait", "vite",
@@ -117,3 +119,23 @@ def test_book_sized_input_is_fast():
 def test_confidence_of_clean_one_to_one_is_high():
     source = _book(20, seed=12)
     assert all(b.confidence > 0.8 for b in align(source, list(source)))
+
+
+def test_narrow_band_falls_back_to_the_wide_one(monkeypatch):
+    source = _book(300, seed=1)
+    target = source + _book(150, seed=99)  # more extra sentences than the narrow band's width
+    beads = align(source, target)
+    monkeypatch.setattr(align_module, "_BAND", 10_000)  # no band at all
+    assert beads == align(source, target)
+
+
+def test_memory_stays_within_the_band():
+    source = _book(2000, seed=13)
+    target = _book(2000, seed=13)
+    tracemalloc.start()
+    try:
+        align(source, target)
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert peak < 25 * 2**20

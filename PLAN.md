@@ -42,7 +42,7 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
   import through the form too (4.3 s, 1354 beads, 185 one-sided).
 - Licensed AGPL-3.0-only (`LICENSE`).
 - Python 3.14 only (`.python-version`, `requires-python`, launcher). Stage 0 is complete.
-- `uv run pytest`: 359 passed (PyMuPDF is a core dependency), also on a fresh clone (tests read only committed
+- `uv run pytest`: 373 passed (PyMuPDF is a core dependency), also on a fresh clone (tests read only committed
   synthetic fixtures; `-m library` tests run only where `library/contrefeu.*.pdf` exists, and assert counts only).
 - PDF extraction (`extract.py`) works on the reference book (page numbers, chapter numbers, two-up spreads), and
   `POST /api/v2/books` accepts PDFs (extraction in a worker thread; an unreadable PDF is a 400).
@@ -235,6 +235,11 @@ dedication that *is* text stays (SPEC §2). The rule marks blocks `front_matter`
 already has) and excludes them, so `x`/Include still override it. What the user excluded by hand in the
 reference book (measured 2026-10-04: source 28 paragraphs + 1 heading, target 17 + 1) is the target the rule is
 scored against.
+**Measured by Pauli after "Length aligner" (2026-10-04, counts only):** of the 29 source segments the gold
+excludes but the import includes, the length aligner leaves only **6** in one-sided beads; 15 sit in 2:1 beads and 8
+in 1:1 beads (front matter paired with the other edition's front matter). So the rule cannot be "runs of one-sided
+beads" alone: it must also read low confidence, block kind/length and position (before the first heading, after
+the last paragraph). Plan it with that.
 Earlier measurements (after "PDF blocks", counts only): FR ~25 short blocks on logical pages 3–6 before chapter 1
 and ~6 on the last page; IT ~9 on pages 3–5 and ~7 on the last page.
 
@@ -491,6 +496,16 @@ gap). A length-based DP addresses exactly this.
 **Target (agreed with the user, 2026-10-04): alignment F1 ≥ 0.95.**
 The user then joined two false splits in the gold book (`Tr.`, `Com.`: abbreviations particular to this novel,
 not added to the segmenter); re-export the gold before scoring (the score is the same either way).
+**Result (Pauli, 2026-10-04, verified):** the length aligner meets the target on the gold (F1 0.994, P 0.991, R
+0.998). Measured by Pauli on synthetic input it is not yet fit for SPEC §1's scale (books up to 10,000 sentences a
+side): it keeps two full (n+1)×(m+1) Python tables although it computes only a band, so 10,000 × 10,000 took
+11.7 s and **1.8 GB**, and 10,000 × 10,300 (300 extra target sentences at the end) 44 s and **2.5 GB**, inside the
+server process. "Length aligner at book scale" fixes that before it becomes the import's aligner.
+Known weakness (Pauli, synthetic probe, not a task yet): the length ratio is taken over the whole input, one-sided
+material included, so a large one-sided run skews it. 600 sentences against the same 600 plus N other sentences
+at the end: N = 10 → 598/600 pairs right, N = 30 → 591, N = 60 → 523 (the extra text gets smeared over the book
+as 1:2 beads). Real text has anchors that resist this, and excluding front/back matter before alignment would
+remove the main source; revisit with "Front and back matter", or if a real book shows it.
 
 #### Length aligner
 Status: done
@@ -533,11 +548,66 @@ anchor` and `--aligner length`, the aligner's own wall time on the reference boo
 - Don't change `aligner.py`, the API, the frontend or any existing test.
 Report: 2026-10-04 — `services/align.py` (banded Gale–Church + anchors), `build_book(aligner=)`, gold_score `--aligner`/shapes/timings, 10 tests in `tests/test_align.py`. Gold: anchor P 0.840 R 0.903 F1 0.870, 1353 beads (1:1 1173, 0:1 93, 1:0 87); length P 0.991 R 0.998 **F1 0.994 ≥ 0.95**, 1256 beads vs 1222 gold (1:1 1218, 1:2 16, 2:1 10, 1:0 6, 0:1 6); exclusion unchanged (F1 0.592). `align.align` on the book's 1231×1243 included segments: 1.8 s (build step 1.9 s vs 1.0 s for anchor). pytest 373 passed (was 363).
 
+#### Length aligner at book scale
+Status: done
+**Done when:** `uv run pytest` passes, with the two new tests below in `tests/test_align.py`; `uv run python
+scripts/gold_score.py --aligner length` prints exactly the numbers of the "Length aligner" report (P 0.991 R 0.998
+F1 0.994, 1256 beads, the same shapes); the `Report:` gives time and peak RSS of `align.align` on 10,000 × 10,000
+and on 10,000 × 10,300 synthetic sentences (below), each under **300 MB**, the first under **10 s**, the second
+under **45 s**.
+
+Same costs, same results, less memory and less work. Only `tradurre/services/align.py` and `tests/test_align.py`
+change.
+- Storage: per DP row, only the band cells `lo..hi`: an `array('d')` of best costs and an `array('b')` holding
+  the index in `_MOVES` of the chosen move (−1 for none), plus that row's `lo`. A previous cell outside its row's
+  stored range counts as unreachable. No (n+1)×(m+1) structure, no tuple per cell. The move cost is not stored:
+  backtracking recomputes the chosen move's cost with the same function, for the confidence.
+- Segment lengths from prefix sums (no `sum` over slices in the inner loop).
+- Adaptive band: run first with width `_BAND`; if the backtracked path passes within 10 cells of a band edge that
+  is not clipped by the grid (some (i, j) with `j − lo_i < 10` and `lo_i > 0`, or `hi_i − j < 10` and
+  `hi_i < m`), run once more with width `_BAND + |m − n|` (today's width) and return that result. When the two
+  widths are equal there is no second run.
+- Tie-breaking, confidence and every cost stay exactly as they are; the existing tests don't change.
+- New tests: (1) `_book(300, seed=1)` against itself followed by `_book(150, seed=99)` (more than `_BAND`
+  extra, so the narrow pass runs into the band edge): the result equals the result with `_BAND` monkeypatched to
+  10,000 (no band at all); Pauli checked that today's code passes this. (2) under `tracemalloc`, aligning
+  2,000 × 2,000 synthetic sentences peaks under 25 MB.
+- Measure (scratchpad script, not committed): sentences from `tests/test_align.py`'s `_book` (seed 1);
+  10,000 × 10,000 is `_book(10000)` against itself, 10,000 × 10,300 is `_book(10000)` against `_book(10300)`
+  (same seed, so the extra 300 are at the end); time with `time.perf_counter`, peak RSS with
+  `resource.getrusage`, one process per case. Pauli's probe of this design: ~7.5 s / ~45 MB and ~28 s (second
+  pass alone) / ~95 MB.
+Report: 2026-10-04 — `align.py`: band rows only (`array('d')` costs + `array('b')` move indices), prefix sums, move cost inlined in the DP loop, adaptive band (narrow, rerun wide if the path comes within `_EDGE` = 10 of an unclipped edge); 2 new tests (fallback equals unbanded; 2,000² peaks 5.6 MB traced, was 101 MB). Gold unchanged (P 0.991 R 0.998 F1 0.994, 1256 beads, same shapes). 10,000 × 10,000: 7.3 s, peak RSS 47 MB; 10,000 × 10,300: 35.9 s, 101 MB. Same output as before on 199 of 200 random inputs; the other (13 × 146 segments) finds a costlier path: the narrow pass misses the optimum without nearing its edge. pytest 375 passed.
+
 #### Length aligner on import
-Not ready: after "Length aligner", and only if it meets the agreed target. Then: `import_book` passes
-`aligner="length"`; every Python and e2e test whose expected bead layout changes keeps its layout by changing its
-fixture text (e.g. a longer unmatched sentence, so a 2:1 merge is implausible), not its expectations; the
-`"anchor"` path is removed from `build_book` once nothing uses it (the old v0.1 API keeps `aligner.py`).
+Status: todo
+**Done when:** `uv run pytest`, `npm run type-check` and `npm run test:e2e` pass; importing the reference PDFs
+through the form gives beads with method `length`; `gold_score.py` (no `--aligner` any more) prints the same
+alignment numbers as the "Length aligner" report.
+
+- `tradurre/services/build.py`: `build_book` loses its `aligner` parameter and the anchor path; it always uses
+  `align.align`, method `"length"`, the bead's confidence. Update the module docstring (it still says alignment
+  is v0.1's). `scripts/gold_score.py` loses `--aligner` (keeps shapes and timings). `aligner.py` stays for the
+  old v0.1 API; nothing in the new model imports it.
+- Tests. Pauli forced the length aligner into the suite (2026-10-04): 12 Python tests fail, all in
+  `tests/test_build.py`, `tests/test_books_api.py` and `tests/test_books_corrections_api.py`, because their tiny
+  fixtures (e.g. `SOURCE`/`TARGET` at `tests/test_books_api.py:14-15`) expect a 1:0 bead. **The length aligner
+  cannot produce that on a 3–4 sentence text:** with the Gale–Church priors (2:1 at 0.045 vs 1:0 at 0.005) and a
+  ratio taken from so little text, merging the unmatched sentence into a neighbour always costs less; Pauli tried
+  longer fixtures and it still merges. So the plan's earlier rule ("change the fixture, not the expectations") is
+  withdrawn. Instead:
+  - expected methods become `"length"`; expected confidences are asserted as ranges or not at all, never as
+    exact floats;
+  - a test whose purpose is the alignment itself (`test_build.py`) asserts the new layout, after checking it is
+    a sensible one (the unmatched sentence merged into its neighbour, not a shifted pairing); pick fixture text
+    so it is (sentences of distinct lengths; a name or number not at the start of each matched pair);
+  - a test whose purpose is a correction or the API asserts against the new layout; if it needs a one-sided bead,
+    it creates it in its setup with a correction (e.g. move the last target segment to the next bead), and its
+    own assertions are otherwise unchanged in meaning;
+  - the e2e specs that import the same fixtures (`books.spec.ts`, `book-view.spec.ts`, `book-corrections.spec.ts`,
+    `segment-editing.spec.ts`) follow the same rules.
+  List in the `Report:` every test whose expectations changed, with one phrase each.
+- Don't change `align.py`, the segmenter, the extractor or any endpoint.
 
 ### Import warnings and run metadata
 Status: todo
@@ -622,6 +692,11 @@ on either side (requested by the user, 2026-10-04; SPEC §3.3 "On request, beads
 range, incremental updates instead of whole-book refetch, and showing a segment's original extracted text with
 "revert to original" (SPEC §2: "the translator can always compare or revert"; `original_text` is stored but not
 yet in the API). Plain text editing; TipTap is not used here.
+
+Note (Pauli, 2026-10-04): the length aligner seldom emits 1:0/0:1 (6 + 6 on the reference book); a sentence
+with no counterpart usually lands in a 2:1/1:2 bead of confidence ~0.4–0.45, against ≥ 0.78 for an ordinary 1:1.
+The low-confidence highlight and "next problem" must therefore catch those (threshold at least 0.5), and the
+multi-segment toggle shows them too.
 
 Decided (user, 2026-10-03): `reviewed` and `confidence` stay separate signals. A correction sets the touched
 beads to `manual`/1.0 but leaves their reviewed mark as SPEC §3.3 says; "done with the book" = every bead
