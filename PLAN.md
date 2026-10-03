@@ -37,7 +37,7 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
   after import (Stage 5). Footnotes stay excluded as SPEC says; reviewed and confidence stay separate.
 - Licensed AGPL-3.0-only (`LICENSE`).
 - Python 3.14 only (`.python-version`, `requires-python`, launcher). Stage 0 is complete.
-- `uv run pytest`: 220 passed with PyMuPDF installed (219 + 1 skipped without), also on a fresh clone (tests read
+- `uv run pytest`: 232 passed with PyMuPDF installed (231 + 1 skipped without), also on a fresh clone (tests read
   only committed synthetic fixtures).
 - `uv.lock` is tracked; `pytest`/`httpx` are in the `dev` group. The Windows launcher's `uv tool install` resolves
   from PyPI and never reads the lock.
@@ -163,6 +163,8 @@ using v0.1's algorithms unchanged (Stage 3 replaces them behind the same functio
 Status: done
 **Done when:** `tests/test_books_api.py` passes; `uv run pytest` otherwise unchanged.
 Report: 2026-10-03 — `tradurre/api/books.py` (`POST /books`, `GET /books`, `GET /books/{id}`, `GET /books/{id}/check` under `/api/v2`), `Book…` models in `models.py`, router in `app.py`; `tests/test_books_api.py` 12 passed; pytest 232 passed (220 before).
+Verified (/pauli, 2026-10-03, `08c257a`): matches the task; pytest 232 passed. Uploads are read whole with no size cap:
+acceptable for a local single-user app.
 
 `tradurre/api/books.py`, router registered in `app.py` with prefix `/api/v2`; response models in `models.py`
 (prefix `Book…`). Handlers take `db: sqlite3.Connection = Depends(get_db)` like the v1 routers, but write through
@@ -200,10 +202,40 @@ keys.
   check returns `[]`.
 
 ### Book API: corrections
-Not ready (/pauli details it when the previous task is done): one `POST` per domain operation under
-`/books/{id}/…` (move, merge, split bead, split/join segment, edit text, exclude/include, reviewed incl. skim,
-undo, redo), each in `transaction`, `DomainError` → 409 with its message, returning the same shape as
-`GET /books/{id}` (whole-book refetch is fine at this scale; Stage 4 makes it incremental).
+Status: done
+**Done when:** `tests/test_books_corrections_api.py` passes; `uv run pytest` otherwise unchanged.
+Report: 2026-10-03 — 12 correction endpoints in `api/books.py` via one `_correct` helper (transaction, `updated_at`, DomainError → 409, ValueError → 400), `_read_book` shared with `GET`, `can_undo`/`can_redo`, `Book…Request` models; `tests/test_books_corrections_api.py` 15 passed; pytest 247 passed (232 before).
+
+Every SPEC §3.3 correction over HTTP, in `tradurre/api/books.py`; request models in `models.py` (`Book…Request`).
+The domain functions do all the work and all the checking; the endpoints only translate.
+- **Pattern, every endpoint:** `POST`, 404 if the book doesn't exist (`_book_row`), then one
+  `with transaction(db):` that calls the domain function and sets the project's `updated_at` to `_now()`;
+  `DomainError` → 409 with its message (this includes ids that belong to another book or don't exist: the domain
+  checks them), `ValueError` → 400. Success → 200 with the whole book, the same body as `GET /books/{id}` (factor
+  the read into a helper `_read_book(db, book_id)`; a 2,000-bead book is a few hundred kB, fine until Stage 4).
+- **Endpoints** (paths under `/api/v2/books/{book_id}`, domain function in brackets):
+  - `beads/{bead_id}/move`, body `{side: "source"|"target", to: "previous"|"next"}` → `move_first_to_previous`
+    if `to` is previous, else `move_last_to_next`;
+  - `beads/{bead_id}/merge-next` (`merge_with_next`);
+  - `beads/{bead_id}/split`, body `{source_at: int | null, target_at: int | null}` (`split_bead`; segment ids
+    where the new bead starts);
+  - `reviewed`, body `{bead_ids: list[int], reviewed: bool, skim: bool = false}` (`set_reviewed`);
+  - `segments/{segment_id}/edit`, body `{text: str}` (`edit_text`);
+  - `segments/{segment_id}/split`, body `{offset: int}` (`split_segment`; offset in the segment's current text);
+  - `segments/{segment_id}/join-next` (`join_with_next`);
+  - `blocks/{block_id}/exclude`, `blocks/{block_id}/include` (`exclude_block`, `include_block`);
+  - `undo`, `redo` (`undo`/`redo` from `history`; when they return None → 409 "Nothing to undo" / "Nothing to
+    redo", and `updated_at` is not touched).
+- **Undo availability:** add `can_undo: bool` and `can_redo: bool` to `BookResponse` (so also to `GET
+  /books/{id}`): whether the project has an operation with `undone = 0` / `undone = 1`. The screen greys its
+  buttons with them.
+- No-op successes (an edit to the same text, reviewed marks already set) return 200 with the unchanged book.
+- `tests/test_books_corrections_api.py` (import a small txt pair through the API, as in `test_books_api.py`, then
+  act through the API only): each endpoint once with the effect visible in the returned book; after each, `GET
+  /books/{id}/check` is `[]`; a refused correction (e.g. `merge-next` on the last bead, `edit` with empty text) →
+  409 and an unchanged book; a bead id from another book → 409; unknown book → 404; `skim: true` with
+  `reviewed: false` → 400; `undo` then `redo` round-trips an edit; `undo` on a fresh book → 409 and `can_undo`
+  false; `updated_at` moves after a correction (via `GET /books` order with two books).
 
 ### Correction screen
 Not ready: route `/book/:id`, `BookView.vue`, plain text, no virtualization, no TipTap: beads as rows (source

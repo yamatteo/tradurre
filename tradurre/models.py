@@ -234,3 +234,29 @@ class BookResponse(BaseModel):
     target_lang: str
     beads: list[BookBead]
     excluded: list[BookExcludedBlock]
+    can_undo: bool
+    can_redo: bool
+
+
+class BookMoveRequest(BaseModel):
+    side: Literal["source", "target"]
+    to: Literal["previous", "next"]
+
+
+class BookSplitBeadRequest(BaseModel):
+    source_at: int | None = None
+    target_at: int | None = None
+
+
+class BookReviewedRequest(BaseModel):
+    bead_ids: list[int]
+    reviewed: bool
+    skim: bool = False
+
+
+class BookEditRequest(BaseModel):
+    text: str
+
+
+class BookSplitSegmentRequest(BaseModel):
+    offset: int
