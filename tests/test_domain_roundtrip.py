@@ -4,6 +4,7 @@ and redoes exactly, whatever the mix (PLAN.md, "Randomized round trip")."""
 import random
 
 import pytest
+from helpers import actual_index, expected_index
 
 from tradurre.db import get_connection, init_db
 from tradurre.domain import DomainError
@@ -162,6 +163,7 @@ def test_random_round_trip(tmp_path, seed):
             changed += 1
         errors = check_project(conn, "p1")
         assert errors == [], f"{where}: {errors}"
+        assert actual_index(conn) == expected_index(conn), f"{where}: bead index out of sync"
 
     assert changed >= 20, f"seed {seed}: only {changed} of {STEPS} steps changed something"
 

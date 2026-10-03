@@ -112,6 +112,55 @@ CREATE INDEX idx_operations_project ON operations(project_id, id);
 """
 
 
+# Bead search index (PLAN.md, "Search index"): one FTS5 row per bead, rowid = bead id, kept in sync by triggers
+# (which also fire for undo/redo, the layer builder and cascading deletes). The text is folded like
+# `tradurre.domain.search.fold`: the tokenizer drops case and accents, ligatures are spelled out here.
+
+
+def _fold_sql(expr: str) -> str:
+    for ligature, spelled in (("œ", "oe"), ("Œ", "OE"), ("æ", "ae"), ("Æ", "AE")):
+        expr = f"replace({expr}, '{ligature}', '{spelled}')"
+    return expr
+
+
+def _side_text_sql(side: str) -> str:
+    return (
+        "coalesce((SELECT group_concat(s.text, ' ' ORDER BY bl.ord, s.ord) FROM segments s "
+        "JOIN blocks bl ON bl.id = s.block_id JOIN documents d ON d.id = bl.document_id "
+        f"WHERE s.bead_id = b.id AND d.side = '{side}'), '')"
+    )
+
+
+def _reindex_sql(bead: str) -> str:
+    """Statements (one per line, inside a trigger body) that rebuild the index row of bead `bead`."""
+    return (
+        f"    DELETE FROM bead_index WHERE rowid = {bead};\n"
+        f"    INSERT INTO bead_index (rowid, source, target, project_id) SELECT b.id, "
+        f"{_fold_sql(_side_text_sql('source'))}, {_fold_sql(_side_text_sql('target'))}, b.project_id "
+        f"FROM beads b WHERE b.id = {bead};\n"
+    )
+
+
+_BEAD_INDEX_SCHEMA = f"""
+CREATE VIRTUAL TABLE bead_index USING fts5(
+    source, target, project_id UNINDEXED, tokenize = 'unicode61 remove_diacritics 2'
+);
+CREATE TRIGGER segments_bi_ai AFTER INSERT ON segments BEGIN
+{_reindex_sql("new.bead_id")}END;
+CREATE TRIGGER segments_bi_ad AFTER DELETE ON segments BEGIN
+{_reindex_sql("old.bead_id")}END;
+CREATE TRIGGER segments_bi_au AFTER UPDATE OF text, ord, bead_id ON segments BEGIN
+{_reindex_sql("old.bead_id")}{_reindex_sql("new.bead_id")}END;
+CREATE TRIGGER beads_bi_ai AFTER INSERT ON beads BEGIN
+{_reindex_sql("new.id")}END;
+CREATE TRIGGER beads_bi_ad AFTER DELETE ON beads BEGIN
+    DELETE FROM bead_index WHERE rowid = old.id;
+END;
+INSERT INTO bead_index (rowid, source, target, project_id) SELECT b.id, {_fold_sql(_side_text_sql('source'))}, \
+{_fold_sql(_side_text_sql('target'))}, b.project_id FROM beads b;
+"""
+
+
 def get_db_path() -> Path:
     path = Path.home() / ".tradurre"
     path.mkdir(parents=True, exist_ok=True)
@@ -176,8 +225,18 @@ def _m003_operations(conn: sqlite3.Connection) -> None:
     _run_script(conn, _OPERATIONS_SCHEMA)
 
 
+def _m004_bead_index(conn: sqlite3.Connection) -> None:
+    """FTS5 search index over beads, kept in sync by triggers (PLAN.md, "Search index")."""
+    _run_script(conn, _BEAD_INDEX_SCHEMA)
+
+
 # Applied in order; migration n sets PRAGMA user_version = n. Never edit an applied one.
-MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [_m001_pairs, _m002_text_alignment, _m003_operations]
+MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
+    _m001_pairs,
+    _m002_text_alignment,
+    _m003_operations,
+    _m004_bead_index,
+]
 
 
 def init_db(conn: sqlite3.Connection) -> None:
