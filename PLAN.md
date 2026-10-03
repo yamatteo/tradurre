@@ -27,7 +27,7 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
 - UI: three-step import wizard, a TipTap editor per pair, FTS5 search over pairs (no context).
 - One connection per request; every write handler is one `BEGIN IMMEDIATE` transaction. No undo/history.
 - Python 3.14 only (`.python-version`, `requires-python`, launcher). Stage 0 is complete.
-- `uv run pytest`: 71 passed, 1 skipped, also on a fresh clone (tests read only committed synthetic fixtures).
+- `uv run pytest`: 109 passed, 1 skipped, also on a fresh clone (tests read only committed synthetic fixtures).
 - `uv.lock` is tracked; `pytest`/`httpx` are in the `dev` group. The Windows launcher's `uv tool install` resolves
   from PyPI and never reads the lock.
 - `npm run type-check` passes; releases build with `npm run build`. Playwright's Chromium is not installed on the
@@ -562,14 +562,18 @@ Status: done
   - `ValueError` for `table="blocks"` and for an `after_id` from another project.
 
 Report: 2026-10-03 — `DomainError`, `history.transaction`, `domain/ordering.py` (`ord_after`, `renumber`); history tests use `transaction`; 6 new tests, 109 passed, 1 skipped.
+Verified (/pauli, 2026-10-03, `8d12a36`): matches the task; pytest 109 passed, 1 skipped. Two harmless deviations:
+the `0, 1` siblings are set up by a recorded operation (so the project stays valid), and undo is checked on the
+project's `(id, ord)` list rather than a full snapshot (renumbering touches nothing else).
 
 #### Bead operations
 Status: todo
 **Done when:** `tests/test_domain_beads.py` passes (cases below); `uv run pytest` otherwise unchanged.
 
-`tradurre/domain/beads.py`. Helpers: a bead's segment ids on one side in document order (block `ord`, segment
-`ord`); a bead's previous/next bead in the project (adjacent `ord`); `_corrected(rec, bead_id)` = set
-`method = 'manual'`, `confidence = 1.0`. Every function checks that the bead belongs to `project_id`
+`tradurre/domain/beads.py`. Helpers (module-level, reused by the segment operations): `_segments(conn, bead_id,
+side) -> list[int]`, a bead's segment ids on one side in document order (block `ord`, segment `ord`);
+`_previous(conn, bead_id)` / `_next(conn, bead_id) -> int | None`, the adjacent bead in the same project by `ord`;
+`_corrected(rec, bead_id)` = set `method = 'manual'`, `confidence = 1.0`. Every function checks that the bead belongs to `project_id`
 (`DomainError` otherwise). `side` is `"source"` or `"target"`.
 - `move_first_to_previous(conn, project_id, bead_id, side) -> int`: the bead's first segment on `side` moves to
   the previous bead. Refused if there is no previous bead or the bead has no segment on `side`. Both beads
@@ -597,9 +601,72 @@ Status: todo
   `target_at=None` → new bead `(s3 | )`; `split_bead` with both `None` raises; two skim marks then one undo clears
   both, while a `review` mark in between stops the coalescing; a bead of another project raises `DomainError`.
 
-#### Segment and block operations
-Not ready: edit text, split (with the offset mapping), join (merging beads via `beads._merge` when the segments
-are in different beads), exclude, include, per the rules above.
+#### Segment operations
+Status: todo
+**Done when:** `tests/test_domain_segments.py` passes (cases below); `uv run pytest` otherwise unchanged.
+
+`tradurre/domain/segments.py`. Every function checks that the segment belongs to `project_id` (through its block
+and document; `DomainError` otherwise). Segments of excluded blocks may be edited, split and joined too (their
+`bead_id` stays `NULL`). Text corrections leave beads alone, except the cross-bead join (SPEC §2).
+- `edit_text(conn, project_id, segment_id, text) -> int | None`: sets `text`; `original_text` never changes.
+  Refused if `text.strip()` is empty (to get rid of a segment, join it). Returns `None` (records nothing) if the
+  text is unchanged. Kind `"edit_text"`. Reverting is `edit_text(…, original_text)`; no separate operation.
+- `_map_offset(text, original, offset) -> int`: per the design rule above. Opcodes come from
+  `SequenceMatcher(None, text, original, autojunk=False).get_opcodes()`; use the opcode with `i1 <= offset < i2`
+  (so empty `insert` runs never match): `equal` → `j1 + (offset - i1)`, any other tag → `j1`.
+- `split_segment(conn, project_id, segment_id, offset) -> int`: returns the new segment's id. Parts per the design
+  rule; refused unless `0 < offset < len(text)` and both `text` parts are non-empty after stripping (the
+  `original_text` parts may be empty: text the translator added). The new segment goes right after the old one
+  in its block (`ordering.ord_after(rec, "segments", block_id, segment_id)`), with the same `bead_id`; the bead is
+  not touched. Kind `"split_segment"`.
+- `join_with_next(conn, project_id, segment_id) -> int`: `b` = the next segment of the same block by `ord`;
+  refused if there is none (joining across blocks is not supported). `a` gets the joined `text` and
+  `original_text` (`" "`-separated), `b` is deleted. If `a` and `b` are in different beads, merge **the whole run
+  of beads from `a`'s bead to `b`'s bead**, not just those two: beads between them (e.g. a 0:1 bead holding only
+  target segments) would otherwise break I4. Do it with `beads._next` and `beads._merge` in a loop on `a`'s bead
+  until `b`'s bead is absorbed, then delete `b`. Same-bead join: bead untouched. Kind `"join_segments"`.
+- `tests/test_domain_segments.py`, fixture (layer builder): source blocks S1 `[s1 "Il partit.", s2 "Il marcha.",
+  s3 "Puis il revint."]`, S2 footnote `[f1 "Une note."]` excluded, S3 `[s4 "Il mar- cha. Fin."]`; target block T1
+  `[t1, t2, t3, t4]`; beads A `(s1 | t1)`, X `( | t2)`, B `(s2, s3 | t3)`, C `(s4 | t4)`, A and B reviewed. For each
+  operation: the resulting rows, `check_project == []`, undo restores the snapshot, redo the post-state. Cases:
+  - `_map_offset`: identical strings → same offset; `("Il marcha. Fin.", "Il mar- cha. Fin.")`: `11 → 13`,
+    `6 → 8`; `("Il fut là. Fin.", "Il fnt lâ. Fin.")`: `4 → 4` (inside a `replace`).
+  - `edit_text(s1, "Il partit!")`: `original_text` unchanged, bead A's `method`/`confidence` unchanged; same text →
+    `None` and no operation row; `"  "` → `DomainError`.
+  - `split_segment(s3, 4)` → `"Puis"` / `"il revint."` on both `text` and `original_text`, new segment in bead B
+    right after `s3`; offsets `0`, `len(text)` and one leaving a whitespace-only part → `DomainError`. After
+    `edit_text(s4, "Il marcha. Fin.")`, `split_segment(s4, 11)` gives texts `"Il marcha."` / `"Fin."` and
+    originals `"Il mar- cha."` / `"Fin."`.
+  - `join_with_next(s2)` (same bead): `"Il marcha. Puis il revint."`, `s3` gone, bead B unchanged.
+  - `join_with_next(s1)` (A, X, B): one bead with A's id, `(s1, s3 | t1, t2, t3)`, `manual`, `1.0`, `reviewed = 0`
+    (X wasn't); X and B gone; one undo restores everything with the old ids.
+  - `join_with_next(s3)` (last of its block) → `DomainError`; a segment of another project → `DomainError`.
+
+#### Block operations
+Status: todo
+**Done when:** `tests/test_domain_blocks.py` passes (cases below); `uv run pytest` otherwise unchanged.
+
+`tradurre/domain/blocks.py`. Every function checks that the block belongs to `project_id` (through its document;
+`DomainError` otherwise).
+- `exclude_block(conn, project_id, block_id) -> int`: refused if already excluded. Sets `excluded = 1` and
+  `bead_id = NULL` on its segments; each bead that lost a segment is deleted if left empty, otherwise
+  `beads._corrected`. Kind `"exclude_block"`.
+- `include_block(conn, project_id, block_id) -> int`: refused if not excluded. Sets `excluded = 0`; if the block
+  has segments, finds `P` / `N` (nearest preceding / following segment of a non-excluded block on the same side,
+  in document order) and applies the design rule: same bead → the block's segments join it and it is
+  `beads._corrected`; otherwise a new bead (`ordering.ord_after(rec, "beads", project_id, P's bead or None)`,
+  `method = 'manual'`, `confidence = 0.0`, `reviewed = 0`) gets them. Kind `"include_block"`.
+- `tests/test_domain_blocks.py`, same fixture as the segment tests (copy it; no shared conftest needed yet). For
+  each operation: the resulting rows, `check_project == []`, undo/redo snapshots. Cases:
+  - `exclude_block(S3)`: C deleted, `s4.bead_id` NULL; undo brings C back with its id.
+  - `exclude_block(S1)`: A becomes `( | t1)`, B `( | t3)`, both `manual`/`1.0`, reviewed kept; X unchanged.
+  - `include_block(S2)` (P = s3 in B, N = s4 in C): new bead `(f1 | )` with `ord` between B's and C's, `manual`,
+    `0.0`, unreviewed.
+  - `beads.merge_with_next(B)` then `include_block(S2)`: f1 joins the merged bead.
+  - `exclude_block(S1)` then `include_block(S1)` (no P): new bead `(s1, s2, s3 | )` placed first (A sits at `ord`
+    0, so this renumbers); the project stays valid.
+  - excluding an excluded block / including an included one → `DomainError`; a block of another project →
+    `DomainError`.
 
 #### Replace beads
 Not ready: the bulk primitive, per the rule above.
