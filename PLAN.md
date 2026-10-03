@@ -436,7 +436,7 @@ Design (/pauli, 2026-10-03), binding for every task below:
   together); (I5) no negative `ord`.
 
 #### Text-layer builder and invariant checker
-Status: todo
+Status: done
 **Done when:** `tests/test_domain_invariants.py` passes: a project built with the builder passes the checker, and
 each of the five corruptions below is reported with its invariant's code; `uv run pytest` otherwise unchanged.
 
@@ -462,6 +462,7 @@ each of the five corruptions below is reported with its invariant's code; `uv ru
   extra bead with no segments), I4 (swap two beads' `ord`s), I5 (set one segment `ord` negative, freeing the
   slot first if needed).
 - Don't touch `tradurre/db.py`, `tradurre/api/`.
+Report: 2026-10-03 — `tradurre/domain/` with `layer.py` (`NewBlock`, `NewBead`, `GAP`, `create_document`, `append_beads`) and `invariants.py` (`check_project`, I1–I5; I2 checked in both directions); `tests/test_domain_invariants.py` 7 passed (valid fixture, bead `ord` continuation, one test per invariant); pytest 94 passed, 1 skipped. A 10,000-bead project checks in 0.026 s.
 
 #### Recorder and operation log
 Status: todo
