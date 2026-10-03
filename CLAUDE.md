@@ -6,8 +6,25 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `tradurre` is a local-first literary translation workbench: a FastAPI backend + Vue 3/TipTap frontend for
 paragraph/sentence-aligned source↔target editing, with SQLite+FTS5 powering full-text "translation memory"
-search across all past projects. See `PLAN.md` for the original design doc (data model rationale, alignment
-algorithm details) — it's a useful reference but may drift from the code over time; trust the code first.
+search across all past projects. `SPEC.md` describes the product as it **should be** (an alignment/corpus tool
+first); `PLAN.md` holds the staged plan from the current code to that spec. The architecture notes below describe
+the code **as it is now**, which the plan is replacing.
+
+## Workflow
+
+Work is split between two roles, each available as a skill:
+
+- **`/pauli` — planner/reviewer.** Reads `SPEC.md`, reviews the code against it, and updates `PLAN.md`: stages
+  (`##`), split into steps (`###`) and further sub-steps as needed, until each leaf is a task one agent can finish
+  and verify in a single session. Reviews what `/braun` reported. Edits only `PLAN.md` (and `SPEC.md` when the
+  user agrees to a change); never touches code.
+- **`/braun` — implementer.** Reads `PLAN.md`, takes **one** task (the next `todo` one, or the one named), carries
+  it out, verifies it, records a `Report:` line under the task in `PLAN.md` and reports back. Stops and asks
+  instead of improvising when the task is unclear or reality doesn't match the plan.
+
+`SPEC.md` changes only with the user's agreement. Task format and statuses are defined under "Conventions" at
+the top of `PLAN.md`. Without an explicit role, keep the same discipline: if a change doesn't fit the plan, say
+so rather than silently diverging from it.
 
 ## Commands
 
