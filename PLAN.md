@@ -27,7 +27,7 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
 - UI: three-step import wizard, a TipTap editor per pair, FTS5 search over pairs (no context).
 - One connection per request; every write handler is one `BEGIN IMMEDIATE` transaction. No undo/history.
 - Python 3.14 only (`.python-version`, `requires-python`, launcher). Stage 0 is complete.
-- `uv run pytest`: 109 passed, 1 skipped, also on a fresh clone (tests read only committed synthetic fixtures).
+- `uv run pytest`: 125 passed, 1 skipped, also on a fresh clone (tests read only committed synthetic fixtures).
 - `uv.lock` is tracked; `pytest`/`httpx` are in the `dev` group. The Windows launcher's `uv tool install` resolves
   from PyPI and never reads the lock.
 - `npm run type-check` passes; releases build with `npm run build`. Playwright's Chromium is not installed on the
@@ -601,9 +601,12 @@ side) -> list[int]`, a bead's segment ids on one side in document order (block `
   `target_at=None` → new bead `(s3 | )`; `split_bead` with both `None` raises; two skim marks then one undo clears
   both, while a `review` mark in between stops the coalescing; a bead of another project raises `DomainError`.
 Report: 2026-10-03 — `tradurre/domain/beads.py` (helpers `_segments`/`_previous`/`_next`/`_corrected`/`_merge`; move, merge, split, `set_reviewed`); `tests/test_domain_beads.py` 16 passed (each op with invariants + undo/redo snapshots, refusals leave no trace); pytest 125 passed, 1 skipped.
+Verified (/pauli, 2026-10-03, `4c5d15f`): matches the task; pytest 125 passed, 1 skipped. All listed cases are
+covered, plus refusals checked to leave no snapshot change and no operation row. `ValueError` for a bad `side` and
+for skim-unmarking is right (programming errors).
 
 #### Segment operations
-Status: todo
+Status: done
 **Done when:** `tests/test_domain_segments.py` passes (cases below); `uv run pytest` otherwise unchanged.
 
 `tradurre/domain/segments.py`. Every function checks that the segment belongs to `project_id` (through its block
@@ -642,6 +645,7 @@ and document; `DomainError` otherwise). Segments of excluded blocks may be edite
   - `join_with_next(s1)` (A, X, B): one bead with A's id, `(s1, s3 | t1, t2, t3)`, `manual`, `1.0`, `reviewed = 0`
     (X wasn't); X and B gone; one undo restores everything with the old ids.
   - `join_with_next(s3)` (last of its block) → `DomainError`; a segment of another project → `DomainError`.
+Report: 2026-10-03 — `tradurre/domain/segments.py` (`edit_text`, `_map_offset`, `split_segment`, `join_with_next` merging the bead run via `beads._next`/`_merge`); `tests/test_domain_segments.py` 11 passed (listed cases, plus editing an excluded segment and refusals for another project's segment on every op); pytest 136 passed, 1 skipped.
 
 #### Block operations
 Status: todo
@@ -670,7 +674,55 @@ Status: todo
     `DomainError`.
 
 #### Replace beads
-Not ready: the bulk primitive, per the rule above.
+Status: todo
+**Done when:** `tests/test_domain_replace.py` passes (cases below); `uv run pytest` otherwise unchanged.
+
+The bulk primitive behind re-align range (Stage 3) and loading a Colab alignment (Stage 4). It replaces a run of
+beads; which runs may be replaced (e.g. only unreviewed ones) is the caller's rule, not this function's.
+- `tradurre/domain/ordering.py`: `ords_after(rec, table, parent_id, after_id: int | None, count: int) ->
+  list[int]`, `count` strictly increasing ords for new rows placed right after `after_id` (`None` = before every
+  sibling), in one go, so a long run never renumbers more than once. `ValueError` for `count < 1` and the same
+  cases as `ord_after`. With `prev` / `next` as in `ord_after`:
+  - no siblings → `[i * GAP for i in range(count)]`; no `next` → `[prev + (i + 1) * GAP …]`;
+  - otherwise, with `lower = prev` (or `-1` without `prev`) and `d = next - lower`: if `d >= count + 1`, return
+    `[lower + (i + 1) * d // (count + 1) …]`;
+  - else make room: siblings up to and including `after_id` get `(i + 1) * GAP`, the following ones
+    `(i + 1 + count) * GAP` (two passes through `rec.update`, negatives first, as in `renumber`), and the result is
+    `[base + (i + 1) * GAP …]` with `base` = `after_id`'s new ord, or `0` without `after_id`.
+  `ord_after` stays as it is.
+- `tradurre/domain/replace.py`:
+  - `_replace(rec, project_id, first: int | None, last: int | None, beads: list[NewBead]) -> list[int]` (`NewBead`
+    from `layer.py`), so Stage 4 can replace several runs in one operation; and
+    `replace_beads(conn, project_id, first, last, beads, kind: str = "replace_beads") -> list[int]`, which
+    validates, calls `_replace` with one Recorder, records once and returns the new bead ids.
+  - The run is the beads with `ord` from `first`'s to `last`'s, inclusive. `first`/`last` both `None` = the project
+    has no beads yet and the run is empty; then the "old coverage" is every segment of a non-excluded block, per
+    side, in document order. Otherwise it is, per side, the concatenation of `beads._segments` of the run's beads
+    in `ord` order.
+  - Refused (`DomainError`, before writing anything): `first`/`last` not beads of the project, only one of them
+    `None`, both `None` while the project has beads, `first` after `last`; a new bead with no segment on either
+    side; per side, the concatenation of the new beads' segment lists differing from the old coverage (this also
+    catches duplicates, foreign and excluded segments, and wrong order). `ValueError` for a `confidence` outside
+    `[0, 1]` or a `method` outside the schema's list (callers' bugs, caught before the `CHECK` fires).
+  - Writes: note the bead before `first` (`beads._previous`), delete the run's beads (segments dangle until the
+    end of the operation; this relies on `defer_foreign_keys`, i.e. on `history.transaction`), take
+    `ords_after(rec, "beads", project_id, that previous bead, len(beads))`, insert the new beads (`reviewed = 0`,
+    given `confidence`/`method`) and point their segments at them.
+- `tests/test_domain_replace.py`. Fixture (layer builder): beads A `(s1 | t1)`, B `(s2, s3 | t2)`,
+  C `(s4 | t3, t4)`, D `(s5 | t5)`, plus a source block excluded holding `f1`, plus a second project. Every
+  successful call: invariants, undo restores the snapshot, redo the post-state. Cases:
+  - replace B..C with `(s2 | t2)`, `(s3, s4 | t3)`, `( | t4)`: B and C gone; three new beads in that order
+    between A and D (by `ord`), `reviewed = 0`, given method/confidence;
+  - replace B..B with one bead equal in content: allowed (a re-align that changes nothing still makes new beads);
+  - refusals, each leaving the snapshot and the operation count unchanged: coverage missing `s4`; source order changed
+    (`(s2 | t2)`, `(s4 | t3)`, `(s3 | t4)`); including `s1` (outside the run) or `f1` (excluded); an empty new bead;
+    `first` = C, `last` = B; a bead of the other project; `first` given and `last` `None`; `None`/`None` here;
+  - an empty project (documents built, no beads): `None`/`None` with beads covering every non-excluded segment →
+    ords `0, 1024, …`; one undo leaves the project with no beads;
+  - `ords_after` on bead siblings: ords `0, 1024`, after the first, `3` → `256, 512, 768`; ords `0, 1`, after the
+    first, `3` → siblings renumbered to `1024, 5120`, result `2048, 3072, 4096`; ords `0, 1`, `None`, `2` →
+    siblings `3072, 4096`, result `1024, 2048`; after the last, `2` → `last + 1024, last + 2048`; `count = 0` →
+    `ValueError`.
 
 #### Randomized round trip
 Not ready: a seeded random sequence of all the operations above on a fixture project; invariants after every step;
