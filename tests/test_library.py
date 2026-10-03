@@ -80,3 +80,14 @@ def test_import_through_the_api(tmp_path, monkeypatch):
     one_sided = sum(not b["source"] or not b["target"] for b in beads)
     print(f"\nimport: {elapsed:.1f} s, {len(beads)} beads, {one_sided} one-sided")
     assert len(beads) > 1000, f"{len(beads)} beads"
+
+
+def test_segmentation_loses_no_text(side):
+    from tradurre.services.segment import split_sentences
+
+    lang, blocks = side
+    broken = sum(
+        "".join(re.sub(r"\s", "", s) for s in split_sentences(b.text)) != re.sub(r"\s", "", b.text)
+        for b in blocks if b.kind not in EXCLUDED_KINDS
+    )
+    assert broken == 0, f"{lang}: {broken} blocks lose text in segmentation"

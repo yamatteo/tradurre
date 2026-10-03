@@ -1,13 +1,13 @@
 """From two extractions to a project in the new model (PLAN.md, "Interim build").
 
-Segmentation and alignment are v0.1's (`aligner.split_sentences`, `find_anchors`, `align`), used unchanged; better
-ones replace them behind `build_book`.
+Segmentation is `segment.split_sentences` (French/Italian conventions); alignment is still v0.1's (`find_anchors`,
+`align`), used unchanged until a better one replaces it behind `build_book`.
 """
 
 import sqlite3
 
 from tradurre.domain.layer import NewBead, NewBlock, append_beads, create_document
-from tradurre.services import aligner
+from tradurre.services import aligner, segment
 from tradurre.services.extract import EXCLUDED_KINDS, Extraction
 
 
@@ -15,7 +15,7 @@ def _blocks(extraction: Extraction) -> list[NewBlock]:
     return [
         NewBlock(
             block.kind,
-            aligner.split_sentences(block.text) or [block.text],
+            segment.split_sentences(block.text) or [block.text],
             excluded=block.kind in EXCLUDED_KINDS,
             page=block.page,
         )

@@ -42,7 +42,7 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
   import through the form too (4.3 s, 1354 beads, 185 one-sided).
 - Licensed AGPL-3.0-only (`LICENSE`).
 - Python 3.14 only (`.python-version`, `requires-python`, launcher). Stage 0 is complete.
-- `uv run pytest`: 274 passed (PyMuPDF is a core dependency), also on a fresh clone (tests read only committed
+- `uv run pytest`: 286 passed (PyMuPDF is a core dependency), also on a fresh clone (tests read only committed
   synthetic fixtures; `-m library` tests run only where `library/contrefeu.*.pdf` exists, and assert counts only).
 - PDF extraction (`extract.py`) works on the reference book (page numbers, chapter numbers, two-up spreads), and
   `POST /api/v2/books` accepts PDFs (extraction in a worker thread; an unreadable PDF is a 400).
@@ -365,8 +365,54 @@ once `library/contrefeu.gold.tsv` exists; if it doesn't yet, say so, it's not a 
   quote `gold_score.py`'s F1. Don't touch the app, the API, the schema, or the export script.
 
 ### Segmentation
-French/Italian sentence splitter (abbreviations, dialogue dashes, guillemets, ellipses), with regression tests
-from real failure cases; replaces `split_sentences` in `build_book`.
+Status: done
+Report: 2026-10-03 — `services/segment.py` (one regex with closers/openers and an exact `isupper` class, case-sensitive abbreviations, token = letters and inner dots so `l'Avv.` holds), used by `build_book`; `tests/test_segment.py` 38 cases + invariant; library invariant test. Reference book, old → new: FR 1258 → 1260 segments, >400 chars 47 → 45, lowercase starts 1 → 1, abbreviation ends 4 → 0; IT 1265 → 1266, 46 → 45, 10 → 10, 4 → 0 (the long ones have no internal terminator: real long sentences). Import: 1353 beads (was 1354), 180 one-sided (was 185). No gold yet. pytest 364 passed, `-m library` 8 passed, e2e 28 passed.
+**Done when:** `uv run pytest` passes with the new `tests/test_segment.py`; `uv run pytest -m library` passes
+with the new library test; the `Report:` gives, per side of the reference book, the segment count and the
+diagnostic counts below **before and after** the change, the bead and one-sided bead counts from
+`test_import_through_the_api` (run with `-s`), and the F1 of `scripts/gold_score.py` if
+`library/contrefeu.gold.tsv` exists (otherwise "no gold yet").
+
+SPEC §3.1.3: segmentation handles French and Italian conventions (abbreviations, dialogue dashes and guillemets,
+ellipses, quotations ending in punctuation). Today `build_book` uses v0.1's `aligner.split_sentences`
+(`aligner.py:26,275`): a split only after `.?!` + whitespace + `[A-ZÀ-ÝÆŒ]`, so it misses `…`, `?`/`!` followed
+by a closing `»`, a dialogue dash, an opening `«`, and splits after "M." or "Sig.".
+
+- New module `tradurre/services/segment.py`, `split_sentences(text: str) -> list[str]`. A boundary is, in order:
+  1. a terminator: one or more of `.` `?` `!` `…` (so `...`, `?!`, `!…` count once);
+  2. optional closers: zero or more of `»` `”` `"` `’` `)` `]`, each optionally preceded by whitespace (so
+     `! »` and `."` end the sentence *after* the closer);
+  3. whitespace (at least one character; Python's `\s` covers U+00A0 and U+202F, which French uses before
+     `?!»:;`);
+  4. the next sentence's start: optional openers (`«` `“` `"` `(` `—` `–` or a `-` followed by whitespace,
+     with whitespace between), then a character for which `str.isupper()` is true. Digits and lowercase never
+     start a sentence (so `« Viens ! » dit-il.` and `Que faire ? se demanda-t-il.` stay whole).
+  
+  No boundary after an abbreviation: the token before the terminator (letters and inner dots, from the last
+  whitespace or opener) is, **case-sensitively**, one of `M MM Mme Mlle Mgr Dr Pr St Ste Me Sig Sigg Sig.ra
+  Sig.na Dott Dott.ssa Prof Prof.ssa Avv Ing Mons SS cf p pp vol chap fig éd` (the dot that follows it being the
+  terminator), or a single uppercase letter (an initial: `J. Dupont`). Case matters: Italian `a me.` ends a
+  sentence, `Me` (Maître) doesn't. `etc.` and `ecc.` are **not**
+  abbreviations here: they end sentences often enough, and a wrong split is one `j` away.
+  Segments are the text between boundaries, stripped; empty ones dropped. Invariant, tested: the segments, with
+  all whitespace removed and concatenated, equal the input with all whitespace removed.
+- `tradurre/services/build.py`: `_blocks` uses `segment.split_sentences` (keep the `or [block.text]` fallback);
+  update the module docstring. `aligner.split_sentences` and its callers in the old API stay untouched (Stage 7
+  removes them).
+- `tests/test_segment.py`, one test per rule with French and Italian examples written for the test (never text
+  from the reference book): `.`/`?`/`!` + capital; `…` and `...` + capital vs + lowercase; `? »` / `! »` then a
+  capital (boundary after `»`) vs then `dit-il`; `."` / `.”`; NBSP and U+202F before `?` and `»`; dialogue
+  `— Tu viens ? — Non.` (two segments); an opening `« ` after a period; `(` after a period; accented capitals
+  (`À`, `É`); each abbreviation group (French titles, Italian titles, `p.`/`cf.`, an initial) not splitting;
+  `etc.` + capital splitting; Italian `a me. Poi` splitting; digits after a period not splitting; the whitespace invariant over all the test
+  inputs (a parametrized check).
+- `tests/test_library.py`: one test, per side, that the invariant holds on every included block of the reference
+  book (counts only in the failure message: how many blocks break it).
+- Diagnostics for the `Report:` (a throwaway script in the scratchpad, never committed, printing counts only),
+  per side, with the old and the new splitter on the reference book's included blocks: segment count; segments
+  over 400 characters (likely missed boundaries); segments starting with a lowercase letter (likely wrong
+  splits); segments whose last token is in the abbreviation list (wrong splits the old splitter made).
+- Don't touch the aligner (`align`, `find_anchors`), the extractor, the API or the frontend.
 
 ### Baseline local aligner
 The current anchor heuristic plus a length-based (Gale–Church-style) cost, producing beads with real confidence,
