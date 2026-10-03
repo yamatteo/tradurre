@@ -4,7 +4,7 @@ import pytest
 
 from tradurre.db import get_connection, init_db
 from tradurre.domain import DomainError
-from tradurre.domain.history import redo, transaction, undo
+from tradurre.domain.history import Recorder, record, redo, transaction, undo
 from tradurre.domain.invariants import check_project
 from tradurre.domain.layer import NewBead, NewBlock, append_beads, create_document
 from tradurre.domain.beads import merge_with_next
@@ -125,7 +125,7 @@ def test_exclude_keeps_bead_with_other_side(db):
     conn, i = db
     run(conn, exclude_block, i["S3"])
     assert seg(conn, i["s4"])[2] is None
-    assert bead(conn, i["C"]) == ([], [i["t4"]], "manual", 1.0, 0)
+    assert bead(conn, i["C"]) == ([], [i["t4"]], "anchor", 0.8, 0)
 
 
 def test_exclude_deletes_emptied_bead(db):
@@ -133,18 +133,18 @@ def test_exclude_deletes_emptied_bead(db):
     start = snapshot(conn)
     run(conn, exclude_block, i["T1"])  # X ( | t2) is left empty
     assert bead(conn, i["X"]) is None
-    assert bead(conn, i["A"]) == ([i["s1"]], [], "manual", 1.0, 1)
+    assert bead(conn, i["A"]) == ([i["s1"]], [], "anchor", 0.9, 1)
     with transaction(conn):
         undo(conn, "p1")
     assert snapshot(conn) == start
     assert bead(conn, i["X"]) == ([], [i["t2"]], "length", 0.2, 0)
 
 
-def test_exclude_corrects_remaining_beads(db):
+def test_exclude_leaves_remaining_beads_alone(db):
     conn, i = db
     run(conn, exclude_block, i["S1"])
-    assert bead(conn, i["A"]) == ([], [i["t1"]], "manual", 1.0, 1)
-    assert bead(conn, i["B"]) == ([], [i["t3"]], "manual", 1.0, 1)
+    assert bead(conn, i["A"]) == ([], [i["t1"]], "anchor", 0.9, 1)
+    assert bead(conn, i["B"]) == ([], [i["t3"]], "length", 0.7, 1)
     assert bead(conn, i["X"]) == ([], [i["t2"]], "length", 0.2, 0)
     assert [seg(conn, i[s])[2] for s in ("s1", "s2", "s3")] == [None, None, None]
 
@@ -163,8 +163,12 @@ def test_include_inside_bead_joins_it(db):
     conn, i = db
     with transaction(conn):
         merge_with_next(conn, "p1", i["B"])
+    with transaction(conn):
+        rec = Recorder(conn)
+        rec.update("beads", i["B"], confidence=0.4)
+        record(conn, "p1", "test", rec)
     run(conn, include_block, i["S2"])
-    assert bead(conn, i["B"]) == ([i["s2"], i["s3"], i["f1"], i["s4"]], [i["t3"], i["t4"]], "manual", 1.0, 0)
+    assert bead(conn, i["B"]) == ([i["s2"], i["s3"], i["f1"], i["s4"]], [i["t3"], i["t4"]], "manual", 0.4, 0)
 
 
 def test_include_without_preceding_goes_first(db):

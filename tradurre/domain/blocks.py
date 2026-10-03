@@ -1,13 +1,14 @@
 """Block exclude/include (SPEC §2, §3.3; PLAN.md, "Domain operations").
 
-Excluding never deletes text: the block's segments only leave the alignment. Callers own the transaction
-(`history.transaction`).
+Excluding never deletes text: the block's segments only leave the alignment. Exclude and include are text-layer
+decisions, so they never change an existing bead's method, confidence or reviewed flag. Callers own the
+transaction (`history.transaction`).
 """
 
 import sqlite3
 
 from tradurre.domain import DomainError
-from tradurre.domain.beads import _corrected, _is_empty
+from tradurre.domain.beads import _is_empty
 from tradurre.domain.history import Recorder, record
 from tradurre.domain.ordering import ord_after
 
@@ -52,8 +53,6 @@ def exclude_block(conn: sqlite3.Connection, project_id: str, block_id: int) -> i
     for bead_id in touched:
         if _is_empty(conn, bead_id):
             rec.delete("beads", bead_id)
-        else:
-            _corrected(rec, bead_id)
     return record(conn, project_id, "exclude_block", rec)
 
 
@@ -72,7 +71,6 @@ def include_block(conn: sqlite3.Connection, project_id: str, block_id: int) -> i
         p_bead = None if p is None else p[0]
         if p is not None and n is not None and p_bead == n[0]:
             bead_id = p_bead
-            _corrected(rec, bead_id)
         else:
             bead_id = rec.insert("beads", {
                 "project_id": project_id,

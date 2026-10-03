@@ -27,7 +27,7 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
 - UI: three-step import wizard, a TipTap editor per pair, FTS5 search over pairs (no context).
 - One connection per request; every write handler is one `BEGIN IMMEDIATE` transaction. No undo/history.
 - Python 3.14 only (`.python-version`, `requires-python`, launcher). Stage 0 is complete.
-- `uv run pytest`: 136 passed, 1 skipped, also on a fresh clone (tests read only committed synthetic fixtures).
+- `uv run pytest`: 143 passed, 1 skipped, also on a fresh clone (tests read only committed synthetic fixtures).
 - `uv.lock` is tracked; `pytest`/`httpx` are in the `dev` group. The Windows launcher's `uv tool install` resolves
   from PyPI and never reads the lock.
 - `npm run type-check` passes; releases build with `npm run build`. Playwright's Chromium is not installed on the
@@ -403,7 +403,8 @@ Design (/pauli, 2026-10-03), binding for every task below:
   the result equals a neighbour (no integer room), the siblings are first renumbered `GAP, 2·GAP, …` through the
   Recorder (so the renumbering is undone with the operation), then the midpoint is taken again.
 - **Rules for corrections** (SPEC §2, §3.3):
-  - a bead whose segment membership changes through a correction becomes `method = 'manual'`,
+  - a bead whose segment membership changes through an **alignment** correction (move, merge, split bead, and the
+    bead merge of a cross-bead segment join) becomes `method = 'manual'`,
     `confidence = 1.0`; its `reviewed` flag is kept (a merge: reviewed only if all merged beads were; a split: both
     halves keep the original's flag). A bead left with no segment on either side is deleted.
   - **segment split** at a character offset of the current `text`: first part `text[:offset].rstrip()`, second
@@ -418,7 +419,11 @@ Design (/pauli, 2026-10-03), binding for every task below:
     together. Decided (user, 2026-10-03): "when you join, you join both the beads and the texts". SPEC §2 updated
     accordingly (user agreed, 2026-10-03). Still refused
     across blocks (paragraph structure); revisit if real books need it.
-  - **exclude block**: `excluded = 1`, its segments' `bead_id = NULL`, beads left empty deleted.
+  - **exclude block**: `excluded = 1`, its segments' `bead_id = NULL`, beads left empty deleted. Exclude and
+    include are text-layer decisions, not alignment judgments: they never change an existing bead's `method`,
+    `confidence` or `reviewed` (/pauli, 2026-10-03, revising the first version, which marked them `manual`/`1.0`:
+    that claimed the translator had checked an alignment they had not, and hid a now-misaligned bead from the
+    low-confidence highlighting).
   - **include block**: `excluded = 0`. With `P` the nearest preceding and `N` the nearest following non-excluded
     segment on the same side: if both exist and share a bead, the block's segments join that bead; otherwise they
     form one new bead with the other side empty, placed right after `P`'s bead (or first, if there is no `P`),
@@ -678,6 +683,25 @@ Status: done
   - excluding an excluded block / including an included one → `DomainError`; a block of another project →
     `DomainError`.
 Report: 2026-10-03 — `tradurre/domain/blocks.py` (`exclude_block`, `include_block`); `tests/test_domain_blocks.py` 7 passed; pytest 143 passed, 1 skipped. Deviation: with this fixture C is `(s4 | t4)`, so excluding S3 leaves C as `( | t4)` (tested so); the emptied-bead case is tested by excluding target block T1, which deletes X, and undo restores it with its id.
+Verified (/pauli, 2026-10-03, `2b664cf`): matches the task; pytest 143 passed, 1 skipped. The deviation fixes my
+error in the task (C keeps `t4`) and tests the intended rule. Braun's note on surviving beads being marked
+`manual`/`1.0` is right: the rule is revised above and the follow-up task below implements it.
+
+#### Exclude/include leave beads' confidence alone
+Status: done
+**Done when:** `tests/test_domain_blocks.py` passes with the updated expectations below; `uv run pytest` otherwise
+unchanged.
+
+Per the revised rule under "Rules for corrections": in `tradurre/domain/blocks.py`, `exclude_block` no longer calls
+`beads._corrected` on beads that keep segments (empty ones are still deleted), and `include_block` no longer calls
+it on the bead the block's segments join. New beads made by `include_block` are unchanged (`manual`, `0.0`,
+unreviewed). Drop the now-unused `_corrected` import. In `tests/test_domain_blocks.py`, survivors keep their
+fixture values: excluding S3 leaves C `( | t4)` as `anchor`/`0.8`; excluding T1 leaves A `(s1 | )` as
+`anchor`/`0.9`; excluding S1 leaves A `( | t1)` as `anchor`/`0.9` and B `( | t3)` as `length`/`0.7`. In the
+include-into-bead case, after `merge_with_next(B)` set the merged bead's `confidence` to `0.4` through a recorded
+operation (`Recorder.update` + `record`, kind `"test"`), so the check can tell; after `include_block` it is still
+`manual`/`0.4`.
+Report: 2026-10-03 — `blocks.py` no longer calls `_corrected` (import dropped, docstring states the rule); block tests updated to the fixture values and the `0.4` include case; 7 passed; pytest 143 passed, 1 skipped.
 
 #### Replace beads
 Status: todo
