@@ -115,6 +115,9 @@ The best alignment needs a GPU (sentence embeddings + an LLM judge). That runs o
 3. The translator loads the alignment file back into the project. It replaces the beads of the regions not yet
    reviewed; reviewed beads are kept. Text is never changed by this round trip.
 
+The round trip is meant to run right after import, before review. Loading is refused if the project's text has
+changed since the bundle was exported; the translator then exports a new bundle.
+
 The heavy aligner may also be run directly on the two original files (as a convenience), producing a bundle plus
 alignment in one go.
 
