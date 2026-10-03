@@ -1,27 +1,27 @@
-"""Save a reviewed chapter of a book as the gold chapter (PLAN.md, "Gold chapter").
+"""Save the translator's corrected book as the gold (PLAN.md, "Gold chapter", design v2).
 
-    uv run python scripts/gold_export.py <book id> <chapter>
+    uv run python scripts/gold_export.py <book id>
 
-The book id is the one in the book's URL (`/book/<id>`). Every bead of the chapter must be reviewed.
+The book id is the one in the book's URL (`/book/<id>`). Every bead must be reviewed.
 """
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
 from tradurre import config
 from tradurre.db import get_connection
-from tradurre.services.gold import chapter_beads, write_tsv
+from tradurre.services.gold import SIDES, layer_to_json, read_layer
 
-DEFAULT_OUT = Path(__file__).resolve().parent.parent / "library" / "contrefeu.gold.tsv"
+DEFAULT_OUT = Path(__file__).resolve().parent.parent / "library" / "contrefeu.gold.json"
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Save a reviewed chapter of a book as the gold chapter.")
+    parser = argparse.ArgumentParser(description="Save the translator's corrected book as the gold.")
     parser.add_argument("book_id", help="the book's id, as in its URL (/book/<id>)")
-    parser.add_argument("chapter", type=int, help="the chapter number (1 = the first chapter of the body)")
     parser.add_argument("--db", type=Path, default=None, help=f"the database (default: {config.DB_PATH})")
-    parser.add_argument("--out", type=Path, default=DEFAULT_OUT, help=f"the TSV to write (default: {DEFAULT_OUT})")
+    parser.add_argument("--out", type=Path, default=DEFAULT_OUT, help=f"the file to write (default: {DEFAULT_OUT})")
     args = parser.parse_args(argv)
 
     db = args.db or config.DB_PATH
@@ -30,22 +30,25 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     conn = get_connection(db)
     try:
-        beads = chapter_beads(conn, args.book_id, args.chapter)
+        layer = read_layer(conn, args.book_id)
     except ValueError as e:
         print(e, file=sys.stderr)
         return 1
     finally:
         conn.close()
 
-    unreviewed = sum(not reviewed for _, _, reviewed in beads)
+    unreviewed = layer.reviewed.count(False)
     if unreviewed:
-        print(f"{unreviewed} of {len(beads)} beads of chapter {args.chapter} are not reviewed; nothing written",
+        print(f"{unreviewed} of {len(layer.reviewed)} beads of the book are not reviewed; nothing written",
               file=sys.stderr)
         return 1
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    write_tsv(args.out, [(source, target) for source, target, _ in beads])
-    one_sided = sum(not source or not target for source, target, _ in beads)
-    print(f"{args.out}: {len(beads)} beads, {one_sided} one-sided")
+    args.out.write_text(json.dumps(layer_to_json(layer), ensure_ascii=False), encoding="utf-8")
+    sides = {side: {bead for _, bead in layer.side(side) if bead is not None} for side in SIDES}
+    one_sided = sum(k not in sides["source"] or k not in sides["target"] for k in range(len(layer.reviewed)))
+    excluded = {side: sum(bead is None for _, bead in layer.side(side)) for side in SIDES}
+    print(f"{args.out}: {len(layer.reviewed)} beads, {one_sided} one-sided; "
+          f"excluded segments: source {excluded['source']}, target {excluded['target']}")
     return 0
 
 

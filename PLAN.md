@@ -42,7 +42,7 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
   import through the form too (4.3 s, 1354 beads, 185 one-sided).
 - Licensed AGPL-3.0-only (`LICENSE`).
 - Python 3.14 only (`.python-version`, `requires-python`, launcher). Stage 0 is complete.
-- `uv run pytest`: 286 passed (PyMuPDF is a core dependency), also on a fresh clone (tests read only committed
+- `uv run pytest`: 364 passed (PyMuPDF is a core dependency), also on a fresh clone (tests read only committed
   synthetic fixtures; `-m library` tests run only where `library/contrefeu.*.pdf` exists, and assert counts only).
 - PDF extraction (`extract.py`) works on the reference book (page numbers, chapter numbers, two-up spreads), and
   `POST /api/v2/books` accepts PDFs (extraction in a worker thread; an unreadable PDF is a 400).
@@ -227,17 +227,16 @@ import in the app"; test PDFs embed the font to keep U+00AD.
   assertions or messages (the book is copyrighted). Report the actual numbers.
 
 #### Front and back matter
-Not ready, and **deferred** until the translator has corrected the gold chapter on the real book: the open question
-is whether ~30–40 `x` presses per book are a real cost, which only use tells. Agreed (user, 2026-10-03): no
-automatic rule (it would drop a preface, which SPEC §2 counts as material to align); if `x` proves tedious, a bulk
-"exclude these blocks" correction, proposed then as a SPEC change. Until then:
-after "PDF import in the app", so the translator can see the real book in the screen meanwhile (front
-and back matter show up as short one-sided beads at both ends, which `x` excludes one block at a time).
-Measured after "PDF blocks" (counts only): FR has ~25 short blocks (1–7 words, plus a 43-word small-print block
-classified `footnote`) on logical pages 3–6 before the first chapter number, and ~6 short blocks on the last page;
-IT ~9 blocks on pages 3–5, ~7 on the last page. A rule can't simply exclude everything before chapter 1: SPEC §2
-counts a preface as real one-sided material to align. To decide when writing the task: short-block density per
-page, and whether the user wants a bulk "exclude this page" correction instead (a SPEC change).
+Not ready: after "Baseline local aligner" (the rule reads the alignment), scored by the exclusion F1 of "Gold v2".
+Decided (user, 2026-10-04, replacing the 2026-10-03 "no automatic rule"): exclusion is part of the pipeline and is
+scored with it. Order: **align first, then exclude** by a decision rule the runs of one-sided beads that "don't
+look like part of the text" (title pages, colophon, table of contents, back-cover blurbs). A one-sided preface or
+dedication that *is* text stays (SPEC §2). The rule marks blocks `front_matter`/`back_matter` (kinds the schema
+already has) and excludes them, so `x`/Include still override it. What the user excluded by hand in the
+reference book (measured 2026-10-04: source 28 paragraphs + 1 heading, target 17 + 1) is the target the rule is
+scored against.
+Earlier measurements (after "PDF blocks", counts only): FR ~25 short blocks on logical pages 3–6 before chapter 1
+and ~6 on the last page; IT ~9 on pages 3–5 and ~7 on the last page.
 
 Decided (user, 2026-10-03): sources are mixed and unknown per book (PDF, sometimes the translator's own .docx for
 the Italian side), so both paths stay first-class: the PDF pipeline is not the only road, and docx import keeps
@@ -275,9 +274,130 @@ The reference book becomes importable in the app (SPEC §3.1.1: born-digital PDF
 - After this task, tell the user in the report how to try it: `uv run tradurre --dev` plus `npm run dev`, import
   `library/contrefeu.fr.pdf` / `contrefeu.it.pdf`.
 
+### Whole-book gold
+Status: dropped
+Report: 2026-10-04 — blocked. `gold_export.py <id> all` done and tested (pytest 368 passed); export of the user's book OK (1222 beads, 0 one-sided, `library/contrefeu.gold.tsv`, gitignored). `gold_score.py` refuses: "doesn't match the current extraction", divergence at character 0 on both sides. Cause: the user excluded blocks the import includes (source: 28 paragraphs + 1 heading; target: 17 paragraphs + 1 heading; no text edits), so the gold's text is not a contiguous substring of a fresh import's (gold 196,294 / 201,813 non-space chars vs predicted 196,871 / 203,039). The metric's "gold is a substring" assumption fails whenever the translator's exclusions differ from the import's; needs a design decision.
+Dropped 2026-10-04 (Pauli, with the user): superseded by "Gold v2"; its uncommitted `all` changes to
+`gold_export.py`/`tests/test_gold.py` are replaced there.
+
+### Gold v2
+Status: done
+Report: 2026-10-04 — `gold.py` rewritten (`Layer`, `read_layer`, JSON format 1, `score` with alignment and exclusion metrics per character); `gold_export.py <id>` writes `library/contrefeu.gold.json`; `gold_score.py` prints both scores; `tests/test_gold.py` rewritten (13 tests; v1's 22 removed); pytest 359 passed. User's book: 1222 beads, 0 one-sided, excluded segments source 152 / target 181. Score of the current pipeline: import 4.5 s, 1353 predicted beads; alignment P 0.840 R 0.903 F1 0.870 (boundaries 1221 gold / 1312 predicted); exclusion P 1.000 R 0.421 F1 0.592 (excluded chars source 1134 gold / 557 predicted, target 1979 / 753); longest missed runs: beads 1099–1164 (66), 740–751, 243–249, 45–49, 1059–1063.
+**Done when:** `uv run pytest` passes with the rewritten `tests/test_gold.py`; `uv run python scripts/gold_export.py
+046fb6f2-ba5d-4b6b-ac1a-d6a9caf9f38c` writes `library/contrefeu.gold.json` from the user's database; `uv run python
+scripts/gold_score.py` runs on it, and the `Report:` gives its full output except the missed-run texts (metrics,
+counts, timing only).
+
+Design v2 under "Gold chapter" is binding. Start from the working tree (it holds the dropped task's uncommitted
+`all` changes; replace them).
+- `tradurre/services/gold.py`, rewritten:
+  - `Layer` (dataclass): `source: list[tuple[str, int | None]]`, `target: …` (segment `original_text`, bead index
+    or `None`), `reviewed: list[bool]` (per bead). `read_layer(conn, book_id) -> Layer` (ValueError "book … not
+    found" as now). `layer_to_json(layer) -> dict` / `layer_from_json(dict) -> Layer`, JSON shape
+    `{"format": 1, "source": [[text, bead], …], "target": […], "reviewed": […]}`.
+  - `score(gold: Layer, predicted: Layer) -> Score`; `Score` dataclass: `alignment_precision`, `alignment_recall`,
+    `alignment_f1`, `gold_boundaries`, `predicted_boundaries`, `exclusion_precision`, `exclusion_recall`,
+    `exclusion_f1`, `excluded_chars: dict[str, tuple[int, int]]` (side → (gold, predicted)), and `missed:
+    list[tuple[int, int]]` (runs of gold bead indices whose boundary is not predicted, longest first, as now).
+  - Remove `chapter_beads`, `book_beads`, `boundaries`, `read_tsv`, `write_tsv` and the chapter regex.
+- `scripts/gold_export.py <book id> [--db] [--out]` (default `library/contrefeu.gold.json`): no chapter argument;
+  refuses while any bead is unreviewed (as now, "N of M beads of the book are not reviewed"); prints bead count,
+  one-sided beads, excluded segments per side.
+- `scripts/gold_score.py [--gold] [--source] [--target]` (default gold `library/contrefeu.gold.json`): builds as
+  now, reads the prediction with `read_layer`, prints import time and bead counts (gold, predicted), the alignment
+  P/R/F1 and boundary counts, the exclusion P/R/F1 and excluded characters per side (gold vs predicted), and the 5
+  longest missed runs with the first source segment of the run's first gold bead, cut to 80 characters.
+- `tests/test_gold.py`, rewritten (synthetic only; hand-built `Layer`s plus the docx fixture through the API):
+  identical layers → all six metrics 1; merged beads → alignment recall < 1, precision 1, `missed` names it; gold
+  excludes a block that the prediction keeps as a one-sided bead → exclusion recall < 1, alignment F1 1; prediction
+  excludes a block the gold keeps → exclusion precision < 1; different segmentation or whitespace of the same text
+  → 1; different text → ValueError naming the side; the empty-set conventions; `read_layer` on the docx book after
+  excluding one block via `POST …/blocks/{id}/exclude` gives `None` for its segments; JSON round trip; the export
+  script refuses an unreviewed book and writes the file once all are reviewed; the score script on the docx pair
+  with a gold that has one block excluded → "alignment F1 1.000" and exclusion recall 0.
+- Don't touch `build_book`, the extractor, the segmenter, the aligner, the API or the frontend.
+
+### Stale frontend warning
+Status: todo
+**Done when:** `uv run pytest` passes with the new test; the `Report:` shows the startup line printed by `uv run
+tradurre --no-browser` on this machine before and after `npm run build`.
+
+Found 2026-10-03: the user opened the app on :8000 and got the **v0.1 screens** (old import wizard, sections,
+"insert"/"remove"), because `tradurre/static/` was built before Stage 2 and the backend serves it in every mode,
+`--dev` included (`app.py:46-58`); the new screens existed only on Vite's :5173. Nothing warned.
+- `tradurre/__main__.py`: a function `_stale_build(frontend_src: Path, static: Path) -> bool`, true when
+  `frontend_src` exists (a source checkout; an installed wheel has none) and its newest file under `src/`,
+  `index.html`, `package.json` is newer than `static/index.html`. At startup, in **both** modes, if true print
+  `warning: the built frontend in {static} is older than frontend/src; run 'npm run build' in frontend/ (or use
+  the Vite dev server on http://localhost:5173 with --dev).` Keep the existing "no built frontend" warning.
+- `tests/test_main.py` (new): `_stale_build` on a `tmp_path` tree: newer source → true; older source → false; no
+  `frontend/` → false; no `static/index.html` → false (the other warning covers it).
+- Nothing else changes.
+
 ### Import warnings and run metadata
-Not ready: warnings and run metadata (counts, timings; SPEC §3.1.5, §4 "Debuggable") stored on the project in
-tables added by a migration, shown in the correction screen.
+Status: todo
+**Done when:** `uv run pytest` passes (new migration and API tests); `npm run type-check` passes; `npm run
+test:e2e` passes with the new test; the `Report:` quotes the stored stats JSON of a reference-book import (counts
+and timings only, no text), taken from `test_import_through_the_api` run with `-s`.
+
+SPEC §3.1.5 (warnings attached to the project, shown in the review view) and §4 "Debuggable" (runs record counts,
+timings, warnings in the project). Today the import's warnings are only in the `POST` response
+(`api/books.py:77-80`), shown once by `BookImport.vue`, then lost; nothing records counts or timings.
+
+- `tradurre/db.py`: migration 5 `_m005_runs` (append to `MIGRATIONS`, `_run_script`):
+  ```sql
+  CREATE TABLE runs (
+      id          INTEGER PRIMARY KEY,
+      project_id  TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      kind        TEXT NOT NULL CHECK (kind IN ('import', 'align')),
+      created_at  TEXT NOT NULL,
+      app_version TEXT NOT NULL,
+      stats       TEXT NOT NULL              -- JSON object
+  );
+  CREATE INDEX idx_runs_project ON runs(project_id, id);
+  CREATE TABLE warnings (
+      id      INTEGER PRIMARY KEY,
+      run_id  INTEGER NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+      side    TEXT CHECK (side IN ('source', 'target')),   -- NULL: the whole run
+      message TEXT NOT NULL
+  );
+  ```
+  `'align'` is reserved for Stage 5; only `'import'` is written now. Runs are not operations: not in the undo log.
+- `tradurre/api/books.py`, `import_book`: time each side's `extract` (`time.perf_counter`, around the threadpool
+  call) and `build_book`; in the same transaction as the build, insert one `import` run (`app_version` =
+  `importlib.metadata.version("tradurre")`) and one `warnings` row per extraction warning, with its side and the
+  message **without** the "source: " prefix (the `POST` response keeps its prefixed list unchanged). `stats`:
+  ```json
+  {"source": {"filename": "…", "format": "pdf", "bytes": 0, "extract_ms": 0, "pages": 0,
+              "blocks": {"paragraph": 0, "page_number": 0, …}, "excluded_blocks": 0, "segments": 0},
+   "target": {…}, "build_ms": 0, "beads": 0, "one_sided_beads": 0}
+  ```
+  `pages` = the highest block `page`, or `null` (txt/docx); `blocks` counts every kind present; `segments` counts
+  the side's included segments; ms are integers. Counts come from the database after `build_book` (one query
+  each), not from re-running segmentation.
+- `tradurre/models.py` + new endpoint `GET /api/v2/books/{id}/runs` → `list[BookRun]`, newest first: `id`,
+  `kind`, `created_at`, `app_version`, `stats` (`dict`), `warnings: list[{side: str | None, message: str}]`;
+  404 for an unknown book (as `get_book`). `BookResponse` does not change.
+- Frontend: `client.ts` `booksApi.getRuns(id)` and a `BookRun` type. `BookView.vue` fetches the runs once on
+  mount (not after corrections) and shows, in the header next to "Show excluded", a button `data-testid="import-log"`
+  labelled "Import log", or "Import log (N warnings)" / "(1 warning)" in amber when the latest import run has
+  warnings. Clicking it toggles a panel under the header (`data-testid="import-log-panel"`): the warnings as a
+  list (`data-testid="import-warning"` per item, "source: …"/"target: …"), then the latest import run's
+  `created_at`, `app_version` and `stats` as indented JSON in a `<pre data-testid="import-stats">`. Keyboard
+  navigation keeps working while it is open (the button is not a text entry).
+- Tests:
+  - `tests/test_books_api.py`: a txt import stores one run whose `stats` has the counts of the known fixture
+    (`beads` 4, `one_sided_beads` 1, `source.blocks == {"paragraph": 3}`, `pages` null, `extract_ms` ≥ 0) and no
+    warnings; the Latin-1 import stores one warning with side `target` and the unprefixed message; the PDF pair
+    test also checks `pages` 3 and `blocks.page_number` 3 per side; unknown book → 404; a refused import (empty
+    txt) writes no run.
+  - `tests/test_bead_index.py:149` already checks `user_version == len(MIGRATIONS)`; add nothing there unless it
+    fails.
+  - `tests/test_library.py` `test_import_through_the_api`: also `GET …/runs` and print its `stats` (with `-s`);
+    assert only that it has one run.
+  - `frontend/e2e/books.spec.ts`: after a Latin-1 target import through the API, the book view's button reads
+    "Import log (1 warning)", opening it shows the warning and the stats, and ↓ still moves the current bead.
+- Don't change the aligner, the segmenter, the extractor or any correction endpoint.
 
 ### Gold chapter
 Decided (user, 2026-10-03): made **in the app**, not in a spreadsheet. The translator imports the reference book,
@@ -287,24 +407,30 @@ extraction damage) and marks its beads reviewed. Default chapter: the first of t
 (the tool to save it) and the first scored aligner task; Braun's tasks below don't wait for it (they test on
 synthetic books).
 
-Design (Pauli, 2026-10-03), binding for both tasks:
-- **Chapter, not bead ids.** Chapter *n* is the run of beads from the one holding the *n*-th source block of kind
-  `heading` whose text is only a number (`^\s*([0-9]+|[IVXLC]+)\s*$`, as in `tests/test_library.py`) up to,
-  excluding, the bead holding the next such block (or the end of the book). Ids are invisible in the UI; chapter
-  numbers aren't.
-- **Original text, not edited text.** Gold cells are built from segments' `original_text` (splits and joins keep
-  it consistent, `domain/segments.py:62,95`), so a text edit for extraction damage doesn't break scoring.
-- **Format:** `library/contrefeu.gold.tsv` (gitignored with `library/`: it is copyrighted text, never committed),
-  one line per bead, `source<TAB>target`, each side the bead's segments' `original_text` in reading order joined
-  with one space, any tab or newline inside replaced by a space; a one-sided bead has an empty cell. No header.
-- **Metric (independent of segmentation and whitespace):** for a list of beads, a side's *text* is all its cells
-  concatenated with every whitespace character removed; a bead's *boundary* is the pair (source offset, target
-  offset) = how many non-whitespace characters of each side lie in that bead and all before it. The gold's texts
-  are located in the predicted book's texts (exact substring, first occurrence; absent on either side → refuse:
-  "the gold chapter doesn't match the current extraction"). Gold boundaries: every gold bead's except the last
-  (the chapter's end). Predicted boundaries: shifted by the located offsets; kept when 0 ≤ s ≤ Ls and 0 ≤ t ≤ Lt
-  (the chapter's text lengths), minus (0, 0) and (Ls, Lt). Precision, recall and F1 of the predicted vs gold
-  sets (an empty predicted set has precision 0).
+Design v1 (Pauli, 2026-10-03; tasks "Gold export" and "Gold score" below, done): one chapter as a TSV of beads,
+located as a substring of a fresh import. **Broken by real use** (2026-10-04, see "Whole-book gold"): the user
+corrected the whole book and excluded front/back matter by hand, so the gold's included text is no longer a
+contiguous piece of a fresh import's. Replaced by design v2, binding for "Gold v2":
+- **Whole book, whole text layer.** The gold is the user's corrected book: every segment of both editions in
+  document order (block `ord`, segment `ord`), its `original_text` (text edits don't matter), and the 0-based index
+  of its bead in bead order, or `null` if its block is excluded. The prediction has the same shape, read from a
+  fresh import in a temporary database. Chapters and the TSV go away.
+- **Same extraction or refuse.** Per side, the concatenation of all segments' text with whitespace removed must be
+  identical in gold and prediction; otherwise refuse: "the gold doesn't match the current extraction ({side})".
+  Known cost: an extractor change that alters text invalidates the gold. When that first happens, map offsets with
+  a diff instead of refusing (a task then, not now).
+- **Two scores, per character** (non-whitespace characters of each side, now in one-to-one correspondence):
+  - *Exclusion*: positives are excluded characters. Precision = excluded in both / excluded in prediction, recall
+    = excluded in both / excluded in gold, both sides pooled.
+  - *Alignment*, on the characters included in **both** gold and prediction ("common"): a bead's boundary is
+    (number of common source characters in it and all beads before, same for target). Gold and predicted
+    boundary sets, minus (0, 0) and the end (all common source, all common target). Precision, recall, F1. A bead
+    made only of characters the other side excluded collapses onto its neighbour's boundary, so an exclusion
+    error is charged to the exclusion score, not twice.
+  - Empty-set convention for both: precision = 1 if the predicted set and the gold set are both empty, 0 if only
+    the predicted one is; same for recall with the roles swapped; F1 = 0 when precision + recall = 0.
+- Gold beads must all be reviewed (export refuses otherwise). The file is `library/contrefeu.gold.json`
+  (gitignored, copyrighted: never committed).
 
 #### Gold export
 Status: done
@@ -415,6 +541,8 @@ by a closing `»`, a dialogue dash, an opening `«`, and splits after "M." or "S
 - Don't touch the aligner (`align`, `find_anchors`), the extractor, the API or the frontend.
 
 ### Baseline local aligner
+Not ready: waits for "Gold v2" and the baseline alignment F1 of the interim aligner it reports, from which the
+user and /pauli agree the target alignment F1.
 The current anchor heuristic plus a length-based (Gale–Church-style) cost, producing beads with real confidence,
 fast enough to run on import and on an arbitrary sub-range (for "re-align range"); replaces the interim
 alignment in `build_book`, scored on the gold chapter.
