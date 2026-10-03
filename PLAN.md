@@ -29,7 +29,8 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
 - `uv run pytest`: 70 passed, 1 skipped, also on a fresh clone (tests read only committed synthetic fixtures).
 - `uv.lock` is tracked; `pytest`/`httpx` are in the `dev` group. The Windows launcher's `uv tool install` resolves
   from PyPI and never reads the lock.
-- `npm run type-check` fails with 10 errors (fixed by "Frontend type-check"); releases build with `build-only`.
+- `npm run type-check` passes; releases build with `npm run build`. Playwright's Chromium is not installed on the
+  dev machine, so `npm run test:e2e` and browser checks can't run here until `npx playwright install chromium`.
 - No user data needs migrating: the new model can start from an empty database.
 - A real book pair is available **locally only**: `library/contrefeu.fr.pdf` / `contrefeu.it.pdf` (gitignored,
   copyrighted: never commit it or excerpts of it; the repo is public). See "Reference book" in Stage 2.
@@ -153,9 +154,13 @@ list.
   browser console shows no error. Say in the Report that you did (or, if you could not run a browser, say so; the
   type-check alone then stands as the evidence). No e2e test: the wizard is deleted in Stage 6.
 Report: 2026-10-03 — `insertBlank`/`removeRow` take `ImportUnit[]`, `!` at the 4 `ProjectEditor.vue` sites (6 errors), `release.yml` runs `npm run build`; type-check 0 errors (was 10), `npm run build` ok, pytest 70 passed, 1 skipped. Browser check not done: no browser installed (Playwright's Chromium missing, no system Chrome); type-check is the evidence.
+Verified (/pauli, 2026-10-03, `9e5584f`): type-check 0 errors, `release.yml:28` is `npm run build`, pytest 70
+passed, 1 skipped. The wizard fix is sound without the browser check: the six arrays are deep `ref`s
+(`ImportWizard.vue:23-32`), so the array reached in the template is a reactive proxy and `splice` re-renders.
+Accepted; the developer may still click "+"/"x" once.
 
 ### Database access
-Status: todo
+Status: done
 **Done when:** no code reads `app.state.db`; every request uses its own connection; every write handler runs in
 one transaction that rolls back on error; the new test `test_failed_insert_leaves_positions_intact` passes and
 fails on the pre-task code; `uv run pytest` passes otherwise unchanged.
@@ -175,6 +180,20 @@ shared connection, visible to every later request and committed by the next `db.
 - Every handler that writes wraps all its reads-for-write and writes in one `with db:` block (sqlite3 commits on
   success, rolls back on exception) and drops its explicit `db.commit()`. `HTTPException`s raised inside the
   block roll back too, which is correct. Read-only handlers need no block.
+- The first statement inside each such block is `db.execute("BEGIN IMMEDIATE")`. Reason: in sqlite3's default
+  (legacy) transaction mode the implicit `BEGIN` comes only before the first `INSERT`/`UPDATE`/`DELETE`, so the
+  reads that precede it (`create_pair`'s `MAX(position)`, the 404 checks) would sit outside the transaction, and
+  with one connection per request two concurrent writers could both compute the same position. `BEGIN IMMEDIATE`
+  takes the write lock up front; the other request waits (sqlite3's default 5 s `timeout`). Don't change
+  `isolation_level` or `autocommit` on the connection.
+- A final read that builds the response (e.g. `create_pair`'s `SELECT * … WHERE id = ?`, `pairs.py:92`) may stay
+  after the block.
+- Keep `check_same_thread=False` in `get_connection` (`db.py:68`): FastAPI may run a sync generator dependency
+  and the sync handler that uses it on different threadpool threads. Each connection is still used by one
+  request at a time.
+- The test fixtures in `tests/test_pairs_api.py` and `tests/test_import_artifact.py` monkeypatch
+  `tradurre.app.DB_PATH`; they must keep working unchanged.
+Report: 2026-10-03 — `get_db` dependency (`db.py`), lifespan stores `app.state.db_path`; every DB handler in `projects`/`pairs`/`import_`/`export`/`search` uses `Depends(get_db)`, the 9 write handlers run in `with db:` + `BEGIN IMMEDIATE`, no `db.commit()` left outside `init_db`; `test_failed_insert_leaves_positions_intact` failed on the old code (`[0, 2, 3]`), passes now; pytest 71 passed, 1 skipped. Deviation: the test sends `source_text` and omits `target_text` (`PairCreate.source_text` is required, `models.py:31`).
 - Don't change SQL, response shapes, or `init_db`'s schema/migration code; keep the negative-position shift.
 - Test in `tests/test_pairs_api.py`: create pairs "a","b","c" at positions 0–2; monkeypatch
   `tradurre.api.pairs.strip_html` to raise `RuntimeError`; POST a pair at `position: 1` **without**

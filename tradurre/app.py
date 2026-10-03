@@ -17,10 +17,12 @@ FRONTEND_DIR = Path(__file__).parent / "static"
 async def lifespan(app: FastAPI):
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = get_connection(DB_PATH)
-    init_db(conn)
-    app.state.db = conn
+    try:
+        init_db(conn)
+    finally:
+        conn.close()
+    app.state.db_path = DB_PATH
     yield
-    conn.close()
 
 
 app = FastAPI(title="Tradurre", lifespan=lifespan)

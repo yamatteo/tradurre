@@ -1,5 +1,8 @@
 import sqlite3
+from collections.abc import Iterator
 from pathlib import Path
+
+from fastapi import Request
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS projects (
@@ -70,6 +73,15 @@ def get_connection(db_path: Path | None = None) -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
     return conn
+
+
+def get_db(request: Request) -> Iterator[sqlite3.Connection]:
+    """FastAPI dependency: one connection per request, closed when it ends."""
+    conn = get_connection(request.app.state.db_path)
+    try:
+        yield conn
+    finally:
+        conn.close()
 
 
 def init_db(conn: sqlite3.Connection) -> None:

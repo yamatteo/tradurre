@@ -1,8 +1,10 @@
 import re
+import sqlite3
 from typing import Literal
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends
 
+from tradurre.db import get_db
 from tradurre.models import SearchResponse, SearchResult
 
 router = APIRouter(tags=["search"])
@@ -22,14 +24,13 @@ def _fts5_escape(query: str) -> str:
 
 @router.get("/search", response_model=SearchResponse)
 def search_translation_memory(
-    request: Request,
     q: str,
     lang: Literal["source", "target", "both"] = "both",
     project_id: str | None = None,
     limit: int = 50,
     offset: int = 0,
+    db: sqlite3.Connection = Depends(get_db),
 ):
-    db = request.app.state.db
     escaped = _fts5_escape(q)
     if not escaped:
         return SearchResponse(query=q, total=0, results=[])

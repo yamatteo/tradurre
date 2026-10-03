@@ -1,6 +1,9 @@
-from fastapi import APIRouter, HTTPException, Query, Request
+import sqlite3
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 
+from tradurre.db import get_db
 from tradurre.services.exporter import export_docx, export_txt
 
 router = APIRouter(tags=["export"])
@@ -9,11 +12,10 @@ router = APIRouter(tags=["export"])
 @router.get("/projects/{project_id}/export")
 def export_project(
     project_id: str,
-    request: Request,
+    db: sqlite3.Connection = Depends(get_db),
     format: str = Query(..., pattern="^(docx|txt)$"),
     mode: str = Query("target", pattern="^(source|target|parallel)$"),
 ):
-    db = request.app.state.db
     proj = db.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
     if not proj:
         raise HTTPException(status_code=404, detail="Project not found")

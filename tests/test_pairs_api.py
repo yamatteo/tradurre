@@ -214,3 +214,28 @@ class TestMergePairPositionShift:
         assert "s-2" in pairs[1]["source_html"]
         # Position 2 was the old position 3
         assert pairs[2]["source_text"] == "s-3"
+
+
+class TestTransactions:
+    """Test that a failing write handler leaves no partial changes behind."""
+
+    def test_failed_insert_leaves_positions_intact(self, client, project_id, monkeypatch):
+        for text in ["a", "b", "c"]:
+            _create_pair(client, project_id, source=text, target=text)
+
+        def boom(html):
+            raise RuntimeError("strip_html failed")
+
+        # Without target_text, strip_html runs after the position shift.
+        with monkeypatch.context() as m:
+            m.setattr("tradurre.api.pairs.strip_html", boom)
+            with pytest.raises(RuntimeError):
+                client.post(
+                    f"/api/v1/projects/{project_id}/pairs",
+                    json={"source_html": "<p>x</p>", "source_text": "x",
+                          "target_html": "<p>x</p>", "position": 1},
+                )
+
+        pairs = _get_pairs(client, project_id)
+        assert [p["position"] for p in pairs] == [0, 1, 2]
+        assert [p["source_text"] for p in pairs] == ["a", "b", "c"]

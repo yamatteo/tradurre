@@ -1,10 +1,12 @@
+import sqlite3
 import uuid
 from datetime import datetime, timezone
 from html import escape
 
-from fastapi import APIRouter, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from pydantic import BaseModel, ValidationError
 
+from tradurre.db import get_db
 from tradurre.models import (
     AlignedArtifact,
     ImportArtifactResponse,
@@ -193,38 +195,37 @@ class ImportConfirmRequest(BaseModel):
 
 
 @router.post("/import/confirm", response_model=ProjectResponse, status_code=201)
-def import_confirm(body: ImportConfirmRequest, request: Request):
-    db = request.app.state.db
+def import_confirm(body: ImportConfirmRequest, db: sqlite3.Connection = Depends(get_db)):
     project_id = str(uuid.uuid4())
     now = _now()
 
-    db.execute(
-        "INSERT INTO projects (id, title, source_lang, target_lang, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-        (project_id, body.title, body.source_lang, body.target_lang, now, now),
-    )
-
-    for i, pair in enumerate(body.pairs):
-        pair_id = str(uuid.uuid4())
+    with db:
+        db.execute("BEGIN IMMEDIATE")
         db.execute(
-            """INSERT INTO pairs (id, project_id, position, section, paragraph,
-            source_html, target_html, source_text, target_text, status, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?)""",
-            (
-                pair_id,
-                project_id,
-                i,
-                pair.get("section", 0),
-                pair.get("paragraph", 0),
-                pair.get("source_html", ""),
-                pair.get("target_html", ""),
-                pair.get("source_text", ""),
-                pair.get("target_text", ""),
-                now,
-                now,
-            ),
+            "INSERT INTO projects (id, title, source_lang, target_lang, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (project_id, body.title, body.source_lang, body.target_lang, now, now),
         )
 
-    db.commit()
+        for i, pair in enumerate(body.pairs):
+            pair_id = str(uuid.uuid4())
+            db.execute(
+                """INSERT INTO pairs (id, project_id, position, section, paragraph,
+                source_html, target_html, source_text, target_text, status, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?)""",
+                (
+                    pair_id,
+                    project_id,
+                    i,
+                    pair.get("section", 0),
+                    pair.get("paragraph", 0),
+                    pair.get("source_html", ""),
+                    pair.get("target_html", ""),
+                    pair.get("source_text", ""),
+                    pair.get("target_text", ""),
+                    now,
+                    now,
+                ),
+            )
 
     return {
         "id": project_id,
