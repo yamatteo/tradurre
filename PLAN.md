@@ -193,14 +193,18 @@ shared connection, visible to every later request and committed by the next `db.
   request at a time.
 - The test fixtures in `tests/test_pairs_api.py` and `tests/test_import_artifact.py` monkeypatch
   `tradurre.app.DB_PATH`; they must keep working unchanged.
-Report: 2026-10-03 — `get_db` dependency (`db.py`), lifespan stores `app.state.db_path`; every DB handler in `projects`/`pairs`/`import_`/`export`/`search` uses `Depends(get_db)`, the 9 write handlers run in `with db:` + `BEGIN IMMEDIATE`, no `db.commit()` left outside `init_db`; `test_failed_insert_leaves_positions_intact` failed on the old code (`[0, 2, 3]`), passes now; pytest 71 passed, 1 skipped. Deviation: the test sends `source_text` and omits `target_text` (`PairCreate.source_text` is required, `models.py:31`).
 - Don't change SQL, response shapes, or `init_db`'s schema/migration code; keep the negative-position shift.
 - Test in `tests/test_pairs_api.py`: create pairs "a","b","c" at positions 0–2; monkeypatch
-  `tradurre.api.pairs.strip_html` to raise `RuntimeError`; POST a pair at `position: 1` **without**
-  `source_text` (so `strip_html` runs after the shift); expect a 500 (use a `TestClient(app,
+  `tradurre.api.pairs.strip_html` to raise `RuntimeError`; POST a pair at `position: 1` with `source_text`
+  but **without** `target_text` (so `strip_html` runs on the target after the shift); expect a 500 (use a `TestClient(app,
   raise_server_exceptions=False)` or `pytest.raises(RuntimeError)`); undo the monkeypatch; GET the pairs and
   assert positions `[0, 1, 2]` with texts `a, b, c`. Before writing the fix, run the test against the old code
   and confirm it fails; say so in the Report.
+Report: 2026-10-03 — `get_db` dependency (`db.py`), lifespan stores `app.state.db_path`; every DB handler in `projects`/`pairs`/`import_`/`export`/`search` uses `Depends(get_db)`, the 9 write handlers run in `with db:` + `BEGIN IMMEDIATE`, no `db.commit()` left outside `init_db`; `test_failed_insert_leaves_positions_intact` failed on the old code (`[0, 2, 3]`), passes now; pytest 71 passed, 1 skipped. Deviation: the test sends `source_text` and omits `target_text` (`PairCreate.source_text` is required, `models.py:31`).
+Verified (/pauli, 2026-10-03, `b5fb19d`): no `app.state.db` left; all 10 write handlers (not 9: projects 3, pairs 6,
+`import_confirm` 1) open `BEGIN IMMEDIATE` inside `with db:`, and every `INSERT`/`UPDATE`/`DELETE` in `tradurre/api/`
+sits inside one; pytest 71 passed, 1 skipped. The test deviation was correct (the task text was wrong, now fixed
+above). Braun also ran 100 concurrent appends from 16 threads: all 201, positions exactly 0–99.
 
 ### Python 3.14
 Status: todo
@@ -221,6 +225,13 @@ lxml, websockets, pyyaml).
   translator's environment doesn't depend on which Python uv happens to find. Existing installs move to 3.14 on
   the next upgrade, because `--force` rebuilds the tool environment.
 - `CLAUDE.md`, "Commands": "Python 3.12" → "Python 3.14".
+- `CLAUDE.md`, "Backend": the sentence "Handlers access the DB via `request.app.state.db` (a single shared sqlite3
+  connection, not a session/pool)." is stale since "Database access". Replace it with: "Handlers get a
+  per-request connection via `db: sqlite3.Connection = Depends(get_db)` (`db.py`); write handlers wrap their work
+  in `with db:` starting with `db.execute("BEGIN IMMEDIATE")`." Follow that pattern for new handlers.
+  (Doc-only, bundled here because this task already edits `CLAUDE.md`.)
+- Note: the local `.venv` already runs Python 3.14.4 (uv picked the newest allowed interpreter), so the suite is
+  already green on 3.14; the risk in this task is the lock and the launcher, not the code.
 - Report that the `.bat` change can't be exercised here; the developer checks it by hand on the next release.
 
 ---
@@ -236,8 +247,8 @@ text), beads (source/target segment ranges, confidence, method, reviewed), an op
 warnings/run metadata. Ordering that doesn't require renumbering the whole book on every insert.
 Must include a schema-version mechanism (`PRAGMA user_version` plus an ordered list of migration functions run
 by `init_db()`), because SPEC §4 requires automatic migration on upgrade once v0.2 ships; the ad hoc
-`ALTER TABLE … try/except` pattern described in `CLAUDE.md` cannot express table rebuilds or data moves. (Needs
-user agreement, since `CLAUDE.md` says not to add a migration framework; update `CLAUDE.md` with it.)
+`ALTER TABLE … try/except` pattern described in `CLAUDE.md` cannot express table rebuilds or data moves. Decided (user, 2026-10-03): yes, add it; the task that adds it
+also rewrites the `CLAUDE.md` paragraph on ad hoc migrations to describe the new mechanism.
 Decided (user, 2026-10-03): "reviewed" is a **per-bead flag** in storage, editable one bead at a time; no "reviewed
 up to here" position. Bulk marking comes from **skim review**, a pass the translator starts deliberately (typically
 once, after import), not a default mode: beads scrolled past during the pass are marked reviewed (Stage 3).
