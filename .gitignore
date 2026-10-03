@@ -8,3 +8,4 @@ __pycache__
 colab_cell_blueprint.py
 library
 tradurre/static/
+.e2e.db*

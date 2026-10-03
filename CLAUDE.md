@@ -42,7 +42,7 @@ Frontend (run from `frontend/`):
 npm run dev          # Vite dev server on :5173, proxies /api to :8000 (see vite.config.ts)
 npm run build         # type-check (vue-tsc) + production build into ../tradurre/static
 npm run type-check    # vue-tsc --build only
-npm run test:e2e      # Playwright e2e tests (e2e/*.spec.ts); auto-starts `npm run dev`
+npm run test:e2e      # Playwright e2e tests (e2e/*.spec.ts) on a throwaway backend (:8001, .e2e.db) and Vite :5174
 ```
 
 In production, `tradurre/app.py` serves the built SPA from `tradurre/static/` (gitignored) directly off the

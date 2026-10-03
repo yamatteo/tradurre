@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test'
 
-const API = 'http://localhost:5173/api/v1'
+const API = '/api/v1'
 
 test.describe('Scroll sync in side-by-side mode', () => {
   let projectId: string

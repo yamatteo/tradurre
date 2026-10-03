@@ -37,7 +37,7 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
   after import (Stage 5). Footnotes stay excluded as SPEC says; reviewed and confidence stay separate.
 - Licensed AGPL-3.0-only (`LICENSE`).
 - Python 3.14 only (`.python-version`, `requires-python`, launcher). Stage 0 is complete.
-- `uv run pytest`: 232 passed with PyMuPDF installed (231 + 1 skipped without), also on a fresh clone (tests read
+- `uv run pytest`: 247 passed with PyMuPDF installed (246 + 1 skipped without), also on a fresh clone (tests read
   only committed synthetic fixtures).
 - `uv.lock` is tracked; `pytest`/`httpx` are in the `dev` group. The Windows launcher's `uv tool install` resolves
   from PyPI and never reads the lock.
@@ -205,6 +205,8 @@ keys.
 Status: done
 **Done when:** `tests/test_books_corrections_api.py` passes; `uv run pytest` otherwise unchanged.
 Report: 2026-10-03 — 12 correction endpoints in `api/books.py` via one `_correct` helper (transaction, `updated_at`, DomainError → 409, ValueError → 400), `_read_book` shared with `GET`, `can_undo`/`can_redo`, `Book…Request` models; `tests/test_books_corrections_api.py` 15 passed; pytest 247 passed (232 before).
+Verified (/pauli, 2026-10-03, `05ddd35`): matches the task; pytest 247 passed. A no-op success also bumps
+`updated_at`: harmless, left as is.
 
 Every SPEC §3.3 correction over HTTP, in `tradurre/api/books.py`; request models in `models.py` (`Book…Request`).
 The domain functions do all the work and all the checking; the endpoints only translate.
@@ -238,11 +240,118 @@ The domain functions do all the work and all the checking; the endpoints only tr
   false; `updated_at` moves after a correction (via `GET /books` order with two books).
 
 ### Correction screen
-Not ready: route `/book/:id`, `BookView.vue`, plain text, no virtualization, no TipTap: beads as rows (source
-left, target right), a current bead moved with the keyboard, every correction of the previous step on a
-shortcut and a button, undo/redo, reviewed toggle and progress, excluded blocks revealable. `ProjectList` opens
-books here and offers "Import a book (txt/docx)" next to the old wizard. Probably two tasks (read-only list with
-navigation; corrections).
+The first screen the translator uses on the new model (SPEC §3.3, minus what Stage 4 adds: virtualization,
+confidence highlighting, skim pass, cut/paste, re-align range). Plain text, no TipTap, Tailwind like the other
+views. Shared design, decided here so the tasks don't each reinvent it:
+- **Client:** in `frontend/src/api/client.ts`, a second fetch wrapper for `/api/v2` (`booksApi`) whose errors are
+  `Error(detail)` with the server's `detail` message, so 409 messages from the domain reach the translator;
+  TypeScript types mirroring the `Book…` models in `tradurre/models.py`. `/api/v1` code is not touched.
+- **Layout (`frontend/src/views/BookView.vue`, route `/book/:id`, name `book`):** one scrolling column of rows,
+  one row per bead, source cell left, target cell right (a CSS grid with two equal columns). In a cell, segments
+  run on as text; a new block starts on a new line, and a `heading` block is bold. A one-sided bead has an empty
+  cell with a light grey background. A reviewed bead shows a green left border. A header bar shows title,
+  "reviewed X / N", Undo/Redo buttons (disabled from `can_undo`/`can_redo`) and a "Show excluded" toggle.
+- **Selection:** a current bead (outlined), a current side (`source`|`target`, its cell tinted) and a current
+  segment (underlined) inside the current cell. Clicking a segment selects all three. Keys (ignored while a text
+  field has focus): ↑/↓ previous/next bead (current segment = first of the cell), ←/→ side, Tab/Shift+Tab next/
+  previous segment within the cell. The current row is kept visible (`scrollIntoView({block: "nearest"})`).
+- **After every correction** the returned book replaces the local one; the current bead stays if it still exists,
+  else the bead now at the same index (clamped). An error shows its message in a status line under the header
+  for 5 s.
+- **Tests:** Playwright specs in `frontend/e2e/`, against a throwaway backend (next task). Each spec imports its
+  own book through `POST /api/v2/books`.
+
+#### E2E harness
+Status: done
+**Done when:** `npm run test:e2e` (in `frontend/`) runs `frontend/e2e/books.spec.ts` green against a backend on a
+throwaway database, with the user's `~/.tradurre/tradurre.db` untouched (its mtime unchanged); `uv run pytest`
+unchanged; `npm run type-check` passes.
+Report: 2026-10-03 — `TRADURRE_DB` in `config.py` (+ `tests/test_config.py`), Vite proxy from `TRADURRE_API`, Playwright on two throwaway servers (:8001 `.e2e.db`, Vite :5174) with `channel: 'chromium'`, `books.spec.ts` smoke test, scroll-sync spec made relative (passes); Chromium installed with `PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=ubuntu24.04-x64`; e2e 2 passed, `~/.tradurre/tradurre.db` mtime unchanged; pytest 249 passed (247 before); type-check passes.
+
+Today `npm run test:e2e` can't run (no Chromium) and would write into the user's real database through
+whatever backend is on :8000.
+- `tradurre/config.py`: `DB_PATH` comes from the environment variable `TRADURRE_DB` when it is set, else the
+  current default. Test in `tests/test_main.py` or a new `tests/test_config.py` (reload the module with the
+  variable set via `monkeypatch`).
+- `frontend/vite.config.ts`: the proxy target is `process.env.TRADURRE_API ?? 'http://127.0.0.1:8000'`.
+- `frontend/playwright.config.ts`: `baseURL` `http://localhost:5174`; `webServer` becomes two servers, both
+  `reuseExistingServer: false`: (1) the backend, `command: 'rm -f ../.e2e.db && uv run uvicorn tradurre.app:app
+  --port 8001'`, `env: {TRADURRE_DB: '<repo>/.e2e.db'}` (absolute, from `path.resolve`), `url:
+  'http://127.0.0.1:8001/api/v2/books'`; (2) `npx vite --port 5174 --strictPort` with `env: {TRADURRE_API:
+  'http://127.0.0.1:8001'}`. `.e2e.db*` goes in `.gitignore`.
+- `frontend/e2e/scroll-sync.spec.ts`: its `API` constant becomes relative (`/api/v1`, resolved against
+  `baseURL`). Run it and report whether it passes; if it fails, don't fix it (it tests the old editor, removed in
+  Stage 7): mark it `test.fixme` with a one-line comment giving the failure.
+- `frontend/e2e/books.spec.ts`: a smoke test only: `POST /api/v2/books` with two small txt files (Playwright
+  `request` multipart), then `GET /api/v2/books` lists it. (The UI specs come with the next tasks.)
+- Install the browser once: `npx playwright install chromium` (in `frontend/`). If the download is impossible in
+  this environment, stop and report (`blocked`).
+- `CLAUDE.md` "Commands": one line saying e2e runs on a throwaway backend (:8001, `.e2e.db`) and Vite :5174.
+
+#### Book list and import
+Status: todo
+**Done when:** `npm run type-check` passes; `npm run test:e2e` passes including the new cases in
+`frontend/e2e/books.spec.ts`; `uv run pytest` unchanged.
+
+- `client.ts`: `booksApi` (see the design) with `importBook(source: File, target: File, title: string,
+  sourceLang: string, targetLang: string)` (multipart; no JSON content-type header), `listBooks()`, `getBook(id)`.
+- `frontend/src/router/index.ts`: route `/book/:id` (name `book`, props) to `BookView.vue`, and `/book/import`
+  (name `book-import`) to a new `BookImport.vue`. For this task `BookView.vue` shows only the header (title,
+  "reviewed X / N") and the plain list of rows (no selection, no keys): the next task fills it in.
+- `ProjectList.vue`: loads `listBooks()` alongside `listProjects()`. A project whose id is a book shows "N
+  beads, X reviewed" instead of the paragraph count and opens `/book/:id`; others behave as today. A button
+  "Import a book (txt/docx)" next to "New Project" opens `/book/import`.
+- `BookImport.vue`: two file inputs (`accept=".txt,.docx"`), labelled "Original (French)" and "Translation
+  (Italian)"; title input pre-filled from the original's filename without extension when it is chosen (editable);
+  languages pre-filled `fr`/`it` (SPEC §3.1.1); "Import" button disabled until both files are chosen and while
+  importing. On error, the server's message in red. On success with no warnings, go to `/book/:id`; with
+  warnings, show them in a list with a "Continue" button that goes there.
+- `books.spec.ts` (UI, with `page.setInputFiles` and in-memory buffers): import through the form → lands on
+  `/book/:id` showing the title and as many rows as beads; back on `/`, the book shows its bead count and opens
+  the book view; importing a `.pdf` shows the server's 415 message.
+
+#### Reading and navigation
+Status: todo
+**Done when:** `npm run type-check` passes; `npm run test:e2e` passes including `frontend/e2e/book-view.spec.ts`;
+`uv run pytest` unchanged.
+
+`BookView.vue` gets the layout and selection of the design: block starts and headings, empty one-sided cells,
+reviewed border, current bead/side/segment, the keys ↑ ↓ ← → Tab Shift+Tab, clicking, keeping the current row
+visible. "Show excluded" (off by default, SPEC §3.3 "hidden by default and can be revealed in place"): each
+excluded block appears, greyed and italic with its kind as a small label, as an extra row right after the row of
+its `after_bead_id` (before the first row if null), in its side's column; several after the same bead keep API
+order. Excluded rows can't be selected yet. Spec: arrows move the outline and side tint as described (assert with
+`data-` attributes: `data-bead-id`, `data-current`, `data-side`); a heading renders bold; the toggle reveals a
+block excluded through the API (`POST .../blocks/{id}/exclude`) at the right place.
+
+#### Bead corrections
+Status: todo
+**Done when:** `npm run type-check` passes; `npm run test:e2e` passes including `frontend/e2e/book-corrections.spec.ts`;
+`uv run pytest` unchanged.
+
+Keyboard first (SPEC §3.3), each also a small button in the current row's side cell (or the header for undo/redo);
+keys ignored while a text field has focus:
+- `[`: move the current side's first segment to the previous bead; `]`: its last segment to the next bead;
+- `m`: merge the current bead with the next;
+- `s`: split the current bead at the current segment (on the current side; the other side's `*_at` null);
+- `r`: toggle the current bead's reviewed mark;
+- `x`: exclude the current segment's block; on a revealed excluded row, an "Include" button;
+- Ctrl+Z / Ctrl+Shift+Z and Ctrl+Y: undo / redo (Cmd on macOS is not needed).
+Spec: one case per key checking the rows afterwards, a refused correction (`m` on the last bead) showing the
+server's message, undo/redo restoring the rows.
+
+#### Segment editing
+Status: todo
+**Done when:** `npm run type-check` passes; `npm run test:e2e` passes including `frontend/e2e/segment-editing.spec.ts`;
+`uv run pytest` unchanged.
+
+- `Enter` on the current segment (or double-click) replaces it with a `textarea` holding its text, focused, caret
+  at the end. In it: Enter saves (`edit`; unchanged text sends nothing), Escape cancels, Ctrl+Enter splits at the
+  caret: if the text was changed, save it first, then `split` with the caret's offset (two operations, two undo
+  steps). Blur cancels.
+- `j`: join the current segment with the next (`join-next`); the result keeps the current segment.
+Spec: edit and save, Escape cancels, Ctrl+Enter splits at the caret, `j` joins, an empty edit shows the server's
+message.
 
 ---
 
