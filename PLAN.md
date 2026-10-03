@@ -299,6 +299,7 @@ Status: done
 **Done when:** `npm run type-check` passes; `npm run test:e2e` passes including the new cases in
 `frontend/e2e/books.spec.ts`; `uv run pytest` unchanged.
 Report: 2026-10-03 — `booksApi` + `Book…` types in `client.ts` (errors carry the server's `detail`), routes `/book/import` and `/book/:id`, `BookImport.vue`, minimal `BookView.vue` (header + rows), `ProjectList.vue` routes books and offers the import; e2e 5 passed (4 in `books.spec.ts`, incl. a warnings case beyond the task's list); type-check passes; pytest 249 passed (unchanged).
+Verified (/pauli, 2026-10-03, `3742c75`): type-check passes, e2e 5 passed. The extra warnings test is welcome.
 
 - `client.ts`: `booksApi` (see the design) with `importBook(source: File, target: File, title: string,
   sourceLang: string, targetLang: string)` (multipart; no JSON content-type header), `listBooks()`, `getBook(id)`.
@@ -318,18 +319,33 @@ Report: 2026-10-03 — `booksApi` + `Book…` types in `client.ts` (errors carry
   the book view; importing a `.pdf` shows the server's 415 message.
 
 #### Reading and navigation
-Status: todo
+Status: done
 **Done when:** `npm run type-check` passes; `npm run test:e2e` passes including `frontend/e2e/book-view.spec.ts`;
 `uv run pytest` unchanged.
+Report: 2026-10-03 — `components/BeadRow.vue` (blocks on new lines, bold headings, grey empty cell, green reviewed border, selection via props), `BookView.vue` (shallowRef book, current bead/side/segment, ↑ ↓ ← → Tab Shift+Tab click `n`, status line, "Show excluded" rows after their bead); `e2e/book-view.spec.ts` 6 tests (heading case via a routed response, since txt import has no headings); 10,000-bead book: load 1.56–1.77 s, 20 ArrowDown 1.42–1.46 s (3 runs); e2e 11 passed; type-check passes; pytest 249 passed (unchanged).
 
 `BookView.vue` gets the layout and selection of the design: block starts and headings, empty one-sided cells,
 reviewed border, current bead/side/segment, the keys ↑ ↓ ← → Tab Shift+Tab, clicking, keeping the current row
-visible. "Show excluded" (off by default, SPEC §3.3 "hidden by default and can be revealed in place"): each
+visible; plus `n`: jump to the next unreviewed bead after the current one, wrapping to the first (SPEC §3.3 "a
+shortcut to the next unreviewed bead"; with none left, the status line says "Every bead is reviewed"). "Show excluded" (off by default, SPEC §3.3 "hidden by default and can be revealed in place"): each
 excluded block appears, greyed and italic with its kind as a small label, as an extra row right after the row of
 its `after_bead_id` (before the first row if null), in its side's column; several after the same bead keep API
-order. Excluded rows can't be selected yet. Spec: arrows move the outline and side tint as described (assert with
+order. Excluded rows can't be selected yet. Spec: `n` skips a reviewed bead (mark it through the API first);
+arrows move the outline and side tint as described (assert with
 `data-` attributes: `data-bead-id`, `data-current`, `data-side`); a heading renders bold; the toggle reveals a
 block excluded through the API (`POST .../blocks/{id}/exclude`) at the right place.
+
+**Scale** (added by /pauli after measuring, 2026-10-03): SPEC §1 puts a book at 3,000–10,000 sentences per side,
+and this screen is meant for real books before Stage 4 virtualizes it. The backend is not the problem (a
+10,000-bead book: `GET /books/{id}` 2.6 MB in 0.14 s, a correction 0.12 s); rendering is. So:
+- One row = a child component `frontend/src/components/BeadRow.vue` with props `bead`, `current: boolean`,
+  `currentSide: Side | null` and `currentSegmentId: number | null` (null on non-current rows), so moving the
+  selection changes the props of two rows only and Vue skips the rest. Hold the book in a `shallowRef`.
+- `book-view.spec.ts` also imports a generated 10,000-bead book (one sentence per paragraph per side, via the
+  API) and records: time from `page.goto` to the last row being in the DOM, and the time for 20 ↓ presses (each
+  awaited on `data-current` moving). Thresholds: load under 5 s, 20 presses under 2 s. Put both numbers in the
+  `Report:`. If a threshold fails with this structure, report it (`blocked`) rather than inventing a different
+  architecture: virtualization is Stage 4's, and /pauli would pull it forward.
 
 #### Bead corrections
 Status: todo
@@ -338,14 +354,17 @@ Status: todo
 
 Keyboard first (SPEC §3.3), each also a small button in the current row's side cell (or the header for undo/redo);
 keys ignored while a text field has focus:
-- `[`: move the current side's first segment to the previous bead; `]`: its last segment to the next bead;
+- Alt+↑: move the current side's first segment to the previous bead; Alt+↓: its last segment to the next bead
+  (not `[`/`]`: on the Italian keyboard the translator uses on Windows they need AltGr);
 - `m`: merge the current bead with the next;
 - `s`: split the current bead at the current segment (on the current side; the other side's `*_at` null);
 - `r`: toggle the current bead's reviewed mark;
 - `x`: exclude the current segment's block; on a revealed excluded row, an "Include" button;
 - Ctrl+Z / Ctrl+Shift+Z and Ctrl+Y: undo / redo (Cmd on macOS is not needed).
 Spec: one case per key checking the rows afterwards, a refused correction (`m` on the last bead) showing the
-server's message, undo/redo restoring the rows.
+server's message, undo/redo restoring the rows; on the 10,000-bead book of `book-view.spec.ts`, the time from
+`r` to the reviewed border appearing (recorded in the `Report:`; under 1.5 s, else `blocked` as in the previous
+task).
 
 #### Segment editing
 Status: todo
