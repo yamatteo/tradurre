@@ -376,25 +376,166 @@ CREATE INDEX idx_segments_bead ON segments(bead_id);
   - `user_version` is 2 after `init_db`.
 - Don't touch `pairs`, the FTS table or the API.
 Report: 2026-10-03 — `_TEXT_SCHEMA` (SQL copied verbatim from this task) and `_m002_text_alignment` appended to `MIGRATIONS`; `tests/test_schema.py` 10 passed (user_version 2, bead delete blocked, project cascade, two duplicate `ord`s, five CHECK cases); pytest 87 passed, 1 skipped; `pairs`/FTS/API untouched.
+Verified (/pauli, 2026-10-03, `4e16101`): `_TEXT_SCHEMA` is byte-identical to the SQL above; pytest 87 passed,
+1 skipped. Accepted.
 
 ### Domain operations
-A service layer, independent of HTTP, implementing every SPEC §3.3 correction (segment split/join/edit, block
-exclude/include, bead boundary moves, merge/split, review mark) as transactional operations that record an
-inverse in the operation log (its table and payload format are designed here and added as a migration);
-also the `ord` spacing policy and gap renumbering. Undo/redo on top of it. Rules to decide here (left open by
-"Schema"): confidence of beads made by hand (`1.0`) and by corrections; what a segment split/join does to
-`original_text`, including a split at a cursor inside text that was already edited; whether two segments in
-different blocks, or in different beads, can be joined (SPEC §2: the result stays inside the bead(s) that held them). Also one bulk primitive, "replace the beads covering a
-segment range with a new bead list", which import (Stage 2), re-align range (Stage 3) and loading a Colab
-alignment file (Stage 4) all build on.
+A service layer, independent of HTTP, implementing every SPEC §3.3 correction as a transactional operation with
+undo/redo that survives restarts (SPEC §2 "History"), plus the bulk primitive that import (Stage 2), re-align
+range (Stage 3) and loading a Colab alignment (Stage 4) build on. Code lives in a new package `tradurre/domain/`;
+nothing in `tradurre/api/` or the old `pairs` model changes in this step. HTTP endpoints come with the stages that
+use them.
 
-### Invariants
-A checker for bead coverage and monotonicity (every non-excluded segment in exactly one bead, in order), run in
-tests after every operation and available as a debug endpoint.
+Design (/pauli, 2026-10-03), binding for every task below:
+- **Undo is generic, by row snapshots.** Every write an operation makes goes through a `Recorder` that stores, per
+  touched row, `(table, id, before, after)` (`before` is `None` for an insert, `after` is `None` for a delete; rows
+  as dicts of all columns). An operation's change list is stored as JSON in the operation log. Undo applies the
+  `before`s, redo the `after`s. No per-operation inverse code, so undo can't drift from the operation.
+- **Ids are stable across undo/redo**: a re-inserted row gets its old id back. History is linear: recording a new
+  operation deletes the project's undone operations (the redo stack), so ids recreated by redo are always free.
+- **Applying a change list** (undo or redo), in one transaction, with `PRAGMA defer_foreign_keys = ON` (checked
+  at commit; verified in SQLite 3.46: a violation at commit rolls everything back): (1) every row that is updated
+  and whose target `ord` differs gets `ord = -id`; (2) delete the rows to delete; (3) write the target values of
+  updated rows; (4) insert the rows to insert. Every `UNIQUE (parent, ord)` holds at each step, because the
+  target state is one that existed and ords are never negative outside step (1).
+- **Ordering**: `ord` values are non-negative integers, spaced by `GAP = 1024` when created in bulk. A single
+  insert between siblings `a` and `b` takes `(a + b) // 2`; at the end `last + GAP`; at the start `first // 2`. If
+  the result equals a neighbour (no integer room), the siblings are first renumbered `0, GAP, 2·GAP, …` through the
+  Recorder (so the renumbering is undone with the operation), then the midpoint is taken again.
+- **Rules for corrections** (SPEC §2, §3.3):
+  - a bead whose segment membership changes through a correction becomes `method = 'manual'`,
+    `confidence = 1.0`; its `reviewed` flag is kept (a merge: reviewed only if all merged beads were; a split: both
+    halves keep the original's flag). A bead left with no segment on either side is deleted.
+  - **segment split** at a character offset of the current `text`: first part `text[:offset].rstrip()`, second
+    `text[offset:].lstrip()`, both non-empty or the split is refused. `original_text` is split at the offset mapped
+    from `text` to `original_text` through `difflib.SequenceMatcher(None, text, original_text, autojunk=False)`
+    opcodes (inside an `equal` run: shifted linearly; inside any other run: the start of its original range), with
+    the same strip rule. Unedited text therefore splits identically on both. The new segment follows in the same
+    block and bead.
+  - **segment join** with the next segment of the same block: `text = a.text + " " + b.text`, likewise for
+    `original_text`; it keeps `a`'s id. If the two segments are in **different beads, the beads are merged too**
+    (same rule as a bead merge: `manual`, `1.0`, reviewed only if both were), so text and alignment move
+    together. Decided (user, 2026-10-03): "when you join, you join both the beads and the texts". SPEC §2 updated
+    accordingly (user agreed, 2026-10-03). Still refused
+    across blocks (paragraph structure); revisit if real books need it.
+  - **exclude block**: `excluded = 1`, its segments' `bead_id = NULL`, beads left empty deleted.
+  - **include block**: `excluded = 0`. With `P` the nearest preceding and `N` the nearest following non-excluded
+    segment on the same side: if both exist and share a bead, the block's segments join that bead; otherwise they
+    form one new bead with the other side empty, placed right after `P`'s bead (or first, if there is no `P`),
+    `method = 'manual'`, `confidence = 0.0`, `reviewed = 0` (unmatched material the translator should look at). Confirmed by the user, 2026-10-03.
+  - **review marks**: setting one bead's flag is its own operation. Marks made by skim review coalesce: a skim mark
+    is appended to the latest operation if that operation is a not-undone skim-review operation, otherwise it
+    starts a new one; so one undo removes the marks since the last correction (SPEC §3.3).
+  - **replace beads** (bulk): replaces a contiguous run of beads (or, for a project with no beads yet, nothing)
+    with new beads given as source/target segment-id lists with confidence and method; new beads start
+    `reviewed = 0`. Refused unless the new beads cover exactly the segments the old ones covered, in order.
+- **Invariants** (checked in tests after every operation, and by Stage 2's debug endpoint): (I1) a segment has a
+  bead iff its block is not excluded; (I2) a bead and the segments pointing at it belong to the same project;
+  (I3) every bead has at least one segment; (I4) on each side, the beads' `ord`s, read along non-excluded segments
+  in document order (block `ord`, then segment `ord`), never decrease (this is contiguity and monotonicity
+  together); (I5) no negative `ord`.
+
+#### Text-layer builder and invariant checker
+Status: todo
+**Done when:** `tests/test_domain_invariants.py` passes: a project built with the builder passes the checker, and
+each of the five corruptions below is reported with its invariant's code; `uv run pytest` otherwise unchanged.
+
+- `tradurre/domain/__init__.py` (empty) and `tradurre/domain/layer.py`:
+  - dataclasses `NewBlock(kind: str, segments: list[str], excluded: bool = False, page: int | None = None)` and
+    `NewBead(source: list[int], target: list[int], confidence: float, method: str)` (segment ids);
+  - `GAP = 1024`;
+  - `create_document(conn, project_id, side, filename, format, blocks: list[NewBlock]) -> list[list[int]]`: inserts
+    the document, its blocks (`ord = i * GAP`) and segments (`ord = j * GAP`, `original_text = text`,
+    `bead_id = NULL`); returns the segment ids per block;
+  - `append_beads(conn, project_id, beads: list[NewBead]) -> list[int]`: inserts beads after the project's last
+    bead (`ord` continuing in steps of `GAP`), `reviewed = 0`, and points their segments at them; returns bead ids.
+  - Both are plain inserts for building a project (import, tests): not recorded, not undoable. They don't commit;
+    the caller owns the transaction.
+- `tradurre/domain/invariants.py`: `check_project(conn, project_id) -> list[str]`, one message per violation,
+  each starting with its code (`"I1: segment 12 …"`); empty list = valid. Rules I1–I5 above. Implement with plain
+  queries; a 10,000-bead project must check in well under a second (load the segments of both documents in one
+  query each, ordered, and walk them in Python).
+- `tests/test_domain_invariants.py`: a fixture builds a project with two documents (source: 3 blocks, one of them
+  `excluded=True`; target: 2 blocks), 1:1, 2:1 and 0:1 beads covering every non-excluded segment; `check_project`
+  returns `[]`. Then one test per corruption, each done with a direct `UPDATE`/`INSERT` on the fixture, asserting
+  the code appears: I1 (point an excluded block's segment at a bead), I2 (point a segment at a bead of a second project), I3 (an
+  extra bead with no segments), I4 (swap two beads' `ord`s), I5 (set one segment `ord` negative, freeing the
+  slot first if needed).
+- Don't touch `tradurre/db.py`, `tradurre/api/`.
+
+#### Recorder and operation log
+Status: todo
+**Done when:** `tests/test_domain_history.py` passes (cases below); `uv run pytest` otherwise unchanged.
+
+- Migration 3 in `tradurre/db.py` (`_m003_operations`, appended to `MIGRATIONS`), via `_run_script`:
+
+  ```sql
+  CREATE TABLE operations (
+      id         INTEGER PRIMARY KEY,
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      kind       TEXT NOT NULL,
+      changes    TEXT NOT NULL,                -- JSON list of [table, id, before, after]
+      undone     INTEGER NOT NULL DEFAULT 0 CHECK (undone IN (0, 1)),
+      created_at TEXT NOT NULL
+  );
+  CREATE INDEX idx_operations_project ON operations(project_id, id);
+  ```
+  (`tests/test_schema.py`'s `user_version == 2` assertion becomes `== len(MIGRATIONS)`.)
+- `tradurre/domain/history.py`:
+  - `TABLES = {"documents", "blocks", "segments", "beads"}` (the only tables a Recorder may touch).
+  - `class Recorder`: `__init__(self, conn)`; `insert(table, values: dict) -> int`; `update(table, id, **fields)`;
+    `delete(table, id)`. Each reads the full row before (`SELECT *`), performs the write, reads it after, and
+    appends `[table, id, before, after]` to `self.changes`. Updating a row twice in one operation records two
+    entries; that's fine.
+  - `record(conn, project_id, kind, rec: Recorder, coalesce: bool = False) -> int | None`: does nothing and returns
+    `None` if `rec.changes` is empty. Otherwise deletes the project's operations with `undone = 1`; then, if
+    `coalesce` and the project's latest operation has the same `kind` and `undone = 0`, appends the changes to it;
+    else inserts a new operation. Returns the operation id.
+  - `undo(conn, project_id) -> int | None`: the project's latest operation with `undone = 0`; apply its changes
+    reversed, using `before` as target; set `undone = 1`. `None` if there is nothing to undo.
+  - `redo(conn, project_id) -> int | None`: the project's earliest operation with `undone = 1`; apply its changes
+    in order, using `after` as target; set `undone = 0`.
+  - Applying follows the four-step procedure in the design above. The target of a row touched several times in
+    one change list is the **last** `after` (redo) or the **first** `before` (undo) for that row; compute the net
+    per row first, then apply.
+  - None of these commit; the caller owns the transaction (`with conn:` + `BEGIN IMMEDIATE`), and calls
+    `PRAGMA defer_foreign_keys = ON` itself, right after `BEGIN`. Say so in the module docstring.
+- `tests/test_domain_history.py`, on a project built with the layer builder (2 beads × 2 segments per side), with a
+  helper `snapshot(conn)` = all rows of the four tables, sorted:
+  - a recorded operation that updates a segment's text, inserts a bead, re-points a segment to it, and deletes
+    nothing: undo → snapshot equals the one before; redo → equals the one after; ids unchanged;
+  - an operation that re-points all segments of bead 2 to bead 1 and deletes bead 2 (a merge done by hand): undo
+    restores bead 2 with its old id (needs deferred FKs);
+  - an operation that swaps two beads' `ord`s through the Recorder (two updates, via a temporary negative `ord`):
+    undo and redo don't hit the `UNIQUE` constraint;
+  - recording a new operation after an undo deletes the undone one (redo returns `None`);
+  - `coalesce=True` with the same `kind` appends to the latest operation (one undo reverts both), but not after
+    that operation was undone, and not when the kinds differ;
+  - undo/redo survive closing and reopening the connection;
+  - `check_project` returns `[]` after every step.
+- Don't touch `tradurre/api/`.
+
+#### Ordering helpers
+Not ready: `ord_between`/renumber in `tradurre/domain/ordering.py`, through the Recorder, per the design above.
+
+#### Segment and block operations
+Not ready: edit text, split (with the offset mapping), join, exclude, include, per the rules above.
+
+#### Bead operations
+Not ready: move the first/last segment of a side to the previous/next bead, merge with next, split at a segment
+per side, set/clear review mark (single and skim-coalesced).
+
+#### Replace beads
+Not ready: the bulk primitive, per the rule above.
+
+#### Randomized round trip
+Not ready: a seeded random sequence of all the operations above on a fixture project; invariants after every step;
+undoing everything restores the initial snapshot, redoing everything the final one.
 
 ### Search index
-FTS5 over beads (concatenated source / target text of each bead), kept in sync by the domain operations; excluded
-blocks not indexed. Tokenizer `unicode61 remove_diacritics 2` so matching ignores case and accents (SPEC §3.4);
+FTS5 over beads (concatenated source / target text of each bead), kept in sync by the domain operations and by
+undo/redo (reindex the beads a change list touches, directly or through their segments); excluded blocks not
+indexed. Tokenizer `unicode61 remove_diacritics 2` so matching ignores case and accents (SPEC §3.4);
 test with "desoeuvrement"/"désœuvrement" (note œ is not a diacritic: decide folding explicitly).
 
 ---
@@ -466,11 +607,17 @@ the earlier steps don't fight it:
 ### Import API and minimal UI
 Upload two files → project created and aligned → opens in the project page. Until Stage 3 exists, that page is
 a plain read-only bead list (no virtualization), so every task here leaves a working app. Warnings and run
-metadata (counts, timings; SPEC §4 "Debuggable") stored on the project, in tables added here by a migration.
+metadata (counts, timings; SPEC §4 "Debuggable") stored on the project, in tables added here by a migration. A debug endpoint
+returns `check_project`'s result for a project.
 
 ---
 
 ## Stage 3 — Review view
+
+Decided (user, 2026-10-03): the review screen permits **cut/copy/paste between rows** ("the user is king and
+responsible"). A cut at one row's edge pasted at the adjacent edge of the neighbouring row leaves the edition's
+text unchanged and is recorded as a bead-boundary move; any other paste is a text edit (original text kept,
+undoable). SPEC §3.3 gets a line for it when this stage is planned (wording to agree with the user then).
 
 The main screen (SPEC §3.3): virtualized bead list, confidence and unmatched highlighting, next-problem
 navigation, skim-review pass and per-bead reviewed toggle, keyboard corrections, inline plain-text segment editing, excluded blocks

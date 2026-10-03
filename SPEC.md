@@ -78,7 +78,8 @@ crossing). Each bead carries:
 
 Correcting the alignment means moving bead boundaries (e.g. "this target sentence belongs to the previous bead"),
 merging or splitting beads. **It never touches segment text.** Correcting text never changes the bead structure,
-except that splitting or joining a segment keeps the result inside the bead(s) that contained it.
+with one exception: joining two segments that sit in different beads also merges those beads, so the joined
+sentence stays whole in one bead. Splitting a segment keeps both parts in the bead that contained it.
 
 ### History
 
