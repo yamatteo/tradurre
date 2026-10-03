@@ -36,7 +36,8 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
   screen), then better import and an in-app gold chapter (Stage 3), the full review view (Stage 4), Colab right
   after import (Stage 5). Footnotes stay excluded as SPEC says; reviewed and confidence stay separate.
 - **Stage 2 in progress:** a txt/docx pair imports into the new model and every correction works through
-  `/api/v2/books` (`tradurre/api/books.py`); no screen uses it yet.
+  `/api/v2/books` (`tradurre/api/books.py`). The book screen (`BookView.vue`, `/book/:id`) imports, reads and
+  navigates a book; corrections from the screen are next.
 - Licensed AGPL-3.0-only (`LICENSE`).
 - Python 3.14 only (`.python-version`, `requires-python`, launcher). Stage 0 is complete.
 - `uv run pytest`: 249 passed with PyMuPDF installed (248 + 1 skipped without), also on a fresh clone (tests read
@@ -323,6 +324,9 @@ Status: done
 **Done when:** `npm run type-check` passes; `npm run test:e2e` passes including `frontend/e2e/book-view.spec.ts`;
 `uv run pytest` unchanged.
 Report: 2026-10-03 — `components/BeadRow.vue` (blocks on new lines, bold headings, grey empty cell, green reviewed border, selection via props), `BookView.vue` (shallowRef book, current bead/side/segment, ↑ ↓ ← → Tab Shift+Tab click `n`, status line, "Show excluded" rows after their bead); `e2e/book-view.spec.ts` 6 tests (heading case via a routed response, since txt import has no headings); 10,000-bead book: load 1.56–1.77 s, 20 ArrowDown 1.42–1.46 s (3 runs); e2e 11 passed; type-check passes; pytest 249 passed (unchanged).
+Verified (/pauli, 2026-10-03, `5231269`): type-check passes, e2e 11 passed (10k: load 1573 ms, 20 ↓ 1443 ms),
+pytest 249. Navigation costs ≈72 ms a press because the parent still rebuilds 10,000 row vnodes per selection
+change; acceptable now, and Stage 4's virtualization removes it. The routed-response trick for headings is fine.
 
 `BookView.vue` gets the layout and selection of the design: block starts and headings, empty one-sided cells,
 reviewed border, current bead/side/segment, the keys ↑ ↓ ← → Tab Shift+Tab, clicking, keeping the current row
@@ -348,23 +352,66 @@ and this screen is meant for real books before Stage 4 virtualizes it. The backe
   architecture: virtualization is Stage 4's, and /pauli would pull it forward.
 
 #### Bead corrections
-Status: todo
+Status: done
 **Done when:** `npm run type-check` passes; `npm run test:e2e` passes including `frontend/e2e/book-corrections.spec.ts`;
 `uv run pytest` unchanged.
+Report: 2026-10-03 — `booksApi` correction functions (`client.ts`), button bar in the current cell (`BeadRow.vue`), `BookView.vue`: Alt+↑/↓ m s r x Ctrl+Z/Y/Shift+Z, Include on excluded rows, Undo/Redo in the header, `busy`, selection rule, `reconcile`, guard narrowed to text entry; `book-corrections.spec.ts` 8 tests; 10k book: `r` to border 274–487 ms, 20 ↓ now 1638–1736 ms (was ≈1440); e2e 19 passed; type-check passes; pytest 249 passed (unchanged).
 
-Keyboard first (SPEC §3.3), each also a small button in the current row's side cell (or the header for undo/redo);
-keys ignored while a text field has focus:
-- Alt+↑: move the current side's first segment to the previous bead; Alt+↓: its last segment to the next bead
-  (not `[`/`]`: on the Italian keyboard the translator uses on Windows they need AltGr);
-- `m`: merge the current bead with the next;
-- `s`: split the current bead at the current segment (on the current side; the other side's `*_at` null);
-- `r`: toggle the current bead's reviewed mark;
-- `x`: exclude the current segment's block; on a revealed excluded row, an "Include" button;
-- Ctrl+Z / Ctrl+Shift+Z and Ctrl+Y: undo / redo (Cmd on macOS is not needed).
-Spec: one case per key checking the rows afterwards, a refused correction (`m` on the last bead) showing the
-server's message, undo/redo restoring the rows; on the 10,000-bead book of `book-view.spec.ts`, the time from
-`r` to the reviewed border appearing (recorded in the `Report:`; under 1.5 s, else `blocked` as in the previous
-task).
+Keyboard first (SPEC §3.3); keys ignored while a text field has focus:
+- Alt+↑: move the current side's first segment to the previous bead (`move`, `to: previous`); Alt+↓: its last
+  segment to the next bead (`to: next`). Not `[`/`]`: on the Italian keyboard the translator uses on Windows they
+  need AltGr.
+- `m`: merge the current bead with the next (`merge-next`).
+- `s`: split the current bead at the current segment: `{source_at: seg, target_at: null}` on the source side,
+  mirrored on the target side. The current segment and everything after it on that side go to the new bead; the
+  other side stays.
+- `r`: toggle the current bead's reviewed mark (`reviewed` with `bead_ids: [current]`, `skim: false`).
+- `x`: exclude the current segment's block (`blocks/{block_id}/exclude`). On a revealed excluded row, an
+  "Include" button (`include`).
+- Ctrl+Z: undo; Ctrl+Shift+Z and Ctrl+Y: redo. Compare `event.key` case-insensitively (with Shift it is `Z`).
+  Cmd on macOS is not needed.
+
+Code:
+- `client.ts`: `booksApi` gains one function per endpoint, each returning `Promise<Book>`: `move(id, beadId,
+  side, to)`, `mergeNext(id, beadId)`, `splitBead(id, beadId, sourceAt, targetAt)`, `setReviewed(id, beadIds,
+  reviewed)`, `excludeBlock(id, blockId)`, `includeBlock(id, blockId)`, `undo(id)`, `redo(id)`. (Segment
+  functions come with the next task.)
+- `BookView.vue` key handler: today it returns on any Ctrl/Meta/Alt modifier (`BookView.vue:103`). Handle
+  Alt+↑/↓ and Ctrl+Z/Y/Shift+Z before that guard (and `preventDefault` them); plain keys keep the guard, so
+  Ctrl+R still reloads.
+- The text-field guard (`BookView.vue:102`) also swallows keys while the "Show excluded" checkbox has focus,
+  which it has right after a click: the translator toggles it and then ↓ does nothing. Narrow the guard to text
+  entry: `textarea`, `select`, content-editable, and `input` unless its `type` is checkbox, radio or button.
+- **One correction at a time:** a `busy` flag set while a request is in flight; correction keys and buttons do
+  nothing while it is set (navigation still works). Otherwise a fast double `m` sends a second request built from
+  the stale book.
+- **Selection after a correction** (refines the shared design): the current bead stays if it still exists, else
+  the bead now at the old index (clamped); the side stays; the current segment stays if it is still in that cell,
+  else the cell's first segment. One exception: after `s` the current bead is the new bead (old index + 1), so
+  the current segment stays the one the translator split at.
+- **Keep the 10k book fast:** the returned book is fresh JSON, so every `BeadRow` would get new props and
+  re-render. Before assigning it, reuse the old bead object for each new bead whose `id` exists in the old book
+  and whose `JSON.stringify` is equal (a small `reconcile(old, next)` in `BookView.vue`), and do the same for the
+  `excluded` entries by `block_id`. Then only changed rows re-render.
+- **Buttons:** `BeadRow.vue`, on the current row only, shows a small button bar in the current side's cell:
+  "↑ first", "↓ last", "Merge", "Split", "Reviewed"/"Unreviewed", "Exclude", each with a `title` naming its key
+  and `data-action` (`move-previous`, `move-next`, `merge`, `split`, `reviewed`, `exclude`), emitting
+  `correct(action)` with `@click.stop` (the cell's click selects). Undo/Redo buttons in the header, disabled from
+  `can_undo`/`can_redo` (and while `busy`).
+- Errors: the server's message in the status line (`say`), as in the shared design.
+
+Spec `book-corrections.spec.ts`, on the book of `book-view.spec.ts` (copy its helpers):
+- Alt+↓ then Alt+↑ on a source side: rows after each (compare cell texts);
+- `m` on B, `s` back at the same segment (and the current bead is the new one);
+- `r` sets and clears `data-reviewed`; the header progress follows;
+- `x` hides the block; with "Show excluded" the Include button brings it back; after clicking the checkbox,
+  ↓ still moves the current bead;
+- `m` on the last bead shows "There is no next bead to merge with" in the status line;
+- Ctrl+Z after a correction restores the rows and Ctrl+Y (and, after another Ctrl+Z, Ctrl+Shift+Z) redoes it;
+  the header Undo button is disabled on a fresh book;
+- one button click (`[data-action="merge"]`) does the same as `m`;
+- on a 10,000-bead book (as in `book-view.spec.ts`), the time from pressing `r` on bead 20 to its reviewed
+  border appearing: recorded in the `Report:`, under 1.5 s, else `blocked` (as in the previous task).
 
 #### Segment editing
 Status: todo
@@ -376,6 +423,9 @@ Status: todo
   caret: if the text was changed, save it first, then `split` with the caret's offset (two operations, two undo
   steps). Blur cancels.
 - `j`: join the current segment with the next (`join-next`); the result keeps the current segment.
+- `client.ts`: `editSegment(id, segmentId, text)`, `splitSegment(id, segmentId, offset)`, `joinNext(id,
+  segmentId)`, each returning `Promise<Book>`. The `busy`, selection and `reconcile` rules of "Bead corrections"
+  apply unchanged.
 Spec: edit and save, Escape cancels, Ctrl+Enter splits at the caret, `j` joins, an empty edit shows the server's
 message.
 

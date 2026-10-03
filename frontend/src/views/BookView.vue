@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef } from 'vue'
 import { booksApi, type Book, type BookBead, type BookExcludedBlock, type Side } from '@/api/client'
-import BeadRow from '@/components/BeadRow.vue'
+import BeadRow, { type Correction } from '@/components/BeadRow.vue'
 
 const props = defineProps<{ id: string }>()
 
@@ -10,6 +10,7 @@ const book = shallowRef<Book | null>(null)
 const error = ref('')
 const status = ref('')
 const showExcluded = ref(false)
+const busy = ref(false)
 
 const currentBeadId = ref<number | null>(null)
 const currentSide = ref<Side>('source')
@@ -97,9 +98,100 @@ function nextUnreviewed() {
   say('Every bead is reviewed')
 }
 
+/** Reuse the old objects for unchanged beads and excluded blocks, so only changed rows re-render. */
+function reconcile(old: Book, next: Book): Book {
+  const oldBeads = new Map(old.beads.map((b) => [b.id, b]))
+  const oldExcluded = new Map(old.excluded.map((x) => [x.block_id, x]))
+  const same = <T>(a: T | undefined, b: T): T => (a !== undefined && JSON.stringify(a) === JSON.stringify(b) ? a : b)
+  return {
+    ...next,
+    beads: next.beads.map((b) => same(oldBeads.get(b.id), b)),
+    excluded: next.excluded.map((x) => same(oldExcluded.get(x.block_id), x)),
+  }
+}
+
+/**
+ * Send one correction and show its result. The current bead stays if it still exists, else the bead now at its
+ * old index (clamped); `selectIndex` overrides that (after a split). Errors go to the status line.
+ */
+async function correct(request: (id: string) => Promise<Book>, selectIndex?: number) {
+  if (busy.value || !book.value) return
+  busy.value = true
+  const oldIndex = currentBeadId.value === null ? 0 : (beadIndex.value.get(currentBeadId.value) ?? 0)
+  const side = currentSide.value
+  const segmentId = currentSegmentId.value
+  try {
+    book.value = reconcile(book.value, await request(book.value.id))
+    const beads = book.value.beads
+    if (!beads.length) {
+      currentBeadId.value = null
+      return
+    }
+    let i = selectIndex ?? beadIndex.value.get(currentBeadId.value ?? -1) ?? oldIndex
+    i = Math.min(Math.max(i, 0), beads.length - 1)
+    const bead = beads[i]!
+    const keep = bead[side].some((s) => s.segment_id === segmentId)
+    select(bead.id, side, keep ? segmentId : null)
+  } catch (e) {
+    say((e as Error).message)
+  } finally {
+    busy.value = false
+  }
+}
+
+function currentSegment() {
+  return currentBead.value?.[currentSide.value].find((s) => s.segment_id === currentSegmentId.value) ?? null
+}
+
+function runCorrection(action: Correction) {
+  const bead = currentBead.value
+  if (!bead) return
+  const side = currentSide.value
+  switch (action) {
+    case 'move-previous':
+      return correct((id) => booksApi.move(id, bead.id, side, 'previous'))
+    case 'move-next':
+      return correct((id) => booksApi.move(id, bead.id, side, 'next'))
+    case 'merge':
+      return correct((id) => booksApi.mergeNext(id, bead.id))
+    case 'split': {
+      const at = currentSegmentId.value
+      const index = beadIndex.value.get(bead.id)!
+      return correct(
+        (id) => booksApi.splitBead(id, bead.id, side === 'source' ? at : null, side === 'target' ? at : null),
+        index + 1,
+      )
+    }
+    case 'reviewed':
+      return correct((id) => booksApi.setReviewed(id, [bead.id], !bead.reviewed))
+    case 'exclude': {
+      const segment = currentSegment()
+      if (!segment) return say(`The bead has no ${side} segment`)
+      return correct((id) => booksApi.excludeBlock(id, segment.block_id))
+    }
+  }
+}
+
+function isTextEntry(target: HTMLElement | null): boolean {
+  if (!target) return false
+  if (target.isContentEditable || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT') return true
+  return target.tagName === 'INPUT' && !['checkbox', 'radio', 'button'].includes((target as HTMLInputElement).type)
+}
+
 function onKey(event: KeyboardEvent) {
-  const target = event.target as HTMLElement | null
-  if (target && (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))) return
+  if (isTextEntry(event.target as HTMLElement | null)) return
+  const key = event.key.toLowerCase()
+  if (event.altKey && !event.ctrlKey && !event.metaKey && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
+    event.preventDefault()
+    runCorrection(event.key === 'ArrowUp' ? 'move-previous' : 'move-next')
+    return
+  }
+  if (event.ctrlKey && !event.altKey && !event.metaKey && (key === 'z' || key === 'y')) {
+    event.preventDefault()
+    if (key === 'z' && !event.shiftKey) undo()
+    else redo()
+    return
+  }
   if (event.ctrlKey || event.metaKey || event.altKey) return
   const actions: Record<string, () => void> = {
     ArrowDown: () => moveBead(1),
@@ -108,11 +200,27 @@ function onKey(event: KeyboardEvent) {
     ArrowRight: () => currentBead.value && select(currentBead.value.id, 'target', null),
     Tab: () => moveSegment(event.shiftKey ? -1 : 1),
     n: nextUnreviewed,
+    m: () => runCorrection('merge'),
+    s: () => runCorrection('split'),
+    r: () => runCorrection('reviewed'),
+    x: () => runCorrection('exclude'),
   }
   const action = actions[event.key]
   if (!action) return
   event.preventDefault()
   action()
+}
+
+function undo() {
+  correct((id) => booksApi.undo(id))
+}
+
+function redo() {
+  correct((id) => booksApi.redo(id))
+}
+
+function include(blockId: number) {
+  correct((id) => booksApi.includeBlock(id, blockId))
 }
 
 onMounted(async () => {
@@ -143,6 +251,14 @@ onBeforeUnmount(() => {
             <h1 class="text-xl font-bold text-gray-900" data-testid="book-title">{{ book.title }}</h1>
           </div>
           <div class="flex items-center gap-4 text-sm text-gray-600">
+            <button type="button" data-testid="undo" title="Ctrl+Z" :disabled="!book.can_undo || busy" @click="undo"
+              class="px-2 py-1 border border-gray-300 rounded bg-white hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed">
+              Undo
+            </button>
+            <button type="button" data-testid="redo" title="Ctrl+Y" :disabled="!book.can_redo || busy" @click="redo"
+              class="px-2 py-1 border border-gray-300 rounded bg-white hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed">
+              Redo
+            </button>
             <label class="flex items-center gap-1 cursor-pointer">
               <input v-model="showExcluded" type="checkbox" data-testid="show-excluded" />
               Show excluded
@@ -158,7 +274,7 @@ onBeforeUnmount(() => {
           <BeadRow v-if="item.type === 'bead'" :bead="item.bead" :current="item.bead.id === currentBeadId"
             :current-side="item.bead.id === currentBeadId ? currentSide : null"
             :current-segment-id="item.bead.id === currentBeadId ? currentSegmentId : null"
-            @select="select" />
+            @select="select" @correct="runCorrection" />
           <div v-else :data-excluded-block-id="item.block.block_id" data-testid="excluded-row"
             class="grid grid-cols-2 gap-4 px-4 py-2 text-sm border-l-4 border-transparent text-gray-400 italic">
             <div v-for="side in (['source', 'target'] as const)" :key="side">
@@ -167,6 +283,10 @@ onBeforeUnmount(() => {
                   {{ item.block.kind.replace('_', ' ') }}
                 </span>
                 {{ item.block.segments.map((s) => s.text).join(' ') }}
+                <button type="button" data-testid="include" @click="include(item.block.block_id)"
+                  class="not-italic ml-2 px-1.5 py-0.5 text-xs border border-gray-300 rounded bg-white text-gray-600 hover:bg-gray-100">
+                  Include
+                </button>
               </template>
             </div>
           </div>

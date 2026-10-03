@@ -11,7 +11,12 @@ const props = defineProps<{
   currentSegmentId: number | null
 }>()
 
-const emit = defineEmits<{ select: [beadId: number, side: Side, segmentId: number | null] }>()
+export type Correction = 'move-previous' | 'move-next' | 'merge' | 'split' | 'reviewed' | 'exclude'
+
+const emit = defineEmits<{
+  select: [beadId: number, side: Side, segmentId: number | null]
+  correct: [action: Correction]
+}>()
 
 interface CellBlock {
   blockId: number
@@ -29,6 +34,15 @@ function blocks(segments: BookSegment[]): CellBlock[] {
   }
   return out
 }
+
+const actions = computed<{ action: Correction; label: string; key: string }[]>(() => [
+  { action: 'move-previous', label: '↑ first', key: 'Alt+↑' },
+  { action: 'move-next', label: '↓ last', key: 'Alt+↓' },
+  { action: 'merge', label: 'Merge', key: 'M' },
+  { action: 'split', label: 'Split', key: 'S' },
+  { action: 'reviewed', label: props.bead.reviewed ? 'Unreviewed' : 'Reviewed', key: 'R' },
+  { action: 'exclude', label: 'Exclude', key: 'X' },
+])
 
 const cells = computed(() =>
   (['source', 'target'] as const).map((side) => ({ side, blocks: blocks(props.bead[side]) })),
@@ -55,6 +69,11 @@ const cells = computed(() =>
             :class="currentSegmentId === seg.segment_id ? 'underline decoration-blue-500 decoration-2' : ''"
             @click.stop="emit('select', bead.id, cell.side, seg.segment_id)">{{ seg.text }}</span>
         </template>
+      </div>
+      <div v-if="current && currentSide === cell.side" class="flex flex-wrap gap-1 mt-1" data-testid="bead-actions">
+        <button v-for="a in actions" :key="a.action" type="button" :data-action="a.action" :title="a.key"
+          class="px-1.5 py-0.5 text-xs border border-gray-300 rounded bg-white text-gray-600 hover:bg-gray-100"
+          @click.stop="emit('correct', a.action)">{{ a.label }}</button>
       </div>
     </div>
   </div>

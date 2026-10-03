@@ -199,6 +199,14 @@ async function booksRequest<T>(path: string, options?: RequestInit): Promise<T> 
   return res.json()
 }
 
+/** A correction: POST with an optional JSON body; the server returns the whole corrected book. */
+function booksPost(path: string, body?: unknown): Promise<Book> {
+  return booksRequest<Book>(path, {
+    method: 'POST',
+    ...(body === undefined ? {} : { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
+  })
+}
+
 export type Side = 'source' | 'target'
 
 export interface BookImportResponse {
@@ -272,4 +280,23 @@ export const booksApi = {
   listBooks: () => booksRequest<BookSummary[]>('/books'),
 
   getBook: (id: string) => booksRequest<Book>(`/books/${id}`),
+
+  move: (id: string, beadId: number, side: Side, to: 'previous' | 'next') =>
+    booksPost(`/books/${id}/beads/${beadId}/move`, { side, to }),
+
+  mergeNext: (id: string, beadId: number) => booksPost(`/books/${id}/beads/${beadId}/merge-next`),
+
+  splitBead: (id: string, beadId: number, sourceAt: number | null, targetAt: number | null) =>
+    booksPost(`/books/${id}/beads/${beadId}/split`, { source_at: sourceAt, target_at: targetAt }),
+
+  setReviewed: (id: string, beadIds: number[], reviewed: boolean) =>
+    booksPost(`/books/${id}/reviewed`, { bead_ids: beadIds, reviewed, skim: false }),
+
+  excludeBlock: (id: string, blockId: number) => booksPost(`/books/${id}/blocks/${blockId}/exclude`),
+
+  includeBlock: (id: string, blockId: number) => booksPost(`/books/${id}/blocks/${blockId}/include`),
+
+  undo: (id: string) => booksPost(`/books/${id}/undo`),
+
+  redo: (id: string) => booksPost(`/books/${id}/redo`),
 }
