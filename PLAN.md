@@ -25,8 +25,9 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
 - Alignment exists twice: a local anchor heuristic (`aligner.py`) and a heavy Colab pipeline (bertalign, LLM
   judge) whose many-to-many output is flattened to 1:1 on import.
 - UI: three-step import wizard, a TipTap editor per pair, FTS5 search over pairs (no context).
-- One shared `sqlite3` connection across FastAPI's threadpool, no explicit transactions; no undo/history.
-- `uv run pytest`: 70 passed, 1 skipped, also on a fresh clone (tests read only committed synthetic fixtures).
+- One connection per request; every write handler is one `BEGIN IMMEDIATE` transaction. No undo/history.
+- Python 3.14 only (`.python-version`, `requires-python`, launcher). Stage 0 is complete.
+- `uv run pytest`: 71 passed, 1 skipped, also on a fresh clone (tests read only committed synthetic fixtures).
 - `uv.lock` is tracked; `pytest`/`httpx` are in the `dev` group. The Windows launcher's `uv tool install` resolves
   from PyPI and never reads the lock.
 - `npm run type-check` passes; releases build with `npm run build`. Playwright's Chromium is not installed on the
@@ -243,13 +244,6 @@ Separate text from alignment (SPEC §2). Built alongside the old `pairs` model, 
 Stage 6 removes it.
 
 ### Schema
-Tables for documents (one per edition), blocks (with kind and excluded flag), segments (text and original
-text), beads (source/target segment ranges, confidence, method, reviewed), an operation log, and per-project
-warnings/run metadata. Ordering that doesn't require renumbering the whole book on every insert.
-Must include a schema-version mechanism (`PRAGMA user_version` plus an ordered list of migration functions run
-by `init_db()`), because SPEC §4 requires automatic migration on upgrade once v0.2 ships; the ad hoc
-`ALTER TABLE … try/except` pattern described in `CLAUDE.md` cannot express table rebuilds or data moves. Decided (user, 2026-10-03): yes, add it; the task that adds it
-also rewrites the `CLAUDE.md` paragraph on ad hoc migrations to describe the new mechanism.
 Decided (user, 2026-10-03): "reviewed" is a **per-bead flag** in storage, editable one bead at a time; no "reviewed
 up to here" position. Bulk marking comes from **skim review**, a pass the translator starts deliberately (typically
 once, after import), not a default mode: beads scrolled past during the pass are marked reviewed (Stage 3).
@@ -259,10 +253,127 @@ would break the linear undo order once corrections are interleaved); beads made 
 (merge: reviewed only if all merged beads were). SPEC §3.3 now says this ("Reviewed marks", "Skim
 review").
 
+Decided (user, 2026-10-03): a schema-version mechanism replaces the ad hoc `ALTER TABLE … try/except` pattern,
+because SPEC §4 requires automatic migration on upgrade and that pattern can't express table rebuilds or data moves.
+
+Design decisions for the whole stage (/pauli, 2026-10-03):
+- **A segment points to its bead** (`segments.bead_id`), instead of a bead storing source/target segment ranges.
+  Coverage "exactly once" is then structural for every segment that has a bead; what the checker (step
+  "Invariants") still verifies is contiguity, monotonicity, and that a segment has a bead iff its block is not
+  excluded. Moving a boundary is one `UPDATE` of one segment; merging beads re-points the segments of one bead.
+  Ranges would make every segment split/join and exclude/include rewrite bead endpoints.
+- **Beads store their order** (`beads.ord`): it can't be derived from segment order, because the order of a 1:0
+  bead next to a 0:1 bead is not determined by either side.
+- **Ordering is sparse integers**: `ord` columns, `UNIQUE` per parent, assigned with gaps; the domain layer
+  (step "Domain operations") owns the spacing policy and the renumbering when a gap runs out. The schema only
+  stores them.
+- **New tables use `INTEGER PRIMARY KEY`** (local ids, ~20k segments per book); `projects.id` stays a TEXT uuid
+  because the old model shares the table.
+- **Not in the schema step**: the operation log (added by its own migration in "Domain operations", where its
+  payload is designed), the search index (step "Search index"), and import runs/warnings (Stage 2, "Import API").
+  With migrations in place, each lands with the code that uses it.
+
+#### Migration mechanism
+Status: done
+**Done when:** `init_db` runs an ordered list of migrations keyed on `PRAGMA user_version`; the new
+`tests/test_migrations.py` passes (cases below); `uv run pytest` otherwise unchanged (71 passed, 1 skipped);
+`CLAUDE.md` describes the new mechanism and no longer prescribes `ALTER TABLE … try/except`.
+
+All in `tradurre/db.py`:
+- `_run_script(conn, script)`: runs a multi-statement SQL string **statement by statement** with `conn.execute`,
+  so it stays inside the caller's transaction (`executescript` would commit first). Split by accumulating lines
+  until `sqlite3.complete_statement(buffer)` is true (this keeps `CREATE TRIGGER … BEGIN … END;` whole); raise
+  `ValueError` if a non-blank remainder is left.
+- `_m001_pairs(conn)`: today's schema as migration 1. `_run_script` on `_SCHEMA`, `_FTS_SCHEMA`, `_FTS_TRIGGERS`
+  (all `IF NOT EXISTS`, so a pre-migration database at `user_version` 0 passes through), then add `section` and
+  `paragraph` only if `PRAGMA table_info(pairs)` lacks them (same column definition as today). No `try/except`.
+- `MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [_m001_pairs]`.
+- `init_db(conn)`: read `user_version`. If it is greater than `len(MIGRATIONS)`, raise `RuntimeError("database
+  schema version N is newer than this version of Tradurre supports (M); upgrade Tradurre")`. Otherwise, for each
+  pending migration in order: `with conn:` → `conn.execute("BEGIN IMMEDIATE")` → migration →
+  `conn.execute(f"PRAGMA user_version = {n}")`. One transaction per migration, so a failure leaves the database at
+  the last good version. Drop the final `conn.commit()`.
+- Leave `get_connection`, `get_db` and the SQL strings unchanged.
+- `tests/test_migrations.py`:
+  - fresh database: `user_version == len(MIGRATIONS)`, the `pairs` table has `section`/`paragraph`;
+  - `init_db` twice: no error, same version;
+  - **legacy database**: build one the way v0.1 did (`executescript` of the three SQL strings, `ALTER TABLE` for
+    the two columns, one project and one pair inserted, `user_version` left at 0); `init_db` brings it to the
+    current version and the pair and its FTS row are still there;
+  - **failing migration**: monkeypatch `tradurre.db.MIGRATIONS` to `[_m001_pairs, bad]` where `bad` creates a
+    table then raises; `init_db` raises, `user_version` is 1, the table `bad` created does not exist;
+  - **newer database**: `PRAGMA user_version = 99` then `init_db` raises `RuntimeError`.
+- `CLAUDE.md`, the `db.py` bullet: replace the sentence on ad hoc `ALTER TABLE` migrations with: "Schema changes
+  are migrations: append a function to `MIGRATIONS` in `db.py` (never edit an applied one); `init_db` runs the
+  pending ones, each in its own transaction, and records the count in `PRAGMA user_version`. Use `_run_script`,
+  not `executescript`, inside a migration."
+Report: 2026-10-03 — `_run_script`, `_m001_pairs` (columns via `PRAGMA table_info`), `MIGRATIONS`, `init_db` with one `BEGIN IMMEDIATE` transaction per migration and a newer-version refusal; `CLAUDE.md` `db.py` bullet rewritten; `tests/test_migrations.py` 6 passed (the 5 listed plus `_run_script` rejecting an incomplete statement); pytest 77 passed, 1 skipped. A copy of the local `~/.tradurre/tradurre.db` (empty, user_version 0) migrated to 1 cleanly.
+
+#### Text and alignment tables
+Status: todo
+**Done when:** migration 2 creates the tables below; the new `tests/test_schema.py` passes; `uv run pytest`
+otherwise unchanged; the old `pairs` API and its tests untouched.
+
+`_m002_text_alignment` in `tradurre/db.py`, appended to `MIGRATIONS`, via `_run_script` on a new `_TEXT_SCHEMA`
+string with exactly:
+
+```sql
+CREATE TABLE documents (
+    id         INTEGER PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    side       TEXT NOT NULL CHECK (side IN ('source', 'target')),
+    filename   TEXT NOT NULL,
+    format     TEXT NOT NULL CHECK (format IN ('pdf', 'docx', 'txt')),
+    UNIQUE (project_id, side)
+);
+CREATE TABLE blocks (
+    id          INTEGER PRIMARY KEY,
+    document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    ord         INTEGER NOT NULL,
+    kind        TEXT NOT NULL CHECK (kind IN ('paragraph', 'heading', 'footnote', 'running_head',
+                    'page_number', 'front_matter', 'back_matter', 'other')),
+    excluded    INTEGER NOT NULL DEFAULT 0 CHECK (excluded IN (0, 1)),
+    page        INTEGER,            -- logical page in the edition, for diagnostics; NULL if unknown
+    UNIQUE (document_id, ord)
+);
+CREATE TABLE beads (
+    id         INTEGER PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    ord        INTEGER NOT NULL,
+    confidence REAL CHECK (confidence IS NULL OR (confidence >= 0 AND confidence <= 1)),
+    method     TEXT NOT NULL CHECK (method IN ('anchor', 'length', 'embedding', 'llm', 'manual')),
+    reviewed   INTEGER NOT NULL DEFAULT 0 CHECK (reviewed IN (0, 1)),
+    UNIQUE (project_id, ord)
+);
+CREATE TABLE segments (
+    id            INTEGER PRIMARY KEY,
+    block_id      INTEGER NOT NULL REFERENCES blocks(id) ON DELETE CASCADE,
+    ord           INTEGER NOT NULL,
+    text          TEXT NOT NULL,
+    original_text TEXT NOT NULL,    -- as extracted; never changed after import
+    bead_id       INTEGER REFERENCES beads(id),   -- NULL iff the block is excluded
+    UNIQUE (block_id, ord)
+);
+CREATE INDEX idx_segments_bead ON segments(bead_id);
+```
+
+- `segments.bead_id` deliberately has no `ON DELETE` action: deleting a bead that still has segments must fail,
+  so no domain bug can silently orphan text. (Deleting a project still works: the cascade removes beads and
+  segments in the same statement, and SQLite checks the constraint at statement end.)
+- `tests/test_schema.py`, on a fresh `init_db`'d temp database (with `PRAGMA foreign_keys=ON`, i.e. via
+  `get_connection`): insert a project, two documents, a block per document, two beads, segments pointing at them;
+  then assert:
+  - deleting a bead that a segment points to raises `sqlite3.IntegrityError`;
+  - deleting the project removes every row in `documents`, `blocks`, `segments`, `beads`;
+  - a duplicate `(block_id, ord)` and a duplicate `(project_id, ord)` raise `IntegrityError`;
+  - `kind = 'chapter'`, `method = 'magic'`, `confidence = 1.5`, `side = 'left'` each raise `IntegrityError`.
+- Don't touch `pairs`, the FTS table or the API.
+
 ### Domain operations
 A service layer, independent of HTTP, implementing every SPEC §3.3 correction (segment split/join/edit, block
 exclude/include, bead boundary moves, merge/split, review mark) as transactional operations that record an
-inverse in the operation log; undo/redo on top of it. Also one bulk primitive, "replace the beads covering a
+inverse in the operation log (its table and payload format are designed here and added as a migration);
+also the `ord` spacing policy and gap renumbering. Undo/redo on top of it. Also one bulk primitive, "replace the beads covering a
 segment range with a new bead list", which import (Stage 2), re-align range (Stage 3) and loading a Colab
 alignment file (Stage 4) all build on.
 
@@ -343,8 +454,8 @@ the earlier steps don't fight it:
 
 ### Import API and minimal UI
 Upload two files → project created and aligned → opens in the project page. Until Stage 3 exists, that page is
-a plain read-only bead list (no virtualization), so every task here leaves a working app. Warnings stored on the
-project.
+a plain read-only bead list (no virtualization), so every task here leaves a working app. Warnings and run
+metadata (counts, timings; SPEC §4 "Debuggable") stored on the project, in tables added here by a migration.
 
 ---
 

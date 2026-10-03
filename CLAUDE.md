@@ -61,9 +61,9 @@ Browser ── Vue 3 SPA (TipTap editors) ──/api──▶ FastAPI ──▶ 
 
 - `app.py` — FastAPI app setup, CORS (allows `localhost:5173` for dev), router registration, SPA static mount.
 - `db.py` — raw `sqlite3` connection (no ORM). Schema lives here as inline SQL strings (`_SCHEMA`, `_FTS_SCHEMA`,
-  `_FTS_TRIGGERS`), applied idempotently via `init_db()` on startup. Schema migrations are done ad hoc with
-  `ALTER TABLE ... ADD COLUMN` wrapped in try/except — follow this pattern for new columns rather than adding a
-  migration framework.
+  `_FTS_TRIGGERS`), applied via `init_db()` on startup. Schema changes are migrations: append a function to `MIGRATIONS` in
+  `db.py` (never edit an applied one); `init_db` runs the pending ones, each in its own transaction, and records
+  the count in `PRAGMA user_version`. Use `_run_script`, not `executescript`, inside a migration.
 - `models.py` — all Pydantic request/response models in one file.
 - `api/` — one router module per resource (`projects.py`, `pairs.py`, `search.py`, `import_.py`, `export.py`).
   Handlers get a per-request connection via `db: sqlite3.Connection = Depends(get_db)` (`db.py`); write handlers

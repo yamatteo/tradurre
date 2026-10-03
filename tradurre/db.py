@@ -1,5 +1,5 @@
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 from fastapi import Request
@@ -84,18 +84,50 @@ def get_db(request: Request) -> Iterator[sqlite3.Connection]:
         conn.close()
 
 
-def init_db(conn: sqlite3.Connection) -> None:
-    conn.executescript(_SCHEMA)
-    conn.executescript(_FTS_SCHEMA)
-    conn.executescript(_FTS_TRIGGERS)
+def _run_script(conn: sqlite3.Connection, script: str) -> None:
+    """Run a multi-statement SQL script one statement at a time.
 
-    # Migration: add hierarchy columns (section/paragraph)
+    Unlike `executescript`, this doesn't commit first, so it stays inside the
+    caller's transaction.
+    """
+    buffer = ""
+    for line in script.splitlines(keepends=True):
+        buffer += line
+        if sqlite3.complete_statement(buffer):
+            conn.execute(buffer)
+            buffer = ""
+    if buffer.strip():
+        raise ValueError(f"Incomplete SQL statement: {buffer.strip()[:80]}")
+
+
+def _m001_pairs(conn: sqlite3.Connection) -> None:
+    """The v0.1 schema; a pre-migration database (user_version 0) passes through."""
+    _run_script(conn, _SCHEMA)
+    _run_script(conn, _FTS_SCHEMA)
+    _run_script(conn, _FTS_TRIGGERS)
+
+    # Hierarchy columns (section/paragraph), added after the first v0.1 release
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(pairs)")}
     for col in ("section", "paragraph"):
-        try:
-            conn.execute(
-                f"ALTER TABLE pairs ADD COLUMN {col} INTEGER NOT NULL DEFAULT 0"
-            )
-        except sqlite3.OperationalError:
-            pass  # Column already exists
+        if col not in columns:
+            conn.execute(f"ALTER TABLE pairs ADD COLUMN {col} INTEGER NOT NULL DEFAULT 0")
 
-    conn.commit()
+
+# Applied in order; migration n sets PRAGMA user_version = n. Never edit an applied one.
+MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [_m001_pairs]
+
+
+def init_db(conn: sqlite3.Connection) -> None:
+    current = conn.execute("PRAGMA user_version").fetchone()[0]
+    if current > len(MIGRATIONS):
+        raise RuntimeError(
+            f"database schema version {current} is newer than this version of Tradurre "
+            f"supports ({len(MIGRATIONS)}); upgrade Tradurre"
+        )
+    for version, migrate in enumerate(MIGRATIONS, start=1):
+        if version <= current:
+            continue
+        with conn:
+            conn.execute("BEGIN IMMEDIATE")
+            migrate(conn)
+            conn.execute(f"PRAGMA user_version = {version}")
