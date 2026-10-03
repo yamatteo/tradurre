@@ -37,7 +37,7 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
   after import (Stage 5). Footnotes stay excluded as SPEC says; reviewed and confidence stay separate.
 - Licensed AGPL-3.0-only (`LICENSE`).
 - Python 3.14 only (`.python-version`, `requires-python`, launcher). Stage 0 is complete.
-- `uv run pytest`: 217 passed with PyMuPDF installed (216 + 1 skipped without), also on a fresh clone (tests read
+- `uv run pytest`: 220 passed with PyMuPDF installed (219 + 1 skipped without), also on a fresh clone (tests read
   only committed synthetic fixtures).
 - `uv.lock` is tracked; `pytest`/`httpx` are in the `dev` group. The Windows launcher's `uv tool install` resolves
   from PyPI and never reads the lock.
@@ -138,6 +138,8 @@ Found by /pauli reviewing `56c180d` (each reproduced against `extract`):
 Status: done
 **Done when:** `tests/test_build.py` passes; `uv run pytest` otherwise unchanged.
 Report: 2026-10-03 — `tradurre/services/build.py` (`build_book`: blocks via `split_sentences`, excluded per `EXCLUDED_KINDS`, v0.1 anchor alignment mapped to segment ids, beads 0.5/0.2 `anchor`); `tests/test_build.py` 3 passed; pytest 220 passed (217 before).
+Verified (/pauli, 2026-10-03, `43b5a87`): matches the task; pytest 220 passed. The bare `assert` in the mapping is
+acceptable (the app never runs with `-O`); confidence is flat (0.5/0.2) until "Baseline local aligner".
 
 New module `tradurre/services/build.py`, the bridge from an `Extraction` pair to a project in the new model,
 using v0.1's algorithms unchanged (Stage 3 replaces them behind the same function):
@@ -158,25 +160,43 @@ using v0.1's algorithms unchanged (Stage 3 replaces them behind the same functio
   block whose text has no sentence boundary gives one segment.
 
 ### Book API: import and read
-Status: todo
+Status: done
 **Done when:** `tests/test_books_api.py` passes; `uv run pytest` otherwise unchanged.
+Report: 2026-10-03 — `tradurre/api/books.py` (`POST /books`, `GET /books`, `GET /books/{id}`, `GET /books/{id}/check` under `/api/v2`), `Book…` models in `models.py`, router in `app.py`; `tests/test_books_api.py` 12 passed; pytest 232 passed (220 before).
 
-`tradurre/api/books.py`, router registered in `app.py` with prefix `/api/v2`; models in `models.py` (prefix
-`Book…`):
-- `POST /books` (multipart: `source`, `target` files, `title`, `source_lang` default `fr`, `target_lang`
-  default `it`): `extract` both, then in one `transaction` insert the `projects` row (same id/timestamp style as
-  `api/projects.py`) and `build_book`. `.pdf` → 415 with a message that PDF import comes later; extraction
-  `ValueError` → 400, and so is a file whose extraction has no block of an
-  included kind ("no text found in <filename>"), checked before anything is written. Returns `{id, title,
-  bead_count, warnings}` (warnings are not stored yet: see Stage 3).
-- `GET /books`: the projects that have documents, with title, languages, bead count, reviewed count.
-- `GET /books/{id}`: title, languages, and every bead in order with `{id, confidence, method, reviewed, source,
-  target}`, where each side is a list of `{segment_id, block_id, text}`; plus the excluded blocks (`{block_id, side, kind,
-  segments}`), each with `after_bead_id`: the bead of the last included segment before it in the same document
-  (null if none), so the client can reveal them in place.
-- `GET /books/{id}/check`: `check_project`'s list (the debug endpoint of SPEC §4).
-- `GET /api/v1/projects` is not changed; the old list keeps showing every project.
-- Tests: import a txt pair and a docx pair through `TestClient`; read it back; 404 on an unknown id; `.pdf` → 415;
+`tradurre/api/books.py`, router registered in `app.py` with prefix `/api/v2`; response models in `models.py`
+(prefix `Book…`). Handlers take `db: sqlite3.Connection = Depends(get_db)` like the v1 routers, but write through
+`with transaction(db):` (`tradurre.domain.history`), not `with db:`, because the domain needs deferred foreign
+keys.
+- `POST /books` (multipart: `source`, `target` as `UploadFile`; form fields `title` (optional: defaults to the
+  source filename without extension, SPEC §3.1.1 "pre-filled"), `source_lang` default `fr`, `target_lang`
+  default `it`), `async def` like `api/import_.py`:
+  - format = the lowercased extension without the dot. `extract` both files first; `NotImplementedError` (PDF)
+    → 415 "PDF import is not available yet"; `ValueError` → 400 with its message; an extraction with no block
+    whose kind is outside `EXCLUDED_KINDS` → 400 "no text found in <filename>". All checked **before** anything
+    is written.
+  - Then in one `transaction`: insert the `projects` row (`uuid4` id, `created_at`/`updated_at` as `_now()` in
+    `api/projects.py`) and `build_book`.
+  - 201, returns `{id, title, bead_count, warnings}`; `warnings` = both extractions' warnings, each prefixed with
+    `"source: "` / `"target: "` (not stored yet: see Stage 3).
+- `GET /books`: the projects that have documents, newest `updated_at` first, each `{id, title, source_lang,
+  target_lang, bead_count, reviewed_count}`.
+- `GET /books/{id}` (404 if the project doesn't exist or has no documents): `{id, title, source_lang,
+  target_lang, beads, excluded}`.
+  - `beads`: every bead in `ord` order, `{id, confidence, method, reviewed, source, target}`; each side a list of
+    `{segment_id, block_id, block_kind, text}` in document order (`block_kind` so the client can show headings and
+    paragraph breaks, SPEC §3.3).
+  - `excluded`: the excluded blocks of both documents, `{block_id, side, kind, page, segments: [{segment_id,
+    text}], after_bead_id}`, where `after_bead_id` is the bead of the last included segment before the block in
+    the same document (null if none), so the client can reveal them in place.
+- `GET /books/{id}/check`: `check_project`'s list (the debug endpoint of SPEC §4); 404 as above.
+- Nothing under `/api/v1` changes. (A book also shows up in the old project list with 0 pairs until "Correction
+  screen" routes it; deleting it there cascades correctly through `ON DELETE CASCADE` and the index triggers.)
+- `tests/test_books_api.py`, with a `client` fixture like `tests/test_pairs_api.py` (monkeypatched `DB_PATH`):
+  import a txt pair and read it back (bead texts and order); import a docx pair with a heading (`block_kind`
+  `heading` in the read); title defaults to the source stem; `GET /books` lists only books, with counts; an
+  excluded block's `after_bead_id` (build it by importing, then `exclude_block` on a middle block through the
+  domain); `.pdf` → 415 and an empty `.txt` → 400, each leaving `GET /books` empty; unknown id → 404 on both GETs;
   check returns `[]`.
 
 ### Book API: corrections

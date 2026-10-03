@@ -176,3 +176,61 @@ class ImportArtifactResponse(BaseModel):
     target_sentences: list[ImportUnit]
     warnings: list[str] = []
     stats: dict = {}
+
+
+# Books: projects in the new model (/api/v2; PLAN.md, "Book API: import and read")
+
+
+class BookImportResponse(BaseModel):
+    id: str
+    title: str
+    bead_count: int
+    warnings: list[str]
+
+
+class BookSummary(BaseModel):
+    id: str
+    title: str
+    source_lang: str
+    target_lang: str
+    bead_count: int
+    reviewed_count: int
+
+
+class BookSegment(BaseModel):
+    segment_id: int
+    block_id: int
+    block_kind: str
+    text: str
+
+
+class BookBead(BaseModel):
+    id: int
+    confidence: float
+    method: str
+    reviewed: bool
+    source: list[BookSegment]
+    target: list[BookSegment]
+
+
+class BookExcludedSegment(BaseModel):
+    segment_id: int
+    text: str
+
+
+class BookExcludedBlock(BaseModel):
+    block_id: int
+    side: Literal["source", "target"]
+    kind: str
+    page: int | None
+    segments: list[BookExcludedSegment]
+    after_bead_id: int | None
+
+
+class BookResponse(BaseModel):
+    id: str
+    title: str
+    source_lang: str
+    target_lang: str
+    beads: list[BookBead]
+    excluded: list[BookExcludedBlock]
