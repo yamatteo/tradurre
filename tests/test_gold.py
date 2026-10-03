@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 from tradurre.app import app
 from tradurre.db import get_connection
-from tradurre.services.gold import chapter_beads, read_tsv, write_tsv
+from tradurre.services.gold import book_beads, boundaries, chapter_beads, read_tsv, score, write_tsv
 
 from tests.test_books_api import _docx
 
@@ -23,9 +23,15 @@ TARGET = _docx(
     ("heading", "2"), ("paragraph", "Paul partì. Non disse niente."),
 )
 
-_spec = importlib.util.spec_from_file_location("gold_export", Path(__file__).parent.parent / "scripts" / "gold_export.py")
-gold_export = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(gold_export)
+def _script(name):
+    spec = importlib.util.spec_from_file_location(name, Path(__file__).parent.parent / "scripts" / f"{name}.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+gold_export = _script("gold_export")
+gold_score = _script("gold_score")
 
 
 @pytest.fixture()
@@ -122,3 +128,87 @@ def test_export_refuses_an_unreviewed_chapter(client, db_path, book, tmp_path, c
     assert gold_export.main(argv) == 0
     assert "3 beads, 1 one-sided" in capsys.readouterr().out
     assert read_tsv(out) == [("1", "1"), ("Marie arriva.", "Marie arrivò."), ("Il pleuvait.", "")]
+
+
+# --- Scoring ---
+
+GOLD = [("1", "1"), ("Marie arriva.", "Marie arrivò."), ("Il pleuvait.", ""), ("Paul partit.", "Paul partì.")]
+
+
+def _f(result):
+    return (result.precision, result.recall, result.f1)
+
+
+def test_boundaries_count_characters_without_whitespace():
+    assert boundaries([("Il pleut.", "Piove."), ("", "Sì.")]) == ("Ilpleut.", "Piove.Sì.", [(8, 6), (8, 9)])
+
+
+def test_identical_lists_score_one():
+    result = score(GOLD, GOLD)
+    assert _f(result) == (1, 1, 1)
+    assert (result.gold_count, result.predicted_count, result.missed) == (3, 3, [])
+
+
+def test_merged_beads_lose_recall_not_precision():
+    merged = [GOLD[0], ("Marie arriva. Il pleuvait.", "Marie arrivò."), GOLD[3]]
+    result = score(GOLD, merged)
+    assert (result.precision, result.recall) == (1, 2 / 3)
+    assert result.missed == [(1, 1)]
+
+
+def test_missed_runs_longest_first():
+    gold = [(f"S{k}.", f"T{k}.") for k in range(7)]
+    # Gold boundaries after beads 0..5: 2 and 3 are missed (one run), then 5.
+    predicted = [gold[0], gold[1], ("S2. S3. S4.", "T2. T3. T4."), ("S5. S6.", "T5. T6.")]
+    assert score(gold, predicted).missed == [(2, 3), (5, 5)]
+
+
+def test_chapter_inside_a_longer_book():
+    book = [("Avant.", "Prima.")] + GOLD + [("Après.", "Dopo.")]
+    assert _f(score(GOLD, book)) == (1, 1, 1)
+
+
+def test_segmentation_and_whitespace_do_not_matter():
+    resegmented = [("1", "1"), ("Marie  arriva.", "Marie\narrivò."), ("Il pleu vait.", ""), ("Paul partit.", "Paul partì.")]
+    assert _f(score(GOLD, resegmented)) == (1, 1, 1)
+
+
+def test_one_sided_gold_bead_predicted_right():
+    gold = [("Il pleuvait.", ""), ("Paul partit.", "Paul partì.")]
+    assert _f(score(gold, [("Avant.", "Prima.")] + gold)) == (1, 1, 1)
+
+
+def test_one_sided_gold_bead_predicted_wrong():
+    gold = [("Il pleuvait.", ""), ("Paul partit.", "Paul partì.")]
+    assert _f(score(gold, [("Il pleuvait. Paul partit.", "Paul partì.")])) == (0, 0, 0)
+
+
+def test_gold_not_in_the_prediction():
+    with pytest.raises(ValueError, match="the gold chapter doesn't match the current extraction"):
+        score(GOLD, [("Autre chose.", "Altro.")])
+
+
+def test_book_beads_returns_every_bead(db_path, book):
+    conn = get_connection(db_path)
+    try:
+        beads = book_beads(conn, book["id"])
+    finally:
+        conn.close()
+    assert len(beads) == 7
+    assert beads[0] == ("Un avant-propos.", "Una premessa.", False)
+
+
+def test_score_script_on_the_docx_pair(tmp_path, capsys):
+    (tmp_path / "livre.docx").write_bytes(SOURCE)
+    (tmp_path / "libro.docx").write_bytes(TARGET)
+    gold = tmp_path / "gold.tsv"
+    write_tsv(gold, [("1", "1"), ("Marie arriva.", "Marie arrivò."), ("Il pleuvait.", "Pioveva.")])
+    argv = ["--gold", str(gold), "--source", str(tmp_path / "livre.docx"), "--target", str(tmp_path / "libro.docx")]
+    assert gold_score.main(argv) == 0
+    out = capsys.readouterr().out
+    assert "F1 1.000" in out and "7 beads" in out
+
+
+def test_score_script_refuses_a_missing_file(tmp_path, capsys):
+    assert gold_score.main(["--gold", str(tmp_path / "nope.tsv")]) == 1
+    assert "not found" in capsys.readouterr().err

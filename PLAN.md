@@ -42,7 +42,7 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
   import through the form too (4.3 s, 1354 beads, 185 one-sided).
 - Licensed AGPL-3.0-only (`LICENSE`).
 - Python 3.14 only (`.python-version`, `requires-python`, launcher). Stage 0 is complete.
-- `uv run pytest`: 268 passed (PyMuPDF is a core dependency), also on a fresh clone (tests read only committed
+- `uv run pytest`: 274 passed (PyMuPDF is a core dependency), also on a fresh clone (tests read only committed
   synthetic fixtures; `-m library` tests run only where `library/contrefeu.*.pdf` exists, and assert counts only).
 - PDF extraction (`extract.py`) works on the reference book (page numbers, chapter numbers, two-up spreads), and
   `POST /api/v2/books` accepts PDFs (extraction in a worker thread; an unreadable PDF is a 400).
@@ -297,12 +297,14 @@ Design (Pauli, 2026-10-03), binding for both tasks:
 - **Format:** `library/contrefeu.gold.tsv` (gitignored with `library/`: it is copyrighted text, never committed),
   one line per bead, `source<TAB>target`, each side the bead's segments' `original_text` in reading order joined
   with one space, any tab or newline inside replaced by a space; a one-sided bead has an empty cell. No header.
-- **Metric (independent of segmentation):** for a list of beads, the side text is the cells joined with one
-  space, whitespace collapsed; a bead boundary is the pair (source offset, target offset) of the bead's end in
-  those texts. The gold's texts are located in the predicted book's texts (exact substring, first occurrence;
-  absent on either side → refuse: "the gold chapter doesn't match the current extraction"); predicted boundaries
-  are shifted to chapter offsets and kept when both lie within the chapter (the chapter's own end excluded on
-  both lists). Precision, recall and F1 of the predicted vs gold boundary sets.
+- **Metric (independent of segmentation and whitespace):** for a list of beads, a side's *text* is all its cells
+  concatenated with every whitespace character removed; a bead's *boundary* is the pair (source offset, target
+  offset) = how many non-whitespace characters of each side lie in that bead and all before it. The gold's texts
+  are located in the predicted book's texts (exact substring, first occurrence; absent on either side → refuse:
+  "the gold chapter doesn't match the current extraction"). Gold boundaries: every gold bead's except the last
+  (the chapter's end). Predicted boundaries: shifted by the located offsets; kept when 0 ≤ s ≤ Ls and 0 ≤ t ≤ Lt
+  (the chapter's text lengths), minus (0, 0) and (Ls, Lt). Precision, recall and F1 of the predicted vs gold
+  sets (an empty predicted set has precision 0).
 
 #### Gold export
 Status: done
@@ -328,25 +330,39 @@ scripts/gold_export.py --help` prints usage.
 - Don't touch the app, the API or the schema.
 
 #### Gold score
-Status: todo
+Status: done
+Report: 2026-10-03 — `gold.py`: `book_beads` (`chapter_beads` now slices it), `boundaries`, `score`/`Score`; `scripts/gold_score.py` builds the pair as the import does in a temporary database; 12 new tests in `tests/test_gold.py`; pytest 286 passed, `--help` prints usage. Not run on a real gold: `library/contrefeu.gold.tsv` doesn't exist yet. Sanity check on the reference PDFs with a 30-bead slice of the book itself as gold (scratchpad, deleted): F1 1.000, import 4.4 s, 1354 beads.
 **Done when:** `uv run pytest` passes with the new score tests in `tests/test_gold.py`; `uv run python
 scripts/gold_score.py --help` prints usage; the `Report:` says whether the score could run on this machine (only
 once `library/contrefeu.gold.tsv` exists; if it doesn't yet, say so, it's not a failure).
 
-- `tradurre/services/gold.py`: `boundaries(cells) -> tuple[str, str, set[tuple[int, int]]]` (side texts and
-  boundary set, per the design) and `score(gold_cells, predicted_cells) -> Score` (dataclass: precision, recall,
-  f1, gold and predicted boundary counts, and `missed`: the gold bead index ranges whose end boundary is missing,
-  as runs, longest first). Raises `ValueError` with the "doesn't match" message.
-- `scripts/gold_score.py [--gold PATH] [--source PATH] [--target PATH]` (defaults: `library/contrefeu.gold.tsv`,
-  `library/contrefeu.{fr,it}.pdf`): imports the pair into a temporary database through the same path as the app
-  (`extract` + `build_book`), takes all beads' cells (from `original_text`), scores, prints precision/recall/F1,
-  the counts, the import's wall time, and the 5 longest missed runs as gold bead index ranges with their first
-  gold line (local terminal output only; never written to a tracked file).
-- Tests (synthetic, no library): identical lists → 1.0/1.0/1.0; a merged bead → recall < 1, precision 1; a
-  chapter located inside a longer predicted book; a different segmentation of the same alignment (one segment
-  split in two within a bead) scores 1.0; different whitespace scores 1.0; a gold not in the book → `ValueError`.
+- `tradurre/services/gold.py`:
+  - `book_beads(conn, book_id) -> list[tuple[str, str, bool]]`: all beads' (source cell, target cell, reviewed);
+    `chapter_beads` is rewritten to slice its result (same behaviour; the export tests stay unchanged and green).
+  - `boundaries(cells: list[tuple[str, str]]) -> tuple[str, str, list[tuple[int, int]]]`: the two side texts and
+    the boundary of every bead, in order, per the metric in the design above.
+  - `score(gold, predicted) -> Score` (both `list[tuple[str, str]]`); `Score` is a dataclass: `precision`,
+    `recall`, `f1`, `gold_count`, `predicted_count` (the set sizes) and `missed: list[tuple[int, int]]`, the runs
+    of consecutive gold bead indices (first, last; 0-based) whose boundary isn't predicted, longest first. Raises
+    `ValueError` with the "doesn't match" message.
+- `scripts/gold_score.py [--gold PATH] [--source PATH] [--target PATH]` (argparse; defaults
+  `library/contrefeu.gold.tsv`, `library/contrefeu.fr.pdf`, `library/contrefeu.it.pdf`; a missing file → exit 1
+  with its name). It builds the book exactly as the import does, without the server: `extract` both files, a
+  temporary database file (`tempfile.TemporaryDirectory`), `get_connection` + `init_db`, then inside
+  `transaction(conn)` insert the `projects` row and call `build_book` (as `api/books.py:69-76`). It prints the
+  wall time of extraction + build, precision/recall/F1 (3 decimals), the two counts, and the 5 longest missed
+  runs as `beads i–j` with the first gold line of the run cut to 80 characters (terminal only, never a file).
+  `main(argv) -> int` like `gold_export.py`.
+- Tests (synthetic, no library; build cells by hand, no database needed except for `book_beads`):
+  identical lists → 1/1/1; two gold beads merged in the prediction → recall < 1, precision 1, and `missed` names
+  that bead; the gold located inside a longer prediction (beads before and after) → 1/1/1; the same alignment
+  with a cell's text cut at a different place inside one bead, or different whitespace → 1/1/1; a one-sided gold
+  bead (empty target) predicted right → 1/1/1; a gold not in the prediction → `ValueError`; `book_beads` on the
+  docx fixture returns all 7 beads and `chapter_beads` still passes its tests. One script test: `main` with
+  `--source`/`--target` pointing to the existing small docx files (written to `tmp_path`) and a gold TSV written
+  from their chapter → exit 0 and "F1 1.000" in the output.
 - This is the measuring stick for "Segmentation" and "Baseline local aligner": from then on their `Report:` lines
-  quote `gold_score.py`'s F1.
+  quote `gold_score.py`'s F1. Don't touch the app, the API, the schema, or the export script.
 
 ### Segmentation
 French/Italian sentence splitter (abbreviations, dialogue dashes, guillemets, ellipses), with regression tests
