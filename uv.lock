@@ -1447,6 +1447,7 @@ pdf = [
 [package.dev-dependencies]
 dev = [
     { name = "httpx" },
+    { name = "pymupdf" },
     { name = "pytest" },
 ]
 
@@ -1472,6 +1473,7 @@ provides-extras = ["pdf", "ocr", "align"]
 [package.metadata.requires-dev]
 dev = [
     { name = "httpx", specifier = ">=0.28.1" },
+    { name = "pymupdf", specifier = ">=1.28.2" },
     { name = "pytest", specifier = ">=9.0.2" },
 ]
 

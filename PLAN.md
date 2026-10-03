@@ -125,8 +125,9 @@ Facts already measured (PyMuPDF `get_text`, 2026-10-03):
 Continues "Structured extraction" (Stage 2) with the same design.
 
 #### PDF lines and logical pages
-Status: todo
+Status: done
 **Done when:** `tests/test_extract_pdf.py` passes; `uv run pytest` otherwise unchanged.
+Report: 2026-10-03 — `pymupdf` in the `dev` group (`uv.lock`), `_Line`, `_pdf_lines` with the two-up rule in `extract.py` (`extract` still refuses `.pdf`); `tests/test_extract_pdf.py` 4 tests (the two-up case needs ≥ 60% two-up spreads, so its document has 3 spreads, one with text only on the right); local check on the reference book: FR 128 logical pages, IT 184 (91 spreads × 2 + 2 portrait covers), left page before right across a spread; pytest 253 passed (249 + 4).
 
 In `extract.py`, the first half of PDF extraction (no blocks yet):
 - Add `pymupdf` to the `dev` dependency group (`uv add --dev pymupdf`; `uv.lock` updated) so PDF tests run in

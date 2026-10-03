@@ -70,6 +70,72 @@ def _extract_docx(content: bytes) -> Extraction:
     return Extraction(blocks)
 
 
+@dataclass
+class _Line:
+    """One text line of a PDF, on a logical page (a two-up spread's half counts as its own page)."""
+
+    page: int  # 0-based logical page
+    x0: float
+    y0: float
+    x1: float
+    y1: float
+    text: str
+    size: float  # the largest span size in the line
+
+
+def _page_lines(page) -> list[_Line]:
+    """The page's non-blank lines, in PyMuPDF's order, with `page` still unset (0)."""
+    lines: list[_Line] = []
+    for block in page.get_text("dict")["blocks"]:
+        for line in block.get("lines", []):
+            spans = line["spans"]
+            text = "".join(span["text"] for span in spans)
+            if not text.strip():
+                continue
+            x0, y0, x1, y1 = line["bbox"]
+            lines.append(_Line(0, x0, y0, x1, y1, text, max(span["size"] for span in spans)))
+    return lines
+
+
+def _looks_two_up(lines: list[_Line], width: float) -> bool:
+    """At least 20% of the lines are centred left of the middle and at least 20% right of it."""
+    left = sum(1 for line in lines if (line.x0 + line.x1) / 2 < width / 2)
+    return left >= 0.2 * len(lines) and len(lines) - left >= 0.2 * len(lines)
+
+
+def _pdf_lines(doc) -> tuple[list[_Line], list[tuple[float, float]]]:
+    """The lines of every logical page in reading order, and each logical page's (width, height).
+
+    Two-up spreads are decided once per document: if at least 60% of the landscape pages with text look two-up,
+    every landscape page is split at its middle into two logical pages (even a blank or one-column one).
+    """
+    pages = [(page.rect.width, page.rect.height, _page_lines(page)) for page in doc]
+    landscape = [(w, lines) for w, h, lines in pages if w > h and lines]
+    two_up = bool(landscape) and sum(_looks_two_up(lines, w) for w, lines in landscape) >= 0.6 * len(landscape)
+
+    out: list[_Line] = []
+    sizes: list[tuple[float, float]] = []
+    for width, height, lines in pages:
+        if two_up and width > height:
+            half = width / 2
+            left = [line for line in lines if (line.x0 + line.x1) / 2 < half]
+            right = [line for line in lines if (line.x0 + line.x1) / 2 >= half]
+            for line in right:
+                line.x0 -= half
+                line.x1 -= half
+            groups = [left, right]
+            sizes += [(half, height), (half, height)]
+        else:
+            groups = [lines]
+            sizes.append((width, height))
+        for offset, group in enumerate(groups):
+            number = len(sizes) - len(groups) + offset
+            for line in sorted(group, key=lambda line: (line.y0, line.x0)):
+                line.page = number
+                out.append(line)
+    return out, sizes
+
+
 def extract(filename: str, content: bytes) -> Extraction:
     """Extract the blocks of a .txt, .docx or .pdf file, in reading order."""
     name = (filename or "").lower()
