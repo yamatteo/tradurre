@@ -207,7 +207,7 @@ sits inside one; pytest 71 passed, 1 skipped. The test deviation was correct (th
 above). Braun also ran 100 concurrent appends from 16 threads: all 201, positions exactly 0–99.
 
 ### Python 3.14
-Status: todo
+Status: done
 **Done when:** `.python-version` says `3.14`; `pyproject.toml` has `requires-python = ">=3.14"`; `uv lock --check`
 passes and the only `uv.lock` changes are dropped pre-3.14 markers/wheels (no version bumps; report any);
 `uv run pytest` passes with the same counts as before; `grep -rn "3\.12" CLAUDE.md SPEC.md pyproject.toml
@@ -232,6 +232,7 @@ lxml, websockets, pyyaml).
   (Doc-only, bundled here because this task already edits `CLAUDE.md`.)
 - Note: the local `.venv` already runs Python 3.14.4 (uv picked the newest allowed interpreter), so the suite is
   already green on 3.14; the risk in this task is the lock and the launcher, not the code.
+Report: 2026-10-03 — `.python-version` 3.14, `requires-python >=3.14`, relock (−356 lines: only cp312/cp313/graalpy312 wheels and the `typing-extensions` edge marked `< '3.13'` dropped; no name/version changes), `--python 3.14` on the launcher's install line (`:56`, CRLF kept), `CLAUDE.md` Python version and per-request connection note; `uv lock --check` ok, grep for 3.12 empty, pytest 71 passed, 1 skipped on 3.14.4. The `.bat` change is not exercised here: check it by hand on the next release.
 - Report that the `.bat` change can't be exercised here; the developer checks it by hand on the next release.
 
 ---

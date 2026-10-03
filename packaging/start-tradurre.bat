@@ -53,7 +53,7 @@ if "%WHEEL_URL:~0,2%"=="__" goto fail_url
 set "SPEC=%WHEEL_URL%"
 if defined EXTRAS set "SPEC=tradurre[%EXTRAS%] @ %WHEEL_URL%"
 echo Installing Tradurre...
-uv.exe tool install --force "%SPEC%"
+uv.exe tool install --force --python 3.14 "%SPEC%"
 if errorlevel 1 if defined UPDATING goto fail_update
 if errorlevel 1 goto fail_tradurre
 rem Make tradurre available in future terminals too.

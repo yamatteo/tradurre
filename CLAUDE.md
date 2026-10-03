@@ -28,7 +28,7 @@ so rather than silently diverging from it.
 
 ## Commands
 
-Backend (run from repo root, Python 3.12, managed with `uv`):
+Backend (run from repo root, Python 3.14, managed with `uv`):
 ```sh
 uv run tradurre --dev        # start the app with auto-reload (http://127.0.0.1:8000)
 uv run tradurre              # end-user mode: no reload, opens the browser
@@ -66,7 +66,8 @@ Browser ── Vue 3 SPA (TipTap editors) ──/api──▶ FastAPI ──▶ 
   migration framework.
 - `models.py` — all Pydantic request/response models in one file.
 - `api/` — one router module per resource (`projects.py`, `pairs.py`, `search.py`, `import_.py`, `export.py`).
-  Handlers access the DB via `request.app.state.db` (a single shared sqlite3 connection, not a session/pool).
+  Handlers get a per-request connection via `db: sqlite3.Connection = Depends(get_db)` (`db.py`); write handlers
+  wrap their work in `with db:` starting with `db.execute("BEGIN IMMEDIATE")`.
 - `services/aligner.py` — the core text-alignment pipeline: strips artifact lines (page numbers), rejoins
   line-wrapped paragraphs, splits into sentences, finds "anchor" tokens (capitalized names/phrases with matching
   occurrence counts in source and target) and uses them to align source/target sentence sequences. Used by the
