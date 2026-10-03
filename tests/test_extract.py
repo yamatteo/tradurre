@@ -26,6 +26,17 @@ def test_txt_without_blank_lines_gives_one_block_per_line():
     assert {b.kind for b in result.blocks} == {"paragraph"}
 
 
+
+def test_txt_byte_order_mark_is_dropped():
+    result = extract("livre.txt", "\ufeffUne.\nDeux.".encode("utf-8"))
+    assert [b.text for b in result.blocks] == ["Une.", "Deux."]
+    assert result.warnings == []
+
+
+def test_txt_blank_lines_at_the_edges_do_not_switch_to_chunks():
+    result = extract("livre.txt", "\n  \nUne.\nDeux.\n\n".encode("utf-8"))
+    assert [b.text for b in result.blocks] == ["Une.", "Deux."]
+
 def test_txt_cleans_artifacts():
     result = extract("livre.txt", "Un ﬁlm\x01 muet.".encode("utf-8"))
     assert [b.text for b in result.blocks] == ["Un film muet."]
@@ -56,6 +67,16 @@ def test_docx_heading_and_paragraphs():
     ]
     assert result.warnings == []
 
+
+
+def test_docx_line_break_and_tab_are_cleaned():
+    doc = Document()
+    paragraph = doc.add_paragraph("Vers un")
+    paragraph.add_run().add_break()
+    paragraph.add_run("\tvers deux")
+    buffer = BytesIO()
+    doc.save(buffer)
+    assert [b.text for b in extract("livre.docx", buffer.getvalue()).blocks] == ["Vers un vers deux"]
 
 def test_pdf_not_implemented_yet():
     with pytest.raises(NotImplementedError):

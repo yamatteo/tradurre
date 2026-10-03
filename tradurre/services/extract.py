@@ -35,12 +35,13 @@ def _clean(text: str) -> str:
 def _extract_txt(content: bytes) -> Extraction:
     warnings: list[str] = []
     try:
-        text = content.decode("utf-8")
+        text = content.decode("utf-8-sig")  # drops a byte-order mark, if any
     except UnicodeDecodeError:
         warnings.append("The text file is not valid UTF-8; it was read as Latin-1.")
         text = content.decode("latin-1")
     lines = text.splitlines()
-    if any(not line.strip() for line in lines):
+    filled = [i for i, line in enumerate(lines) if line.strip()]
+    if filled and any(not line.strip() for line in lines[filled[0]:filled[-1]]):
         # Paragraphs separated by blank lines; the lines inside one are wrapped text.
         chunks: list[list[str]] = [[]]
         for line in lines:
@@ -60,7 +61,7 @@ def _extract_docx(content: bytes) -> Extraction:
 
     blocks: list[ExtractedBlock] = []
     for paragraph in Document(BytesIO(content)).paragraphs:
-        text = paragraph.text.strip()
+        text = _clean(paragraph.text)
         if not text:
             continue
         style = paragraph.style.name if paragraph.style is not None else ""

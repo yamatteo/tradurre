@@ -37,7 +37,7 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
   after import (Stage 5). Footnotes stay excluded as SPEC says; reviewed and confidence stay separate.
 - Licensed AGPL-3.0-only (`LICENSE`).
 - Python 3.14 only (`.python-version`, `requires-python`, launcher). Stage 0 is complete.
-- `uv run pytest`: 206 passed with PyMuPDF installed (205 + 1 skipped without), also on a fresh clone (tests read
+- `uv run pytest`: 214 passed with PyMuPDF installed (213 + 1 skipped without), also on a fresh clone (tests read
   only committed synthetic fixtures).
 - `uv.lock` is tracked; `pytest`/`httpx` are in the `dev` group. The Windows launcher's `uv tool install` resolves
   from PyPI and never reads the lock.
@@ -102,6 +102,8 @@ the PDF tasks in Stage 3:
 Status: done
 **Done when:** `tests/test_extract.py` passes; `uv run pytest` otherwise unchanged.
 Report: 2026-10-03 — `tradurre/services/extract.py` (`ExtractedBlock`, `Extraction`, `EXCLUDED_KINDS`, `extract` for txt/docx; pdf → `NotImplementedError`); `tests/test_extract.py` 8 passed; pytest 214 passed (206 before).
+Verified (/pauli, 2026-10-03, `56c180d`): matches the task; pytest 214 passed. Three edge cases found in the rules as
+I wrote them, fixed by "Extraction fixes" below.
 
 - `tradurre/services/extract.py` with `ExtractedBlock`, `Extraction`, `EXCLUDED_KINDS`, `extract` as in the
   design; `.pdf` raises `NotImplementedError` for now (next tasks), other extensions `ValueError`.
@@ -114,6 +116,22 @@ Report: 2026-10-03 — `tradurre/services/extract.py` (`ExtractedBlock`, `Extrac
 - `tests/test_extract.py`: txt with blank lines (wrapped lines joined), txt without blank lines (one block per
   line), latin-1 fallback warns, docx with a heading and two paragraphs (built with python-docx in the test),
   unknown extension → `ValueError`.
+
+#### Extraction fixes
+Status: done
+**Done when:** `tests/test_extract.py` passes with the three new cases below; `uv run pytest` otherwise unchanged.
+Report: 2026-10-03 — `utf-8-sig` decoding, chunk mode only for a blank line between non-blank lines, docx text through `_clean`; `tests/test_extract.py` 11 passed; pytest 217 passed (214 before).
+
+Found by /pauli reviewing `56c180d` (each reproduced against `extract`):
+- **BOM.** A UTF-8 file with a byte-order mark (Notepad's "UTF-8 with BOM", Word's plain-text export) keeps
+  `\ufeff` at the start of the first block. Decode with `utf-8-sig` (the Latin-1 fallback is unchanged).
+- **Trailing blank lines.** `"Une.\nDeux.\n\n"` gives one block `"Une. Deux."`: a blank line at the start or end
+  of the file switches to chunk mode. Chunk mode applies only if a blank line lies **between two non-blank
+  lines**.
+- **docx line breaks and tabs.** A paragraph with a manual line break and a tab gives `"Vers un\n\tvers deux"`.
+  docx block text goes through the same `_clean` as txt (so `"Vers un vers deux"`).
+- Tests: BOM stripped; trailing blank lines → one block per line; a docx paragraph with `add_break()` and a tab
+  is cleaned.
 
 ### Interim build
 Status: todo
