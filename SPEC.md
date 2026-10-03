@@ -159,6 +159,10 @@ The corpus is searchable across all projects, from a global search page and from
 
 ## 4. Non-functional requirements
 
+- **Python 3.12 and 3.14, simultaneously.** The app runs on Python 3.14 on the translator's machine; the same
+  code and dependencies must also run on Python 3.12, which is what Colab provides (§3.2). Both versions are
+  tested. If a dependency or language feature can't satisfy both, 3.12 wins: the app moves back to 3.12 rather
+  than giving up the Colab step.
 - **Local-first.** The app runs on the translator's laptop with no network access needed (except for the
   optional Colab step). Data lives in a single SQLite file under `~/.tradurre/`; copying that file is a backup.
 - **Easy install and upgrade on Windows** through the self-installing launcher; upgrades never lose data.
