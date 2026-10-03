@@ -31,7 +31,8 @@ npm run test:e2e      # Playwright e2e tests (e2e/*.spec.ts); auto-starts `npm r
 In production, `tradurre/app.py` serves the built SPA from `tradurre/static/` (gitignored) directly off the
 FastAPI process — run `npm run build` before relying on the backend to serve frontend routes. `tradurre/static/`
 is included in the wheel via hatch `artifacts`; `.github/workflows/release.yml` builds and publishes the wheel
-(plus the Windows launcher `packaging/tradurre.bat`) to a GitHub Release when a `v*` tag is pushed.
+(plus the self-installing Windows launcher `packaging/start-tradurre.bat`, with the wheel URL substituted
+for `__WHEEL_URL__`) to a GitHub Release when a `v*` tag is pushed.
 
 ## Architecture
 
