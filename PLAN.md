@@ -38,14 +38,14 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
 - **Stage 2 in progress:** a txt/docx pair imports into the new model and every correction works through
   `/api/v2/books` (`tradurre/api/books.py`). The book screen (`BookView.vue`, `/book/:id`) imports, reads and
   navigates a book and makes every SPEC §3.3 correction (keys and header buttons, inline segment editing,
-  undo/redo). **Stage 2 is complete** (2026-10-03); the user's books are PDFs, so the slice is usable on them only
-  after Stage 3's "PDF import in the app".
+  undo/redo). **Stage 2 is complete** (2026-10-03). Since Stage 3's "PDF import in the app" the reference PDFs
+  import through the form too (4.3 s, 1354 beads, 185 one-sided).
 - Licensed AGPL-3.0-only (`LICENSE`).
 - Python 3.14 only (`.python-version`, `requires-python`, launcher). Stage 0 is complete.
-- `uv run pytest`: 266 passed (PyMuPDF is in the `dev` group), also on a fresh clone (tests read only committed
+- `uv run pytest`: 268 passed (PyMuPDF is a core dependency), also on a fresh clone (tests read only committed
   synthetic fixtures; `-m library` tests run only where `library/contrefeu.*.pdf` exists, and assert counts only).
-- PDF extraction (`extract.py`) works on the reference book (page numbers, chapter numbers, two-up spreads); the
-  app still refuses PDFs until "PDF import in the app".
+- PDF extraction (`extract.py`) works on the reference book (page numbers, chapter numbers, two-up spreads), and
+  `POST /api/v2/books` accepts PDFs (extraction in a worker thread; an unreadable PDF is a 400).
 - `uv.lock` is tracked; `pytest`/`httpx` are in the `dev` group. The Windows launcher's `uv tool install` resolves
   from PyPI and never reads the lock.
 - `npm run type-check` passes; releases build with `npm run build`. `npm run test:e2e` runs on its own
@@ -97,7 +97,7 @@ throwaway backend (:8001, `.e2e.db`) and Vite :5174, including 10,000-bead timin
 
 **Decided (user, 2026-10-03): tradurre is AGPL-3.0-only** (`LICENSE`, `pyproject.toml`), so PyMuPDF (AGPL-3.0)
 stays the PDF library. The launcher already installs `tradurre[pdf]` (`EXTRAS=pdf`); "PDF import in the app" makes
-`pymupdf` a core dependency (the `pdf` extra stays, redundant, for the launcher). Until then it is a dev dependency so tests run.
+`pymupdf` a core dependency (the `pdf` extra stays, redundant, for the launcher).
 
 ### Reference book
 (Context for the whole stage, not a task.) `library/contrefeu.fr.pdf` (Emmanuel Venet, *Contrefeu*) and `library/contrefeu.it.pdf` (*Sacro fuoco*), both
@@ -227,7 +227,11 @@ import in the app"; test PDFs embed the font to keep U+00AD.
   assertions or messages (the book is copyrighted). Report the actual numbers.
 
 #### Front and back matter
-Not ready; after "PDF import in the app", so the translator can see the real book in the screen meanwhile (front
+Not ready, and **deferred** until the translator has corrected the gold chapter on the real book: the open question
+is whether ~30–40 `x` presses per book are a real cost, which only use tells. Agreed (user, 2026-10-03): no
+automatic rule (it would drop a preface, which SPEC §2 counts as material to align); if `x` proves tedious, a bulk
+"exclude these blocks" correction, proposed then as a SPEC change. Until then:
+after "PDF import in the app", so the translator can see the real book in the screen meanwhile (front
 and back matter show up as short one-sided beads at both ends, which `x` excludes one block at a time).
 Measured after "PDF blocks" (counts only): FR has ~25 short blocks (1–7 words, plus a 43-word small-print block
 classified `footnote`) on logical pages 3–6 before the first chapter number, and ~6 short blocks on the last page;
@@ -276,18 +280,73 @@ Not ready: warnings and run metadata (counts, timings; SPEC §3.1.5, §4 "Debugg
 tables added by a migration, shown in the correction screen.
 
 ### Gold chapter
-Not a task yet: becomes one once the reference book imports through "PDF import in the app". Decided
-(user, 2026-10-03): made **in the app**, not in a spreadsheet:
-- The translator imports the reference book, corrects one chapter in the correction screen (moving sentences,
-  splitting/joining segments; text edits only for extraction damage) and marks its beads reviewed. Default
-  chapter: the first of the body, ~200–400 sentences, with some 1:2/2:1 and unmatched material.
-- `scripts/gold_export.py <project id> <first bead id> <last bead id>` writes `library/contrefeu.gold.tsv`
-  (`source<TAB>target` per bead, segments joined with a space) and refuses if any bead in the range is unreviewed.
-- **Format independent of segmentation:** a gold bead is stored as text, and scoring maps every bead to a
-  character span of each side's normalized chapter text. Metrics are bead-boundary precision/recall/F1 on those
-  spans, so the gold stays valid when the segmenter or extractor changes later.
-- **Scoring:** `scripts/gold_score.py <aligner>` prints the metrics plus the worst-scoring stretches. Its result
-  is recorded in the `Report:` of every aligner task from then on.
+Decided (user, 2026-10-03): made **in the app**, not in a spreadsheet. The translator imports the reference book,
+corrects one chapter in the correction screen (moving sentences, splitting/joining segments; text edits only for
+extraction damage) and marks its beads reviewed. Default chapter: the first of the body (chapter number "1"),
+~200–400 sentences, with some 1:2/2:1 and unmatched material. This is the **user's** work, between "Gold export"
+(the tool to save it) and the first scored aligner task; Braun's tasks below don't wait for it (they test on
+synthetic books).
+
+Design (Pauli, 2026-10-03), binding for both tasks:
+- **Chapter, not bead ids.** Chapter *n* is the run of beads from the one holding the *n*-th source block of kind
+  `heading` whose text is only a number (`^\s*([0-9]+|[IVXLC]+)\s*$`, as in `tests/test_library.py`) up to,
+  excluding, the bead holding the next such block (or the end of the book). Ids are invisible in the UI; chapter
+  numbers aren't.
+- **Original text, not edited text.** Gold cells are built from segments' `original_text` (splits and joins keep
+  it consistent, `domain/segments.py:62,95`), so a text edit for extraction damage doesn't break scoring.
+- **Format:** `library/contrefeu.gold.tsv` (gitignored with `library/`: it is copyrighted text, never committed),
+  one line per bead, `source<TAB>target`, each side the bead's segments' `original_text` in reading order joined
+  with one space, any tab or newline inside replaced by a space; a one-sided bead has an empty cell. No header.
+- **Metric (independent of segmentation):** for a list of beads, the side text is the cells joined with one
+  space, whitespace collapsed; a bead boundary is the pair (source offset, target offset) of the bead's end in
+  those texts. The gold's texts are located in the predicted book's texts (exact substring, first occurrence;
+  absent on either side → refuse: "the gold chapter doesn't match the current extraction"); predicted boundaries
+  are shifted to chapter offsets and kept when both lie within the chapter (the chapter's own end excluded on
+  both lists). Precision, recall and F1 of the predicted vs gold boundary sets.
+
+#### Gold export
+Status: done
+Report: 2026-10-03 — `tradurre/services/gold.py` (`chapter_beads`, `write_tsv`, `read_tsv`), `scripts/gold_export.py` (refuses unreviewed chapters, missing database); `tests/test_gold.py` 6 tests on a docx book; pytest 274 passed, `--help` prints usage.
+**Done when:** `uv run pytest` passes with the new `tests/test_gold.py` export tests; `uv run python
+scripts/gold_export.py --help` prints usage.
+
+- New module `tradurre/services/gold.py` (no FastAPI imports):
+  - `chapter_beads(conn, book_id, chapter: int) -> list[tuple[str, str, bool]]`: the chapter's beads as
+    (source cell, target cell, reviewed), per the design above. Raises `ValueError` with a clear message for an
+    unknown book or a chapter number that doesn't exist ("chapter 7 not found; the book has 5").
+  - `write_tsv(path, cells: list[tuple[str, str]])` and `read_tsv(path) -> list[tuple[str, str]]` (exact round
+    trip, including empty cells).
+- `scripts/gold_export.py <book id> <chapter> [--db PATH] [--out PATH]` (argparse; `--db` defaults to
+  `tradurre.config.DB_PATH`, `--out` to `library/contrefeu.gold.tsv`; the book id is the one in the book's URL).
+  Refuses (exit 1, nothing written) if any bead of the chapter is unreviewed, naming how many; otherwise writes
+  the file and prints the bead count and how many beads are one-sided.
+- `tests/test_gold.py`: build a small book through `POST /api/v2/books` on a temporary database (fixtures as in
+  `tests/test_books_api.py`) from .docx files (txt never yields `heading` blocks) with "Heading 1" paragraphs
+  "1" and "2", as `_docx` in `test_books_api.py` builds them. Cover: chapter 1 and the last chapter boundaries; a text edit doesn't
+  change the cell (original text); a split segment gives the same cell as before; unknown chapter → `ValueError`;
+  TSV round trip with an empty cell; the script's refusal on an unreviewed bead (call its `main(argv)`).
+- Don't touch the app, the API or the schema.
+
+#### Gold score
+Status: todo
+**Done when:** `uv run pytest` passes with the new score tests in `tests/test_gold.py`; `uv run python
+scripts/gold_score.py --help` prints usage; the `Report:` says whether the score could run on this machine (only
+once `library/contrefeu.gold.tsv` exists; if it doesn't yet, say so, it's not a failure).
+
+- `tradurre/services/gold.py`: `boundaries(cells) -> tuple[str, str, set[tuple[int, int]]]` (side texts and
+  boundary set, per the design) and `score(gold_cells, predicted_cells) -> Score` (dataclass: precision, recall,
+  f1, gold and predicted boundary counts, and `missed`: the gold bead index ranges whose end boundary is missing,
+  as runs, longest first). Raises `ValueError` with the "doesn't match" message.
+- `scripts/gold_score.py [--gold PATH] [--source PATH] [--target PATH]` (defaults: `library/contrefeu.gold.tsv`,
+  `library/contrefeu.{fr,it}.pdf`): imports the pair into a temporary database through the same path as the app
+  (`extract` + `build_book`), takes all beads' cells (from `original_text`), scores, prints precision/recall/F1,
+  the counts, the import's wall time, and the 5 longest missed runs as gold bead index ranges with their first
+  gold line (local terminal output only; never written to a tracked file).
+- Tests (synthetic, no library): identical lists → 1.0/1.0/1.0; a merged bead → recall < 1, precision 1; a
+  chapter located inside a longer predicted book; a different segmentation of the same alignment (one segment
+  split in two within a bead) scores 1.0; different whitespace scores 1.0; a gold not in the book → `ValueError`.
+- This is the measuring stick for "Segmentation" and "Baseline local aligner": from then on their `Report:` lines
+  quote `gold_score.py`'s F1.
 
 ### Segmentation
 French/Italian sentence splitter (abbreviations, dialogue dashes, guillemets, ellipses), with regression tests
