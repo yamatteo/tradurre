@@ -41,9 +41,9 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
   gold book scores below 0.95. A typical book is 1,000–5,000 sentences a side; performance targets are at 5,000
   beads. Order: Stage 6 → Stage 7 (v0.2), confirmed 2026-10-04. Then the translator reviews *Contrefeu* in v0.2 for a true
   gold (the current one was made by the user, the developer), and maybe a second book, to score the aligner again.
-- `uv run pytest`: 411 passed, also on a fresh clone (tests read only committed synthetic fixtures; `-m library`
+- `uv run pytest`: 414 passed, also on a fresh clone (tests read only committed synthetic fixtures; `-m library`
   tests run only where `library/contrefeu.*.pdf` exists, and assert counts only).
-- `npm run type-check` passes; releases build with `npm run build`. `npm run test:e2e` (61 tests; the three timing tests run last, alone, in project `scale`) runs on its own
+- `npm run type-check` passes; releases build with `npm run build`. `npm run test:e2e` (62 tests; the three timing tests run last, alone, in project `scale`) runs on its own
   backend (:8001, throwaway `.e2e.db`) and Vite (:5174), never the user's database. Setup per machine: `npx
   playwright install chromium` (on Ubuntu 26.04 with `PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=ubuntu24.04-x64`); tests
   use the full Chromium headless (`channel: 'chromium'`).
@@ -251,6 +251,29 @@ Report: 2026-10-04 — `GET …/beads/{bead_id}/context` (`ContextBead`), `books
 centred; missing bead → first bead and the message); 3 API tests and 1 e2e test, all failing on the old code; pytest
 414 passed, type-check clean, e2e 62 passed (one earlier full run failed the 5,000-bead timing test once; two reruns
 and five runs of it alone passed, Ctrl+Z after the second move 384–457 ms against 500).
+Verified (Pauli, 2026-10-04): Done when holds (commit 1f2ab3e). The occasional 5k failure is the test's clock, not the
+app: on a 5,000-bead book the server answers a move or an undo in ~75 ms (1.5 MB of JSON; Pauli, TestClient in a temp
+home), and Playwright's `expect` retries a locator assertion at 0, 100, 350 and 850 ms. The logged times sit just
+above those steps (m ~200, Alt+↓ ~420), so a step finishing just after the 350 ms check is read as ~900 ms. Next
+task.
+
+#### Precise timings in the scale tests
+Status: done
+**Done when:** `npm run test:e2e` passes; `npx playwright test --project=scale --no-deps` passes 5 times in a row
+(report every 5,000-bead line); `uv run pytest` unchanged.
+
+`e2e/scale.spec.ts` only; no app change, the bounds stay (3,000 ms load, 500 ms per correction, 100 ms longest
+task, 1,500 ms for `r` on 10,000).
+- Every timed wait becomes a frame-precise in-page wait: `page.waitForFunction(fn, arg, { polling: 'raf', timeout:
+  10_000 })` checking the same condition with `document.querySelector(All)` (the segment count of the next bead's
+  source cell, the row count, `data-current`/`data-reviewed` on the row, the last row attached for the load), in
+  place of the `expect(...)` after the key press or `goto`. The `timed` helper takes such a predicate. Untimed
+  checks stay `expect`.
+- Keep the log lines' format. Report the new numbers against the old (move ~420, merge ~200) in the `Report:`.
+Report: 2026-10-04 — `scale.spec.ts`: `until` (`waitForFunction`, `polling: 'raf'`) for every timed wait, `timed(key, selector,
+count)`; bounds unchanged. 5,000 beads, 5 runs alone, all passed: load 1330–1397, Alt+↓ 155–177 (was ~420), Ctrl+Z
+238–290 (~330), m 149–174 (~200), Ctrl+Z 149–166 (~200), Alt+↓ again 169–188 (~315), Ctrl+Z again 148–176 (~400)
+ms, 0 long tasks; 10,000: 20 ↓ ~300 ms, `r` ~250–310. e2e 62 passed; type-check clean; pytest 414 passed.
 
 #### Search page
 Status: todo
