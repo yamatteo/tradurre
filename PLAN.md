@@ -32,7 +32,8 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
   excluded", every SPEC §3.3 single-bead correction (keys and header buttons), inline segment editing, persistent
   undo/redo, problem navigation (`p`/`P`), selected runs (Shift+↑/↓, Shift+click) marked with `r`, and `R` "up to
   here", range exclude/include in the "More" menu, edited sentences marked with their original on `o` and
-  "Restore original". Restyled to design variant A; re-align and cut/copy/paste to come (Stage 4).
+  "Restore original", re-align of the selection (More menu). Restyled to design variant A; cut/copy/paste and the
+  5,000-bead check to come (Stage 4).
 - **Re-planned with the user (2026-10-04), SPEC changed accordingly:** review is one mode, problem-first: jump to
   the next likely problem, correct, mark one bead, a selected run, or everything up to here as reviewed. The
   timed scroll "skim review" is dropped. The Colab aligner is **parked** (SPEC §3.2, §5): it returns only if a
@@ -41,7 +42,7 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
   gold (the current one was made by the user, the developer), and maybe a second book, to score the aligner again.
 - `uv run pytest`: 402 passed, also on a fresh clone (tests read only committed synthetic fixtures; `-m library`
   tests run only where `library/contrefeu.*.pdf` exists, and assert counts only).
-- `npm run type-check` passes; releases build with `npm run build`. `npm run test:e2e` (48 tests) runs on its own
+- `npm run type-check` passes; releases build with `npm run build`. `npm run test:e2e` (50 tests) runs on its own
   backend (:8001, throwaway `.e2e.db`) and Vite (:5174), never the user's database. Setup per machine: `npx
   playwright install chromium` (on Ubuntu 26.04 with `PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=ubuntu24.04-x64`); tests
   use the full Chromium headless (`channel: 'chromium'`).
@@ -118,9 +119,9 @@ Decisions carried into this stage:
 - (Pauli, 2026-10-04, measured) the length aligner seldom emits 1:0/0:1; a sentence with no counterpart usually
   lands in a 2:1/1:2 bead of confidence ~0.4–0.45, against ≥ 0.78 for an ordinary 1:1. So "low confidence" is
   **< 0.5**, and the multi-segment toggle shows the rest.
-- (user, 2026-10-03) cut/copy/paste between rows: a cut at one row's edge pasted at the adjacent edge of the
-  neighbouring row is a bead-boundary move; any other paste is a text edit (original text kept, undoable). SPEC
-  §3.3 gets a line for it when that step is planned (wording to agree with the user then).
+- (user, 2026-10-03, refined 2026-10-04) cut/copy/paste: inside the sentence editor, on text (a text edit);
+  outside it, on whole sentences, so a cut sentence pasted at the adjacent edge of the neighbouring bead is a
+  bead-boundary move and nothing else is allowed. SPEC §3.3 has the line (agreed 2026-10-04).
 - Keys must work on an Italian Windows layout: letters, Shift+letters, arrows, Enter, Tab, Ctrl+Z/Y only (no `[`,
   `]`, `/`, `\` and the like, which need AltGr or move around). Rare range commands go in the "More" menu, no key.
 - (Pauli, 2026-10-04, measured in "Layout: frame, fonts and rows") **render rule** for the book screen, on top of
@@ -573,10 +574,8 @@ it is given, i.e. from the stretch, which is right between two trusted beads).
 #### Re-align: service and API
 Status: done
 Report: 2026-10-04 — new `services/realign.py` (`_run`, `_segments`, `align.align`, `replace_beads(kind="realign")`); `BookRealignRequest`, `POST /beads/realign`, `booksApi.realign`; `tests/test_realign.py` (stretch equals the aligner's output, inside reviewed mark replaced, outside kept, invariants, one undo = exact snapshot; three refusals record nothing) and an API test on `gap`; all fail on the old code (import error / 404); pytest 402 passed, e2e 48 passed, type-check clean.
-Verified (Pauli, 2026-10-04): Done when holds (commit d2ab8a4; pytest 402 here). Open, asked of the user: when the
-aligner returns exactly the stretch's current beads, the operation still replaces them and drops their reviewed
-marks (Braun's note); the proposal is to refuse it instead ("The aligner gives the same beads; nothing changed",
-409, nothing recorded). Until answered, the behaviour stays as the user decided on 2026-10-04.
+Verified (Pauli, 2026-10-04): Done when holds (commit d2ab8a4; pytest 402 here). Braun's note (an unchanged
+re-align still drops the marks) went to the user, who agreed to keep them: "Re-align: nothing changed" below.
 **Done when:** `uv run pytest` passes with the new tests below (each failing before the change); `npm run
 type-check` passes; `npm run test:e2e` passes unchanged.
 
@@ -601,6 +600,9 @@ type-check` passes; `npm run test:e2e` passes unchanged.
 #### Re-align in the book screen
 Status: done
 Report: 2026-10-04 — More menu moved to `MoreMenu.vue` (injected selection; `BookView`'s template reads no current-bead state now); "Alignment" heading with "Re-align the selection" (run, or the current bead), status `Re-aligned N beads into M (Ctrl+Z to undo)`, run cleared, first new bead current; list `@scroll` closes the original popover; 2 e2e tests in `review.spec.ts`, both failing on the old code; e2e 50 passed, pytest 402 passed, type-check clean; 20 ArrowDown on 10,000 beads 1.15–1.19 s with More closed, 1.10–1.18 s with it open.
+Verified (Pauli, 2026-10-04): Done when holds (commit 7d1aab1; pytest 402 here); `BookView`'s template no longer
+reads current-bead state. Braun's second note checked: `align.align` on that test's stretch (B2..B3) returns the
+same two beads, so the follow-up below must rework that test.
 **Done when:** `npm run type-check` passes; `npm run test:e2e` passes with the new tests below (each failing
 before the change) and `e2e/book-layout.spec.ts` still passing at 1366; `uv run pytest` unchanged; 20 ArrowDown
 on 10,000 beads not worse than ~1.2–1.3 s alone, and also measured once with the More menu open (report both).
@@ -623,8 +625,69 @@ on 10,000 beads not worse than ~1.2–1.3 s alone, and also measured once with t
   original popover open (edit a sentence through the API first), a mouse-wheel scroll of the list closes it.
 - `SHORTCUTS` and existing keys don't change.
 
+#### Re-align: nothing changed
+Status: done
+Report: 2026-10-04 — `realign` compares the aligner's `(source, target)` groups with the stretch's and raises "The aligner gives the same beads; nothing changed" when equal; new domain test (second re-align refused, marks kept, one operation) and API test (409 on the imported book), the existing e2e re-align test first moves "Paul partit." into B2 through the API, new e2e test for the unchanged case; the three new tests fail on the old code (the reworked one passes either way, as intended); pytest 404 passed, e2e 51 passed, type-check clean.
+**Done when:** `uv run pytest` passes with the new tests below; `npm run type-check` passes; `npm run test:e2e`
+passes with the reworked and new tests in `review.spec.ts`; each new test fails on the code before the change.
+
+Agreed (user, 2026-10-04): "if realign does not change anything, don't un-review the already reviewed beads".
+- `services/realign.py:realign`: before `replace_beads`, compare the aligner's beads with the stretch's current
+  beads as lists of `(source ids, target ids)`. If equal, raise `DomainError("The aligner gives the same beads;
+  nothing changed")`: no write, nothing recorded, marks, confidences and methods untouched. Any difference keeps
+  today's behaviour (every bead replaced, all unreviewed).
+- The screen needs no code change: a refused correction already shows the server's message in the status line
+  (`correct` in `BookView.vue`); the run is cleared as for any correction.
+- Tests: `tests/test_realign.py`: re-align a stretch already in the aligner's layout (e.g. re-align A..C twice:
+  the second call) → DomainError, snapshot unchanged, one operation only (the first), reviewed marks kept.
+  `tests/test_books_corrections_api.py`: the same over the API → 409 with that message.
+  `review.spec.ts`: the import of that spec's book is already the aligner's layout for B2..B3 (`align.align`
+  returns the same two beads), so the existing "Re-align the selection…" test must first break it through the
+  API before opening the page: `POST beads/{B3}/move {"side": "source", "to": "previous"}` (B2 becomes "Il
+  pleuvait. Paul partit." | "Paul partì."), then mark B2 reviewed as now and expect the same outcome. New test: on
+  the untouched book, mark B2, select B2..B3, "Re-align the selection" → status `The aligner gives the same
+  beads; nothing changed`, B2 still reviewed, rows unchanged.
+
 ### Cut/copy/paste between rows
-Not ready. See the decision above; agree the SPEC wording with the user first.
+Status: todo
+**Done when:** `npm run type-check` passes; `npm run test:e2e` passes with the new tests below (each failing
+before the change); `uv run pytest` unchanged; 20 ArrowDown on 10,000 beads not worse than ~1.2–1.3 s alone.
+
+SPEC §3.3 (agreed 2026-10-04): "cut, copy and paste, as usual. Inside the sentence editor they work on text …
+Outside it they work on whole sentences …". Frontend only: the paste is the existing move
+(`booksApi.move(id, beadId, side, 'previous' | 'next')`, i.e. `move_first_to_previous` / `move_last_to_next`).
+- **Inside the editor** nothing changes: `onKey` already returns for text entry, so the browser's own
+  cut/copy/paste act on the text, and saving is the existing text edit.
+- **Ctrl+C** (outside the editor, in `onKey`'s Ctrl branch next to Ctrl+Z/Y): `navigator.clipboard.writeText` of
+  the current sentence's text, then `say('Sentence copied')`; no current sentence → nothing.
+- **Ctrl+X:** marks the current sentence as cut, if it is the first or the last of its side in its bead;
+  otherwise `say('Only the first or last sentence of a bead can move to a neighbouring bead')` and nothing is
+  marked. Nothing is written to the server and the text stays in place; the clipboard gets the text too (as
+  Ctrl+C). Then `say('Sentence cut: go to the previous or next bead and press Ctrl+V (Esc cancels)')`.
+  State in `BookView`: `cut: { beadId, side, segmentId } | null`, and for the rows `cutRow:
+  shallowReactive<Record<number, number>>` (bead id → segment id), updated by difference like `currentRow` and
+  added to `Selection` (Stage 2 scale rule: a row reads only its own key).
+- **Look** (render rule 2, paint-only): the cut sentence's span gets `data-cut="true"` and its always-present
+  2 px bottom border turns dashed in the accent colour (`border-dashed border-accent`); no other change.
+- **Ctrl+V:** with nothing cut, `say('Nothing cut')`. With a cut sentence: if the current bead is the bead
+  right before the cut one and the sentence is the first of its side there, `move(…, cutBead, side,
+  'previous')`; if the current bead is the one right after and the sentence is the last, `move(…, 'next')`;
+  otherwise `say('A sentence can only move to the edge of the neighbouring bead: the text order never
+  changes')` and the cut stays. The side is the cut sentence's, whatever the current side. After a successful
+  paste the cut is cleared, the current bead stays the one pasted into, and `say('Sentence moved (Ctrl+Z to
+  undo)')`.
+- **The cut is cleared** by Esc (precedence: shortcuts panel, import log, More, original popover, cut, run), by
+  any correction (`correct`), and by undo/redo. Moving around keeps it.
+- `SHORTCUTS`, group "Corrections", no `key` (handled in the Ctrl branch): "Copy the sentence" `Ctrl+C`, "Cut the
+  sentence" `Ctrl+X`, "Paste it into the neighbouring bead" `Ctrl+V`.
+- Tests (`book-corrections.spec.ts`, its `gap` book): select "Il pleuvait." (C, alone on its source side),
+  Ctrl+X → `data-cut="true"` and the status; ↑ to B, Ctrl+V → rows equal `B_MERGED` (C, left empty, is deleted
+  by the move), status "Sentence moved…", no `data-cut` left; Ctrl+Z → `ORIGINAL`. Cut "Il pleuvait.", ↑ twice
+  to A, Ctrl+V → the refusal message and rows unchanged; Esc clears `data-cut`. Ctrl+C on "Marie arriva." puts
+  that text on the clipboard (grant `clipboard-read`/`clipboard-write` to the context; read with
+  `navigator.clipboard.readText()`). The middle-sentence refusal: `m` twice on A (its source becomes "Chapitre
+  un", "Marie arriva.", "Il pleuvait."), select "Marie arriva.", Ctrl+X → the refusal message, no `data-cut`. Inside the editor, select all, Ctrl+X, Ctrl+V, Enter → the text is unchanged and nothing is
+  marked cut.
 
 ### Scale check at 5,000 beads
 Not ready. Stage 2's e2e checks pass at 10,000 beads (load < 5 s, 20 ↓ < 2 s, `r` < 1.5 s) with whole-book

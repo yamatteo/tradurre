@@ -129,6 +129,10 @@ corrections:
   bead.
 - Keyboard-first corrections on the current bead:
   - move the first/last segment of a side to the previous/next bead;
+  - cut, copy and paste, as usual. Inside the sentence editor they work on text (a paste is a text edit, original
+    kept, undoable). Outside it they work on whole sentences: copy puts the current sentence on the clipboard; a
+    sentence cut at a bead's edge and pasted at the adjacent edge of the neighbouring bead moves there (the same
+    as the move above); any other paste would change the order of the text, and is refused;
   - merge with the next bead; split a bead at a chosen segment;
   - split a segment at the cursor, join with the next segment;
   - edit segment text inline (plain text);

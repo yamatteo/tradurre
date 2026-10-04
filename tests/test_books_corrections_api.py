@@ -202,6 +202,14 @@ def test_realign(client, gap):
     assert _ok(client, book_id, "undo")["beads"] == data["beads"]
 
 
+def test_realign_unchanged_is_409(client, book):
+    book_id, data = book  # as imported: the aligner's own layout
+    first, last = data["beads"][0]["id"], data["beads"][-1]["id"]
+    resp = _post(client, book_id, "beads/realign", {"first_bead_id": first, "last_bead_id": last})
+    assert (resp.status_code, resp.json()["detail"]) == (409, "The aligner gives the same beads; nothing changed")
+    assert client.get(f"/api/v2/books/{book_id}").json() == data
+
+
 def test_range_refusals(client, gap):
     book_id, data = gap
     b = data["beads"][1]["id"]

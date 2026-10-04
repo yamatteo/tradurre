@@ -259,7 +259,10 @@ test('the run summary says R clears them when all are reviewed', async ({ page, 
 })
 
 test('Re-align the selection replaces the run with unreviewed beads, in one undo step', async ({ page, request }) => {
-  const { id } = await importBook(request, 'Re-align')
+  const { id, book } = await importBook(request, 'Re-align')
+  // As imported, B2..B3 is already the aligner's layout: move "Paul partit." into B2 so re-aligning changes it.
+  const moved = await request.post(`/api/v2/books/${id}/beads/${book.beads[2].id}/move`, { data: { side: 'source', to: 'previous' } })
+  expect(moved.status()).toBe(200)
   await open(page, id)
   await page.keyboard.press('ArrowDown')
   await page.keyboard.press('r')
@@ -297,4 +300,19 @@ test('a scroll of the list closes the original popover', async ({ page, request 
   await row(page, book.beads[3].id).hover()
   await page.mouse.wheel(0, 400)
   await expect(page.getByTestId('original-popover')).toHaveCount(0)
+})
+
+test('Re-align of a stretch the aligner would leave as it is changes nothing and keeps the marks', async ({ page, request }) => {
+  const { id } = await importBook(request, 'Re-align unchanged')
+  await open(page, id)
+  await page.keyboard.press('ArrowDown')
+  await page.keyboard.press('r')
+  await expect.poll(() => reviewed(page)).toEqual(['false', 'true', 'false'])
+  const before = await page.getByTestId('bead-row').evaluateAll((els) => els.map((el) => el.textContent))
+  await page.keyboard.press('Shift+ArrowDown')
+  await page.getByTestId('more').click()
+  await page.getByTestId('realign').click()
+  await expect(page.getByTestId('status')).toHaveText('The aligner gives the same beads; nothing changed')
+  expect(await reviewed(page)).toEqual(['false', 'true', 'false'])
+  expect(await page.getByTestId('bead-row').evaluateAll((els) => els.map((el) => el.textContent))).toEqual(before)
 })

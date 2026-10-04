@@ -103,3 +103,19 @@ def test_realign_refused(db):
                 realign(conn, "p1", first, last)
     assert snapshot(conn) == before
     assert _op_count(conn) == 0
+
+
+def test_realign_unchanged_is_refused_and_keeps_the_marks(db):
+    conn, i = db
+    with transaction(conn):
+        realign(conn, "p1", i["A"], i["C"])
+    stretch = [r[0] for r in conn.execute("SELECT id FROM beads WHERE project_id = 'p1' ORDER BY ord")][1:-1]  # not P, Z
+    first, last = stretch[0], stretch[-1]
+    with transaction(conn):
+        conn.execute("UPDATE beads SET reviewed = 1 WHERE id = ?", (first,))
+    before = snapshot(conn)
+    with pytest.raises(DomainError, match="The aligner gives the same beads; nothing changed"):
+        with transaction(conn):
+            realign(conn, "p1", first, last)
+    assert snapshot(conn) == before
+    assert _op_count(conn) == 1
