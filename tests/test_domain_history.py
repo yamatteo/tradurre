@@ -146,7 +146,7 @@ def test_new_operation_drops_redo(db):
     assert valid(conn)
 
 
-def _mark(conn, bead_id, kind="skim", coalesce=True):
+def _mark(conn, bead_id, kind="streak", coalesce=True):
     with transaction(conn):
         rec = Recorder(conn)
         rec.update("beads", bead_id, reviewed=1)
@@ -184,7 +184,7 @@ def test_coalesce_not_after_undo(db):
 
 def test_coalesce_not_across_kinds(db):
     conn, ids, _ = db
-    op1 = _mark(conn, ids["b1"], kind="skim")
+    op1 = _mark(conn, ids["b1"], kind="streak")
     op2 = _mark(conn, ids["b2"], kind="review")
     assert op1 != op2
     with transaction(conn):

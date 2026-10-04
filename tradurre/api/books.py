@@ -315,7 +315,7 @@ def split(book_id: str, bead_id: int, body: BookSplitBeadRequest, db: sqlite3.Co
 
 @router.post("/books/{book_id}/reviewed", response_model=BookResponse)
 def reviewed(book_id: str, body: BookReviewedRequest, db: sqlite3.Connection = Depends(get_db)):
-    return _correct(db, book_id, lambda: set_reviewed(db, book_id, body.bead_ids, body.reviewed, body.skim))
+    return _correct(db, book_id, lambda: set_reviewed(db, book_id, body.bead_ids, body.reviewed))
 
 
 @router.post("/books/{book_id}/segments/{segment_id}/edit", response_model=BookResponse)

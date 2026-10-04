@@ -160,17 +160,13 @@ def split_bead(
 
 
 def set_reviewed(
-    conn: sqlite3.Connection, project_id: str, bead_ids: list[int], reviewed: bool, skim: bool = False
+    conn: sqlite3.Connection, project_id: str, bead_ids: list[int], reviewed: bool
 ) -> int | None:
-    """Set the reviewed flag on the beads; skim marks coalesce into one operation."""
-    if skim and not reviewed:
-        raise ValueError("Skim review only sets the reviewed flag")
+    """Set the reviewed flag on the beads, as one operation."""
     for bead_id in bead_ids:
         _check_bead(conn, project_id, bead_id)
     rec = Recorder(conn)
     for bead_id in bead_ids:
         if _reviewed(conn, bead_id) != int(reviewed):
             rec.update("beads", bead_id, reviewed=int(reviewed))
-    if skim:
-        return record(conn, project_id, "skim_review", rec, coalesce=True)
     return record(conn, project_id, "review", rec)

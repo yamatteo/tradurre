@@ -124,18 +124,20 @@ def test_reviewed(client, gap):
     assert [b["reviewed"] for b in result["beads"]] == [False, False, True, False]
 
 
-def test_skim_marks_coalesce_into_one_undo(client, gap):
+def test_reviewed_run_is_one_undo(client, gap):
     book_id, data = gap
-    for bead in data["beads"][:3]:
-        _ok(client, book_id, "reviewed", {"bead_ids": [bead["id"]], "reviewed": True, "skim": True})
+    ids = [b["id"] for b in data["beads"][:3]]
+    result = _ok(client, book_id, "reviewed", {"bead_ids": ids, "reviewed": True})
+    assert [b["reviewed"] for b in result["beads"]] == [True, True, True, False]
     result = _ok(client, book_id, "undo")
     assert [b["reviewed"] for b in result["beads"]] == [False, False, False, False]
 
 
-def test_skim_unmark_is_400(client, book):
-    book_id, data = book
-    resp = _post(client, book_id, "reviewed", {"bead_ids": [data["beads"][0]["id"]], "reviewed": False, "skim": True})
-    assert resp.status_code == 400
+def test_reviewed_ignores_an_old_skim_field(client, gap):
+    book_id, data = gap
+    body = {"bead_ids": [data["beads"][0]["id"]], "reviewed": True, "skim": True}
+    result = _ok(client, book_id, "reviewed", body)
+    assert [b["reviewed"] for b in result["beads"]] == [True, False, False, False]
 
 
 def test_edit_split_join_segment(client, gap):

@@ -28,8 +28,8 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
   alignment F1 0.995, exclusion P 1.000 R 0.902.
 - **Book screen** (Stages 2, 4): reading and keyboard navigation, `n` next unreviewed, `r` reviewed, "Show
   excluded", every SPEC §3.3 single-bead correction (keys and header buttons), inline segment editing, persistent
-  undo/redo, problem navigation (`p`/`P`). Being restyled to design variant A: frame, fonts, rows and both bars done;
-  the shortcuts panel, runs, ranges, original text and re-align to come (Stage 4).
+  undo/redo, problem navigation (`p`/`P`). Being restyled to design variant A: frame, fonts, rows, both bars and the
+  shortcuts panel done; runs, ranges, original text and re-align to come (Stage 4).
 - **Re-planned with the user (2026-10-04), SPEC changed accordingly:** review is one mode, problem-first: jump to
   the next likely problem, correct, mark one bead, a selected run, or everything up to here as reviewed. The
   timed scroll "skim review" is dropped. The Colab aligner is **parked** (SPEC §3.2, §5): it returns only if a
@@ -38,7 +38,7 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
   gold (the current one was made by the user, the developer), and maybe a second book, to score the aligner again.
 - `uv run pytest`: 391 passed, also on a fresh clone (tests read only committed synthetic fixtures; `-m library`
   tests run only where `library/contrefeu.*.pdf` exists, and assert counts only).
-- `npm run type-check` passes; releases build with `npm run build`. `npm run test:e2e` (33 tests) runs on its own
+- `npm run type-check` passes; releases build with `npm run build`. `npm run test:e2e` (35 tests) runs on its own
   backend (:8001, throwaway `.e2e.db`) and Vite (:5174), never the user's database. Setup per machine: `npx
   playwright install chromium` (on Ubuntu 26.04 with `PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=ubuntu24.04-x64`); tests
   use the full Chromium headless (`channel: 'chromium'`).
@@ -107,7 +107,7 @@ sources per book).
 
 The correction screen of Stage 2 grows into the review screen of SPEC §3.3 (as changed 2026-10-04): one mode,
 problem-first. Plain text editing; TipTap is not used here. Steps in order; the layout tasks and the two review
-tasks after them are ready.
+tasks after them are ready ("Reviewed runs" in two sub-tasks).
 
 Decisions carried into this stage:
 - (user, 2026-10-03) `reviewed` and `confidence` stay separate signals. A correction sets the touched beads to
@@ -290,6 +290,8 @@ The header becomes A1's two bars.
 #### Layout: shortcuts panel
 Status: done
 Report: 2026-10-04 — `keys.ts` (`SHORTCUTS`, 22 entries, `KeyedId`) drives BookView's plain-key map through `handlers: Record<KeyedId, …>`; new `KeysPanel.vue` (A4 modal, two columns) opened by `h` and a Keys button, closed by Esc/Close/scrim, keys ignored while open; import log date formatted; new e2e test in `book-layout.spec.ts`; pytest 391 passed, e2e 35 passed, type-check and build clean; screenshot `scratchpad/layout-keys-1366.png`; 20 ArrowDown on 10,000 beads 1.20–1.24 s alone.
+Verified (Pauli, 2026-10-04): Done when holds (commit ccc7346); the panel matches A4; ~280 px left free on the
+second bar at 1366.
 **Done when:** `npm run type-check` and `npm run test:e2e` pass with a new test: `h` opens the panel, it lists
 every entry of `SHORTCUTS`, Esc closes it, and the "Keys" button opens it too; while it is open, bead keys do
 nothing.
@@ -317,44 +319,70 @@ nothing.
   not the raw ISO timestamp.
 
 ### Reviewed runs and "up to here"
-Status: todo
-**Done when:** `uv run pytest` passes (skim tests removed, new ones below); `npm run type-check` passes; `npm run
-test:e2e` passes with the new tests in `frontend/e2e/review.spec.ts`.
-
 SPEC §3.3 "Reviewed marks": set or clear the mark on one bead, on a selected run of beads, and on every bead from
-the top of the book to the current one. The skim review is gone from SPEC, so its code goes too.
-- **Remove skim**: `skim` parameter of `domain/beads.py:set_reviewed` (and the `skim_review` operation kind),
+the top of the book to the current one. The skim review is gone from SPEC, so its code goes too. Split in two
+(Pauli, 2026-10-04): the backend removal first, then the screen.
+
+#### Remove skim
+Status: done
+Report: 2026-10-04 — `skim` gone from `set_reviewed`, `BookReviewedRequest`, the API and `client.ts`; deleted the four named skim tests plus `test_review_mark_stops_coalescing` (skim-only too), the roundtrip's skim draw; history test kind renamed `"skim"` → `"streak"`; new `test_reviewed_run_is_one_undo`, `test_reviewed_ignores_an_old_skim_field`; pytest 388 passed (391 − 5 + 2), e2e 35 passed, type-check and build clean; `grep skim` matches only that compatibility test, which must send the field.
+**Done when:** `uv run pytest` passes (skim tests removed, new ones below); `npm run type-check` and `npm run
+test:e2e` pass unchanged; `grep -rn skim tradurre frontend/src tests` finds nothing.
+
+- `skim` parameter of `domain/beads.py:set_reviewed` (and the `skim_review` operation kind),
   `BookReviewedRequest.skim` (`models.py`), its use in `api/books.py:reviewed` and in `client.ts`
   (`setReviewed` sends `{bead_ids, reviewed}`). Delete `test_skim_marks_coalesce`, `test_skim_unmark_is_an_error`
   (`tests/test_domain_beads.py`), `test_skim_marks_coalesce_into_one_undo`, `test_skim_unmark_is_400`
   (`tests/test_books_corrections_api.py`), and the skim branch of `tests/test_domain_roundtrip.py` (drop the
   `skim` draw and the third argument; removing that `rng.random()` call changes the random sequences the round
-  trip explores, which is expected; if a seed then fails, that is a real bug: stop and report it). Keep the generic `coalesce` mechanism of `history.py` and its
-  tests (`tests/test_domain_history.py` uses its own kind names; leave it).
-- **Selected run** (`BookView.vue`): `Shift+↓`/`Shift+↑` extend a run from an anchor (the bead current when the
-  run started) to the new current bead; `Shift+click` on a row does the same (`BeadRow`'s `select` emit gains a
-  fourth argument `extend: boolean`, the click's `shiftKey`; segment clicks pass it too); any plain move (arrows without
-  Shift, `n`, `p`, a click) clears the run. Rows in the run get `data-in-run="true"` (styled as below). Keep the Stage 2 scale rule: membership is a `shallowReactive<Record<number, true>>` map updated by
-  difference (like `currentRow`), never a per-row computed over indices.
-- `r` with a run: if any bead in the run is unreviewed, mark all of them reviewed, else clear all; one request
-  (`setReviewed(ids, flag)`), one operation, one undo; the run stays selected. Without a run, `r` is as now.
-- `R` (Shift+r, `event.key === 'R'`): mark every bead from the first to the current one reviewed (one request
-  with the ids of the unreviewed ones among them; nothing to do → `say('Already reviewed up to here')`); the
-  status line says `Reviewed up to here (N beads)`. A button "Up to here" with a `Shift+R` chip in the second
-  bar's review group, after "Reviewed" (`data-testid="reviewed-up-to-here"`), does the same. If the second bar
-  then overflows at 1366 (`e2e/book-layout.spec.ts` fails), hide the key chips of the corrections group below
-  1440 px wide (`max-[1439px]:hidden` on their `<kbd>`; the keys stay in the titles and the shortcuts panel), and
-  nothing else.
-- Run style (A1): run rows on the run colour with a 3 px accent bar at their left edge; while a run is selected the
-  bottom bar's message reads `{k} beads selected ({first}–{last}). R marks them all reviewed.`; Esc clears the
-  run. Add the run keys to `SHORTCUTS` (Review group: "Extend the selection" `Shift+↑ ↓`, "Select up to a bead"
-  `Shift+click`, "Mark everything up to here reviewed" `Shift+R`) without a `key` for the Shift+arrows (handled
-  before the plain-key map, like Alt+arrows).
-- Tests: `tests/test_books_corrections_api.py`: marking 3 beads in one request is one undo step; a request that still
-  sends `"skim": true` is accepted with the field ignored (Pydantic's default for extra fields; add no code).
-  `review.spec.ts`: Shift+↓ twice then `r` marks 3 beads and Ctrl+Z clears all 3; a run with mixed marks → `r`
-  marks all; `R` on the second bead marks beads 1–2 and leaves bead 3 (the 3-bead book of this spec), and `R` again says
-  "Already reviewed up to here"; a plain ↓ clears the run.
+  trip explores, which is expected; if a seed then fails, that is a real bug: stop and report it). Keep the
+  generic `coalesce` mechanism of `history.py` and its tests (`tests/test_domain_history.py` uses its own kind
+  names; leave it).
+- New tests in `tests/test_books_corrections_api.py`: marking 3 beads in one request is one undo step (one undo
+  clears all 3); a request that still sends `"skim": true` is accepted with the field ignored (Pydantic's default
+  for extra fields; add no code).
+- Stored `skim_review` operations: none exist outside tests (no user data, see "Current state"); no migration.
+
+#### Runs and "up to here" in the book screen
+Status: todo
+**Done when:** `npm run type-check` passes; `npm run test:e2e` passes with the new tests in
+`frontend/e2e/review.spec.ts` and `e2e/book-layout.spec.ts` still passing at 1366; `uv run pytest` unchanged; the
+10,000-bead "20 ArrowDown" time not worse than ~1.2–1.3 s alone; the `Report:` names a screenshot at 1366 × 768
+(scratchpad) with a 3-bead run selected.
+
+- **State** (`BookView.vue`, `selection.ts`): `runAnchorId: Ref<number | null>` and `inRun:
+  shallowReactive<Record<number, true>>`, the beads from the anchor to the current bead (both included), updated
+  by difference like `currentRow` (Stage 2 scale rule: never a per-row computed over indices). `Selection` gains
+  `inRun` and `runBounds: Readonly<Ref<{ first: number; last: number; size: number } | null>>` (1-based bead
+  numbers), for the rows and the bottom bar. A run exists when the anchor is set and differs from the current bead.
+- **Making a run:** `Shift+↓`/`Shift+↑` (handled in `onKey` before the plain-key map, like Alt+arrows) set the
+  anchor to the current bead if there is none, then move. `Shift+click` on a row does the same towards the clicked
+  bead (`BeadRow`'s `select` emit gains a fourth argument `extend: boolean`, the click's `shiftKey`; segment clicks
+  pass it too).
+- **Clearing it:** any change of current bead without Shift (arrows, `n`, `p`/`P`, a plain click), Esc (after the
+  shortcuts panel and the import log in precedence), any correction other than `r`, and undo/redo. Changing side
+  or sentence inside the current bead (←, →, Tab) keeps it.
+- **`r` with a run:** if any bead in the run is unreviewed, mark all of them reviewed, else clear all; one request
+  (`setReviewed(ids, flag)`), one undo; the run stays selected. Without a run, `r` is as now.
+- **`R`** (`event.key === 'R'`): mark every bead from the first to the current one reviewed (one request with the
+  ids of the unreviewed ones among them; none → `say('Already reviewed up to here')`); then `say('Reviewed up to
+  here (N beads)')`, N the beads newly marked. It ignores and keeps the run. Button "Up to here" with a `Shift+R`
+  chip in the second bar's review group, after "Reviewed" (`data-testid="reviewed-up-to-here"`). If the second
+  bar then overflows at 1366, hide the key chips of the corrections group below 1440 px (`max-[1439px]:hidden` on
+  their `<kbd>`), and nothing else.
+- **Style (A1), paint-only (render rule 2):** run rows get `data-in-run="true"`, the run background, and a 3 px
+  accent bar at their left edge made by recolouring a 3 px left border that every row's gutter cell always has
+  (transparent otherwise), not by adding a border or shadow. The current bead's own styles stay on top.
+- **Bottom bar:** while a run exists, `BookStatus.vue` shows `{size} beads selected ({first}–{last}). R marks them
+  all reviewed.` instead of the status message (it injects `runBounds`; `BookView`'s template reads neither).
+- **`SHORTCUTS`:** Review group gains "Mark everything up to here reviewed" `Shift+R` (`key: 'R'`, handler
+  required by `KeyedId`), "Extend the selection" `Shift+↑`, `Shift+↓` and "Select up to a bead" `Shift+click`
+  (no `key`); Esc is not listed as a shortcut: it only closes things.
+- **Tests** (`review.spec.ts`, 3-bead book of that spec): Shift+↓ twice then `r` marks 3 beads, `data-in-run` on
+  all 3, the bottom bar says `3 beads selected (1–3)…`, and Ctrl+Z clears all 3 marks (one undo) and the run; a
+  run with mixed marks → `r` marks all; Shift+click from bead 1 on bead 3 selects 3; a plain ↓ and Esc each clear
+  the run; `R` on the second bead marks beads 1–2 and leaves bead 3, and `R` again says "Already reviewed up to
+  here".
 
 ### Range exclude/include
 Status: todo

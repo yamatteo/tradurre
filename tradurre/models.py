@@ -265,7 +265,6 @@ class BookSplitBeadRequest(BaseModel):
 class BookReviewedRequest(BaseModel):
     bead_ids: list[int]
     reviewed: bool
-    skim: bool = False
 
 
 class BookEditRequest(BaseModel):

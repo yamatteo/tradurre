@@ -207,37 +207,6 @@ def test_set_reviewed(db):
         assert set_reviewed(conn, "p1", [i["A"]], True) is None
 
 
-def test_skim_marks_coalesce(db):
-    conn, i = db
-    with transaction(conn):
-        op1 = set_reviewed(conn, "p1", [i["B"]], True, skim=True)
-    with transaction(conn):
-        op2 = set_reviewed(conn, "p1", [i["C"]], True, skim=True)
-    assert op1 == op2
-    with transaction(conn):
-        undo(conn, "p1")
-    assert [bead(conn, b)[4] for b in (i["B"], i["C"])] == [0, 0]
-
-
-def test_review_mark_stops_coalescing(db):
-    conn, i = db
-    with transaction(conn):
-        set_reviewed(conn, "p1", [i["B"]], True, skim=True)
-    with transaction(conn):
-        set_reviewed(conn, "p1", [i["A"]], False)
-    with transaction(conn):
-        set_reviewed(conn, "p1", [i["C"]], True, skim=True)
-    with transaction(conn):
-        undo(conn, "p1")
-    assert [bead(conn, b)[4] for b in (i["A"], i["B"], i["C"])] == [0, 1, 0]
-
-
-def test_skim_unmark_is_an_error(db):
-    conn, i = db
-    with pytest.raises(ValueError):
-        set_reviewed(conn, "p1", [i["B"]], False, skim=True)
-
-
 def test_other_project_refused(db):
     conn, i = db
     refused(conn, move_first_to_previous, i["other"], "source")

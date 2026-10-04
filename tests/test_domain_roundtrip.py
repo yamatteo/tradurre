@@ -121,9 +121,8 @@ def _pick(rng, conn):
         return name, split_bead, tuple([bead, *points])
     if name == "set_reviewed":
         flag = rng.random() < 0.5
-        skim = flag and rng.random() < 0.5
         chosen = rng.sample(beads, rng.randint(1, min(3, len(beads))))
-        return name, set_reviewed, (chosen, flag, skim)
+        return name, set_reviewed, (chosen, flag)
     # replace_beads
     start = beads.index(bead)
     run = beads[start:start + rng.randint(1, 3)]

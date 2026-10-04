@@ -307,7 +307,7 @@ export const booksApi = {
     booksPost(`/books/${id}/beads/${beadId}/split`, { source_at: sourceAt, target_at: targetAt }),
 
   setReviewed: (id: string, beadIds: number[], reviewed: boolean) =>
-    booksPost(`/books/${id}/reviewed`, { bead_ids: beadIds, reviewed, skim: false }),
+    booksPost(`/books/${id}/reviewed`, { bead_ids: beadIds, reviewed }),
 
   excludeBlock: (id: string, blockId: number) => booksPost(`/books/${id}/blocks/${blockId}/exclude`),
 
