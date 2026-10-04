@@ -283,6 +283,24 @@ export interface BookRun {
   warnings: BookRunWarning[]
 }
 
+/** A piece of a search result's text; `match` marks what the query matched. */
+export interface BookSearchSpan {
+  text: string
+  match: boolean
+}
+
+export interface BookSearchResult {
+  bead_id: number
+  book_id: string
+  title: string
+  position: number
+  source: BookSearchSpan[]
+  target: BookSearchSpan[]
+  reviewed: boolean
+}
+
+export type SearchSide = Side | 'either'
+
 export const booksApi = {
   importBook: (source: File, target: File, title: string, sourceLang: string, targetLang: string) => {
     const form = new FormData()
@@ -337,6 +355,13 @@ export const booksApi = {
 
   /** Put the segment's original extracted text back. */
   restoreOriginal: (id: string, segmentId: number) => booksPost(`/books/${id}/segments/${segmentId}/restore`),
+
+  /** Beads matching `q` (word beginnings, case and accents folded), in every book or in `book`; 50 per page. */
+  search: (q: string, side: SearchSide = 'either', book?: string, offset = 0) => {
+    const params = new URLSearchParams({ q, side, offset: String(offset) })
+    if (book) params.set('book', book)
+    return booksRequest<BookSearchResult[]>(`/search?${params}`)
+  },
 
   undo: (id: string) => booksPost(`/books/${id}/undo`),
 

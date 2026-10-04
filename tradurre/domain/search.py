@@ -18,26 +18,32 @@ def fold(text: str) -> str:
 
 
 _TERMS = re.compile(r'"([^"]*)"|(\S+)')
-_COLUMNS = {"source": "source", "target": "target", "both": "{source target}"}
+_TOKENS = re.compile(r"[^\W_]+")  # what the `unicode61` tokenizer keeps
+_SIDES = ("source", "target", "either")
 START, END = "\x02", "\x03"
 
 
-def fts_query(text: str, side: str = "both") -> str | None:
+def fts_query(text: str, side: str = "either") -> str | None:
     """Turn what the translator typed into an FTS5 expression; None if there is nothing to search for.
 
-    Quoted stretches are phrases, other words are terms, all of them required. Every term is quoted, so FTS
-    operators typed by the translator (OR, NEAR, *, -) are searched as words and never parsed as syntax.
+    Quoted stretches are phrases, other words are terms, all of them required (SPEC §3.4). Each is split into
+    tokens, and every token matches the words it begins: `désœuvr` finds `désœuvrement`. With `either`, the whole
+    query must match one side; terms are never split across sides. Tokens are alphanumeric, so nothing the
+    translator types (OR, NEAR, *, -, quotes) is ever parsed as FTS syntax.
     """
-    if side not in _COLUMNS:
-        raise ValueError(f"side must be 'source', 'target' or 'both', not {side!r}")
-    terms = []
+    if side not in _SIDES:
+        raise ValueError(f"side must be 'source', 'target' or 'either', not {side!r}")
+    phrases = []
     for phrase, word in _TERMS.findall(text):
-        term = fold(phrase or word)
-        if any(ch.isalnum() for ch in term):  # a term without letters or digits has no tokens to match
-            terms.append('"' + term.replace('"', '""') + '"')
-    if not terms:
+        tokens = _TOKENS.findall(fold(phrase or word))
+        if tokens:  # a stretch without letters or digits has nothing to match
+            phrases.append(" + ".join(f'"{token}" *' for token in tokens))
+    if not phrases:
         return None
-    return f"{_COLUMNS[side]} : ({' '.join(terms)})"
+    body = " ".join(phrases)
+    if side == "either":
+        return f"source : ({body}) OR target : ({body})"
+    return f"{side} : ({body})"
 
 
 def _unfold_highlight(display: str, highlighted: str) -> str:
@@ -83,7 +89,8 @@ def _bead_text(conn: sqlite3.Connection, bead_id: int) -> dict[str, str]:
 
 
 def search_beads(
-    conn: sqlite3.Connection, text: str, side: str = "both", project_id: str | None = None, limit: int = 50
+    conn: sqlite3.Connection, text: str, side: str = "either", project_id: str | None = None, limit: int = 50,
+    offset: int = 0,
 ) -> list[dict]:
     """Beads matching the query, best first, with the matches marked by START/END in their real text."""
     query = fts_query(text, side)
@@ -97,8 +104,8 @@ def search_beads(
     if project_id is not None:
         sql += " AND project_id = ?"
         params.append(project_id)
-    sql += " ORDER BY bm25(bead_index) LIMIT ?"
-    params.append(limit)
+    sql += " ORDER BY bm25(bead_index) LIMIT ? OFFSET ?"
+    params += [limit, offset]
 
     results = []
     for bead_id, bead_project, source_hl, target_hl in conn.execute(sql, params).fetchall():

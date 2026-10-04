@@ -107,7 +107,8 @@ silently destroy text.
 ### 3.2 High-quality alignment (parked)
 
 A GPU aligner (sentence embeddings + an LLM judge, run on Colab through a project bundle) is **parked**: the local
-baseline already aligns the reference book at F1 0.994 against the translator's own alignment. It comes back
+baseline already aligns the reference book at F1 0.994 against an alignment corrected by the developer; the
+translator's own review of it (in v0.2) replaces it as the reference. It comes back
 (see §5) only if a gold book scores below **0.95**.
 
 ### 3.3 Review
@@ -147,7 +148,9 @@ corrections:
 
 The corpus is searchable across all projects, from a global search page and from inside a project:
 
-- Query the source side, the target side, or both. Matching ignores case and accents; phrases work.
+- One query, matched against the source side, the target side, or either. Matching ignores case and accents, and a
+  word matches every word it begins (`désœuvr` finds `désœuvrement`, `désœuvré`); a phrase in quotes matches those
+  words in sequence.
 - Each result is a **bead** (the matched source and target text, with the match highlighted), plus the book
   title and the position in the book.
 - **Context on demand:** expanding a result shows the surrounding beads; one click opens the project at that
@@ -156,7 +159,6 @@ The corpus is searchable across all projects, from a global search page and from
 
 ### 3.5 Export
 
-- **Corpus export** per project or for the whole library: TMX and TSV (one bead per row).
 - **Edition export**: the (corrected) text of one side as .txt or .docx, keeping paragraph structure.
 - **Project bundle** export/import: the text layer and alignment of one project, as a full backup.
 
@@ -182,6 +184,8 @@ The corpus is searchable across all projects, from a global search page and from
 
 ## 5. Later (designed for, not built)
 
+- **Corpus export** (TMX for translation software, TSV for spreadsheets), if a use appears. It includes unreviewed
+  and one-sided beads, marked as such.
 - **Revision mode:** edit the target edition side by side with the source as a writing environment, with
   formatting (italics, emphasis) carried through import and export.
 - **Inline formatting** in segments, preserved from .docx/PDF and exported to .docx.

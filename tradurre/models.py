@@ -285,3 +285,18 @@ class BookEditRequest(BaseModel):
 
 class BookSplitSegmentRequest(BaseModel):
     offset: int
+
+
+class BookSearchSpan(BaseModel):
+    text: str
+    match: bool
+
+
+class BookSearchResult(BaseModel):
+    bead_id: int
+    book_id: str
+    title: str
+    position: int  # 1-based, in the book
+    source: list[BookSearchSpan]
+    target: list[BookSearchSpan]
+    reviewed: bool

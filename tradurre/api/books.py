@@ -12,8 +12,9 @@ from importlib.metadata import version
 from pathlib import PurePath
 
 from collections.abc import Callable
+from typing import Literal
 
-from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, UploadFile
 from starlette.concurrency import run_in_threadpool
 
 from tradurre.db import get_db
@@ -22,6 +23,7 @@ from tradurre.domain.beads import merge_with_next, move_first_to_previous, move_
 from tradurre.domain.blocks import exclude_block, exclude_range, include_block, include_range
 from tradurre.domain.history import transaction
 from tradurre.domain.invariants import check_project
+from tradurre.domain.search import END, START, search_beads
 from tradurre.domain.segments import edit_text, join_with_next, restore_original, split_segment
 from tradurre.models import (
     BookEditRequest,
@@ -32,6 +34,8 @@ from tradurre.models import (
     BookResponse,
     BookReviewedRequest,
     BookRun,
+    BookSearchResult,
+    BookSearchSpan,
     BookSplitBeadRequest,
     BookSplitSegmentRequest,
     BookSummary,
@@ -250,6 +254,39 @@ def _read_book(db: sqlite3.Connection, book_id: str) -> dict:
 @router.get("/books/{book_id}", response_model=BookResponse)
 def get_book(book_id: str, db: sqlite3.Connection = Depends(get_db)):
     return _read_book(db, book_id)
+
+
+def _spans(marked: str) -> list[BookSearchSpan]:
+    """Cut a text marked with START/END into plain and matching spans (no markup reaches the page)."""
+    spans: list[BookSearchSpan] = []
+    match = False
+    for k, part in enumerate(marked.replace(END, START).split(START)):
+        if k:
+            match = not match
+        if part:
+            spans.append(BookSearchSpan(text=part, match=match))
+    return spans
+
+
+@router.get("/search", response_model=list[BookSearchResult])
+def search(
+    q: str = "",
+    side: Literal["source", "target", "either"] = "either",
+    book: str | None = None,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    db: sqlite3.Connection = Depends(get_db),
+):
+    """Beads matching `q` across all books, or in `book` (SPEC §3.4)."""
+    if book is not None:
+        _book_row(db, book)
+    return [
+        BookSearchResult(
+            bead_id=hit["bead_id"], book_id=hit["project_id"], title=hit["title"], position=hit["position"],
+            source=_spans(hit["source"]), target=_spans(hit["target"]), reviewed=hit["reviewed"],
+        )
+        for hit in search_beads(db, q, side, project_id=book, limit=limit, offset=offset)
+    ]
 
 
 @router.get("/books/{book_id}/check", response_model=list[str])

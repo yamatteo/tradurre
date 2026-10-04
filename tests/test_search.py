@@ -44,35 +44,37 @@ def db(tmp_path):
 
 
 def test_fts_query_words_and_phrase():
-    assert fts_query("homme partit") == '{source target} : ("homme" "partit")'
-    assert fts_query('"de l homme" mot') == '{source target} : ("de l homme" "mot")'
+    assert fts_query("homme partit") == 'source : ("homme" * "partit" *) OR target : ("homme" * "partit" *)'
+    assert fts_query('"de l homme" mot', "source") == 'source : ("de" * + "l" * + "homme" * "mot" *)'
 
 
 def test_fts_query_folds_ligatures():
-    assert fts_query("Désœuvrement") == '{source target} : ("Désoeuvrement")'
+    assert fts_query("Désœuvrement", "source") == 'source : ("Désoeuvrement" *)'
 
 
 def test_fts_query_stray_quote():
-    assert fts_query('homme "partit') == '{source target} : ("homme" """partit")'
+    assert fts_query('homme "partit', "source") == 'source : ("homme" * "partit" *)'
 
 
 def test_fts_query_operators_are_literal():
-    assert fts_query("homme OR NEAR* -mot") == '{source target} : ("homme" "OR" "NEAR*" "-mot")'
+    assert fts_query("a OR b * -c", "source") == 'source : ("a" * "OR" * "b" * "c" *)'
 
 
 def test_fts_query_sides():
-    assert fts_query("mot", "source") == 'source : ("mot")'
-    assert fts_query("mot", "target") == 'target : ("mot")'
+    assert fts_query("mot", "source") == 'source : ("mot" *)'
+    assert fts_query("mot", "target") == 'target : ("mot" *)'
+    assert fts_query("mot", "either") == 'source : ("mot" *) OR target : ("mot" *)'
 
 
 def test_fts_query_nothing_to_search():
     assert fts_query("") is None
+    assert fts_query('"" * -') is None
     assert fts_query('  "" " - ') is None
 
 
 def test_fts_query_bad_side():
-    with pytest.raises(ValueError):
-        fts_query("mot", "left")
+    with pytest.raises(ValueError, match="'source', 'target' or 'either'"):
+        fts_query("mot", "both")
 
 
 # _unfold_highlight
@@ -145,3 +147,29 @@ def test_hostile_query(db):
     conn, _ = db
     assert search_beads(conn, '"a" OR NEAR(') == []
     assert search_beads(conn, "") == []
+
+
+def test_word_beginning(db):
+    conn, ids = db
+    (hit,) = search_beads(conn, "désœuvr", side="source")
+    assert hit["bead_id"] == ids["A"]
+    assert hit["source"] == f"Le {START}désœuvrement{END} de l’homme."
+
+
+def test_phrase_of_word_beginnings(db):
+    conn, ids = db
+    assert [h["bead_id"] for h in search_beads(conn, '"part sans"')] == [ids["B"]]
+
+
+def test_either_side(db):
+    conn, ids = db
+    assert [h["bead_id"] for h in search_beads(conn, "ozio", side="either")] == [ids["A"]]
+    # "désœuvrement" is in A's source and "ozio" in its target: the query never splits across sides.
+    assert search_beads(conn, "désœuvrement ozio", side="either") == []
+
+
+def test_offset(db):
+    conn, _ = db
+    both = [h["bead_id"] for h in search_beads(conn, "u", project_id="p1")]
+    assert len(both) == 2
+    assert [h["bead_id"] for h in search_beads(conn, "u", project_id="p1", offset=1)] == both[1:]
