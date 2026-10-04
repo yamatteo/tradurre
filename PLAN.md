@@ -33,7 +33,8 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
   undo/redo, problem navigation (`p`/`P`), selected runs (Shift+↑/↓, Shift+click) marked with `r`, and `R` "up to
   here", range exclude/include in the "More" menu, edited sentences marked with their original on `o` and
   "Restore original", re-align of the selection (More menu), cut/copy/paste of whole sentences (Ctrl+X/C/V).
-  Restyled to design variant A; smooth at 5,000 beads. Stage 4 done. Stage 6: search done (`/search`, `BookSearch.vue`; "Search" in the book's top bar); edition export next. On the reference book the problem flags catch
+  Restyled to design variant A; smooth at 5,000 beads. Stage 4 done. Stage 6: search done (`/search`, `BookSearch.vue`; "Search" in the book's top bar), edition export done (More →
+  Export, .txt/.docx); the project bundle next. On the reference book the problem flags catch
   none of the 15 real errors: review is reading-first; better signals come after v0.2.
 - **Re-planned with the user (2026-10-04), SPEC changed accordingly:** review is one mode, problem-first: jump to
   the next likely problem, correct, mark one bead, a selected run, or everything up to here as reviewed. The
@@ -41,9 +42,9 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
   gold book scores below 0.95. A typical book is 1,000–5,000 sentences a side; performance targets are at 5,000
   beads. Order: Stage 6 → Stage 7 (v0.2), confirmed 2026-10-04. Then the translator reviews *Contrefeu* in v0.2 for a true
   gold (the current one was made by the user, the developer), and maybe a second book, to score the aligner again.
-- `uv run pytest`: 414 passed, also on a fresh clone (tests read only committed synthetic fixtures; `-m library`
+- `uv run pytest`: 422 passed, also on a fresh clone (tests read only committed synthetic fixtures; `-m library`
   tests run only where `library/contrefeu.*.pdf` exists, and assert counts only).
-- `npm run type-check` passes; releases build with `npm run build`. `npm run test:e2e` (67 tests; the three timing tests run last, alone, in project `scale`) runs on its own
+- `npm run type-check` passes; releases build with `npm run build`. `npm run test:e2e` (68 tests; the three timing tests run last, alone, in project `scale`) runs on its own
   backend (:8001, throwaway `.e2e.db`) and Vite (:5174), never the user's database. Setup per machine: `npx
   playwright install chromium` (on Ubuntu 26.04 with `PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=ubuntu24.04-x64`); tests
   use the full Chromium headless (`channel: 'chromium'`).
@@ -375,12 +376,87 @@ Report: 2026-10-04 — new `services/edition.py` (`edition_blocks`, `edition_txt
 `booksApi.editionUrl`; `MoreMenu.vue` "Export" with the four links. Tests: `test_edition.py` 4, new
 `test_books_export_api.py` 4, e2e download test in `book-layout.spec.ts`. pytest 422 passed (414 before), type-check
 clean, e2e 68 passed.
+Verified (Pauli, 2026-10-04): Done when holds (commit fccc115). Included blocks only, current `text`, document order,
+heading → "Heading 1"; the filename fallback is sound (`filename*` carries the real name). Braun's two deviations
+(URL in `client.ts`; `_` for non-ASCII in the plain `filename`) accepted. Empty segment text can't occur:
+`edit_text` refuses it.
 
 #### Project bundle
-Not ready. SPEC §3.5: export/import of one project's text layer and alignment as a full backup. To decide when
-planned: the format (versioned JSON, zipped), what it holds (blocks with kinds and exclusion, segments with
-`text` and `original_text`, beads with confidence, method and reviewed; the operation history or not), and import
-as a new book (never over an existing one).
+SPEC §3.5: "export/import of the text layer and alignment of one project, as a full backup". Decided (Pauli,
+2026-10-04):
+- **Format:** a zip, `<title>.tradurre.zip`, holding one `bundle.json` (UTF-8, `ensure_ascii=False`). A zip because
+  a book's JSON is 1–2 MB and compresses ~4×, and Windows opens it without tools; one file inside, so it stays
+  trivially inspectable. Versioned: `"format": "tradurre-bundle", "version": 1`.
+- **Contents:** the book (title, languages, created/updated), both documents (side, filename, format) with their
+  blocks in order (kind, excluded, page) and each block's segments in order (`text`, `original_text`, and `bead`:
+  the index of its bead in `beads`, or null when the block is excluded), the beads in order (confidence, method,
+  reviewed), and the runs with their stats and warnings (SPEC §4 "Debuggable": they travel with the book). Ids and
+  ords are not stored: order is the list order, so a bundle never depends on a database's ids.
+- **Not included: the operation history.** A backup restores the state, not the way it was reached; the restored
+  book starts with nothing to undo. History rows reference row ids that a restore renumbers, so carrying them
+  would mean rewriting every `changes` JSON: cost with no use for the translator.
+- **Import is always a new book** (new uuid, title as in the bundle), never over an existing one; ords are
+  rebuilt with `GAP` spacing; the whole import is one transaction and is refused (nothing written) if the bundle
+  is malformed or the result breaks an invariant (`check_project`). `bead_index` fills itself through its
+  triggers, so a restored book is searchable at once.
+
+##### Bundle: export and import in the service
+Status: done
+**Done when:** `uv run pytest` passes with the new `tests/test_bundle.py`; nothing else changes.
+
+- New `tradurre/services/bundle.py`:
+  - `class BundleError(ValueError)`; `FORMAT = "tradurre-bundle"`, `VERSION = 1`.
+  - `export_bundle(conn, book_id) -> bytes`: the zip (`zipfile.ZIP_DEFLATED`) with `bundle.json`:
+    `{"format", "version", "app_version" (importlib.metadata.version("tradurre")), "exported_at" (UTC ISO),
+    "book": {"title", "source_lang", "target_lang", "created_at", "updated_at"}, "documents": [{"side",
+    "filename", "format", "blocks": [{"kind", "excluded" (bool), "page", "segments": [{"text", "original_text",
+    "bead"}]}]}] (source first), "beads": [{"confidence", "method", "reviewed" (bool)}] (by `ord`), "runs":
+    [{"kind", "created_at", "app_version", "stats" (the parsed JSON object), "warnings": [{"side", "message"}]}]
+    (by id)}`. Blocks by `ord`, segments by `ord`; `bead` is the index of the segment's bead in `beads`.
+  - `import_bundle(conn, data: bytes) -> str`: the new book id. Inside one `transaction(conn)`: insert the
+    project (new `uuid4`, the bundle's title, languages and timestamps), documents, blocks (`ord = i * GAP`),
+    beads (`ord = k * GAP`), segments (`ord = j * GAP`, `bead_id` from the index), runs and warnings; then
+    `check_project(conn, id)`: any violation → `BundleError` naming the first one (the transaction rolls back).
+    `BundleError` also for: not a zip or no `bundle.json` ("Not a Tradurre bundle"), a wrong `format` (same),
+    `version` above `VERSION` ("This bundle needs a newer Tradurre (version N)"), a missing key or a wrong type,
+    a `bead` index out of range ("Malformed bundle: …" with the path, e.g. `documents[0].blocks[3].segments[1]`).
+    A bead no segment points at is caught by the invariant check (I3).
+- `tests/test_bundle.py`, on a synthetic book built like `tests/test_edition.py`'s fixture plus a one-sided bead,
+  a reviewed bead, an edited segment and a run with one warning:
+  - round trip: `import_bundle(export_bundle(...))` gives a second book whose normalized form equals the first's
+    (a helper reading both books as the bundle structure without ids: compare `json.loads` of each export,
+    ignoring `exported_at`); `check_project` is `[]`; `search_beads` with the edited word finds a bead in both
+    books;
+  - the zip holds exactly `bundle.json`, and its `"version"` is 1;
+  - refused, with no project added (count `projects` before and after): bytes that aren't a zip; a zip without
+    `bundle.json`; `"format": "other"`; `"version": 2`; a segment with `"bead": 99`; a bead no segment points at;
+    an excluded block whose segment has a bead (I1).
+Report: 2026-10-04 — new `services/bundle.py` (`export_bundle`, `import_bundle`, `BundleError`; a schema refusal
+(`IntegrityError`) also becomes `BundleError`); new `tests/test_bundle.py`, 9 tests: round trip (equal exports,
+invariants hold, the restored book searchable), contents, and refusals (not a zip, no `bundle.json`, wrong format,
+version 2, bead index 99, a bead without segments, I1, a missing key, a wrong type, a value the schema refuses), each
+leaving `projects` unchanged. pytest 431 passed (422 before).
+
+##### Bundle in the API and the app
+Status: todo
+**Done when:** `uv run pytest` passes with the new API tests; `npm run type-check` passes; `npm run test:e2e`
+passes with the new test.
+
+- API (`api/books.py`): `GET /books/{id}/export/bundle` → `application/zip`, `Content-Disposition` named
+  `<title>.tradurre.zip` built exactly as the edition export's (move that code into a `_disposition(name)` helper
+  both use; the edition tests must pass unchanged). `POST /books/bundle` (multipart field `bundle`) → 201
+  `BookImportResponse` (`id`, `title`, `bead_count`, `warnings: []`); `BundleError` → 400 with its message.
+- `client.ts`: `booksApi.bundleUrl(id)` and `booksApi.importBundle(file)`.
+- Book screen, `MoreMenu.vue`, under "Export": a fifth item "Project bundle (.zip)" (`data-testid=
+  "export-bundle"`), the same kind of `<a download>` link.
+- Library (`ProjectList.vue`): next to the import button, "Restore a bundle" (`data-testid="restore-bundle"`)
+  opening a hidden `<input type="file" accept=".zip">`; on a file → `importBundle` → navigate to `/book/<id>`; an
+  error shows the server's message where the page shows its errors.
+- Tests: `tests/test_books_export_api.py`: the bundle's content type and filename, 404; `POST /books/bundle` with
+  an exported bundle → 201 and a second book with the same `bead_count`; with garbage → 400 "Not a Tradurre
+  bundle". e2e (`book-layout.spec.ts`): More → "Project bundle (.zip)" downloads `<title>.tradurre.zip`; then on
+  `/`, "Restore a bundle" with that file (`setInputFiles`) lands on `/book/<new id>` showing the same number of
+  bead rows and the same title.
 
 ---
 
