@@ -36,7 +36,7 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
   Restyled to design variant A; smooth at 5,000 beads. Stages 4 and 6 done (search at `/search` and from the
   book; More → Export: edition .txt/.docx and the project bundle; "Restore a bundle" on the library page).
   Stage 7: search grouped by book, the library order, database snapshots (local-time names) and the v1
-  retirement (code and docs) done; next the release: checklist fixtures, a browser smoke script, a Windows
+  retirement (code and docs) done; next the release (fixtures done): a browser smoke script, a Windows
   checklist, a candidate wheel, then v0.2.0. On the reference book the problem flags catch
   none of the 15 real errors: review is reading-first; better signals come after v0.2.
 - **Re-planned with the user (2026-10-04), SPEC changed accordingly:** review is one mode, problem-first: jump to
@@ -427,10 +427,14 @@ The checklist needs one book in every format, with no copyrighted text. `tests/f
   extractor, not to fix here).
 
 #### Browser smoke script
-Status: todo
-**Done when:** the script passes on Linux against `uv run tradurre --no-browser --port 8123` on a scratch
-`TRADURRE_DB`, with `--channel chromium` (Playwright's bundled browser); run twice in a row on the same database
-(it must not depend on an empty library); report its output.
+Status: done
+Report: 2026-10-04 — `packaging/smoke.py` (11 steps, PASS/FAIL per step, exit 0/1; also deletes its books via the API after a failure) and a README line; the fixture book has no bead with two source sentences (27× 1:1, one 1:2), so Alt+↓ falls back to the first bead with two sentences on the target side; passed 3 times with `--channel chromium` on a scratch database on :8123 (twice on an empty library, once beside a book of the same text, left in place); pytest 385 passed.
+**Done when:** after `npm --prefix frontend run build` (the installed app serves the built SPA), the script passes
+on Linux against `uv run tradurre --no-browser --port 8123` with `TRADURRE_DB` in the scratchpad, with `--channel
+chromium` (Playwright's own browser: `uv run --with playwright python -m playwright install chromium` first; Edge
+and Chrome use the installed browser, so Windows needs no install step); run twice in a row on the same database
+(it must not depend on an empty library, and the library holds the same books after each run as before it);
+report its output. Then stop the server and delete the scratch database.
 
 One script the Windows agent runs against the **installed** app, in Edge and in Chrome. Not part of `npm run
 test:e2e` (that runs the dev servers); it reuses its `data-testid`s.
@@ -440,10 +444,17 @@ test:e2e` (that runs the dev servers); it reuses its `data-testid`s.
 - Steps (each tied to a unique title with a random suffix, so reruns don't collide): library loads; import the
   .docx + .pdf pair through the form (`/book/import`) and land on the book; `n` moves to an unreviewed bead and
   `r` marks it (progress text changes); Alt+↓ then Ctrl+Z (the bead's segments change, then come back); reload
-  the page and Ctrl+Y redoes; search a word from the book (`/search`, a result, Open lands on the bead); More →
+  the page and Ctrl+Y redoes; search a word from the book (`/search`; earlier runs' books have the same text, so check the
+  `result-group` titled with this run's title, and Open on its first result lands on that book and bead); More →
   Export: target .txt and .docx and the bundle download (non-empty files, the .txt starts with a UTF-8 BOM);
   "Restore a bundle" with that bundle opens "<title> (restored …)"; Delete the restored book from the library
-  (accept the dialog), it's gone.
+  (accept the dialog), it's gone; then delete the imported one the same way, so a run leaves the library as it
+  found it.
+- How to find and check each thing: the `data-testid`s and assertions of the matching tests in
+  `frontend/e2e/*.spec.ts` (import, keys, undo, search, export, restore, delete); the keys from
+  `frontend/src/keys.ts`. Alt+↓ goes on the first bead with at least two source sentences (one-sentence beads
+  would make the move a different case). Downloads with `page.expect_download()`, the restore through
+  `restore-bundle-file`'s `set_input_files`, the delete confirm with a `dialog` handler that accepts.
 - No test framework, no new dependency in `pyproject.toml`. `README.md` "Development": one line on how to run it.
 
 #### Windows checklist

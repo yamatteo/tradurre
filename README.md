@@ -103,6 +103,10 @@ npm --prefix frontend run test:e2e     # end-to-end tests
 `npm --prefix frontend run build` builds the frontend into `tradurre/static/`. `uv run tradurre` (without `--dev`) serves it from
 there, which is also how it ships in the wheel.
 
+`uv run --with playwright python packaging/smoke.py --url http://127.0.0.1:8000 --channel msedge` (or `chrome`, or
+`chromium` after `uv run --with playwright python -m playwright install chromium`) drives a running, built app
+through one book's life in a real browser; it deletes the books it creates.
+
 ### Releasing
 
 Bump `version` in `pyproject.toml`, commit, then tag and push:
