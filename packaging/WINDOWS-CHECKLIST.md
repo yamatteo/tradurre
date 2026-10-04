@@ -1,8 +1,8 @@
 # Windows checklist for a release candidate
 
-For a Claude Code agent on the developer's Windows 11 machine, working in **PowerShell** with no GUI. Every step
-is commands you can copy and run as they are, plus what they should print. Steps 1–6 are for the agent; step 7 is
-for the developer, by hand.
+For a Claude Code agent on the developer's Windows 10 or 11 machine, working in **PowerShell** with no GUI. Every
+step is commands you can copy and run as they are, plus what they should print. Steps 1–8 are for the agent; step
+9 is for the developer, by hand.
 
 ## How to work
 
@@ -14,7 +14,7 @@ for the developer, by hand.
   - this checklist.
 - Write the results to `C:\tradurre-rc\RESULTS.md`. For each step, write a heading, then `PASS` or `FAIL` per
   check, the relevant output (shortened), and anything unexpected. The developer brings this file back.
-- On a `FAIL`, record it and go on with the next step that doesn't depend on it. **Whatever happens, run step 6
+- On a `FAIL`, record it and go on with the next step that doesn't depend on it. **Whatever happens, run step 8
   last**: it puts the developer's own Tradurre and data back.
 - Never copy the developer's own data into `RESULTS.md`, such as titles or text from the library you back up in
   step 1. Counts are fine.
@@ -70,13 +70,23 @@ Get-Command uv.exe -ErrorAction SilentlyContinue | Select-Object -ExpandProperty
 
 Expected: `True`, `True`, and a path to `uv.exe`.
 
+Check whether Windows has the Visual C++ runtime that PDF support needs:
+
+```powershell
+Test-Path "$env:SystemRoot\System32\msvcp140.dll"
+```
+
+Record the answer. If it is `False`, the launcher will install the Microsoft Visual C++ Redistributable in step 3,
+and Windows will ask for permission on the desktop, which you can't click. **Tell the developer before step 3** that
+they need to be at the machine to click "Yes", and wait until they say they're ready.
+
 If `uv.exe` is missing, install it with the official one-liner and run the preamble again:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
-Record what is installed now, so step 6 can put it back:
+Record what is installed now, so step 8 can put it back:
 
 ```powershell
 $before = Get-Command tradurre.exe -ErrorAction SilentlyContinue
@@ -96,7 +106,7 @@ else { 'no data to back up' }
 ```
 
 Expected: `stopped`, then `backed up` or `no data to back up`. If it prints `BACKUP ALREADY EXISTS`, an earlier
-run didn't finish step 6. Stop and ask the developer. Don't overwrite the backup.
+run didn't finish step 8. Stop and ask the developer. Don't overwrite the backup.
 
 ## 2. Tradurre v0.1.0 with a project
 
@@ -107,7 +117,7 @@ Start-Process -FilePath tradurre.exe -ArgumentList '--no-browser' -WindowStyle H
 Wait-Tradurre '/v1/projects'
 ```
 
-Expected: the install ends with `Installed 1 executable: tradurre`, then `True`.
+Expected: the install ends with `Installed 2 executables: tradurre, tradurre-align`, then `True`.
 
 ```powershell
 $r = Invoke-WebRequest -UseBasicParsing -Method Post -Uri "$API/v1/projects" -ContentType 'application/json' `
@@ -128,14 +138,21 @@ so a `pause` on an error can't hang.
 Start-Process -FilePath cmd.exe -WindowStyle Hidden `
   -ArgumentList "/c `"$RC\start-tradurre.bat --no-browser <NUL >$RC\logs\launcher-1.log 2>&1`""
 Wait-Tradurre '/v2/books'
-Get-Content "$RC\logs\launcher-1.log" | Select-String 'Updating|installed'
+Get-Content "$RC\logs\launcher-1.log" | Select-String 'Updating|Retrying|installed|Visual C'
 tradurre.exe --version
+Test-Path "$env:SystemRoot\System32\msvcp140.dll"
 ```
 
 Expected:
 - `True`;
 - `Updating Tradurre from an older version to <VERSION>...` and `Tradurre <VERSION> is installed.`;
-- `tradurre <VERSION>`.
+- if uv failed to remove the old version, `Retrying the install of Tradurre...` too. Record whether it appeared:
+  it is the launcher's way around the uv error the last run hit;
+- if step 1 found no runtime, the lines about installing the Visual C++ Redistributable. Record them, and whether
+  the developer clicked "Yes";
+- `tradurre <VERSION>`;
+- `True`: the runtime is there now. If it is `False`, record why (the prompt declined, a failed download): PDF
+  imports in steps 4 and 6 will then fail with a message that names the redistributable.
 
 ```powershell
 curl.exe -s "$API/v2/books"
@@ -166,6 +183,18 @@ uv run --no-project --python 3.14 --with playwright python "$RC\smoke.py" --chan
 
 Expected: for each browser, 11 `PASS` lines, `All steps passed.` and `exit 0`. Copy both outputs into the results
 in full. They hold no book text, only step names and the word searched.
+
+If `uv run --with playwright` fails before `smoke.py` starts, with `failed to remove directory` and os error 32,
+run it from a plain virtual environment instead, and record that you did:
+
+```powershell
+uv run --no-project --python 3.14 python -m venv "$RC\pw"
+& "$RC\pw\Scripts\python.exe" -m pip install playwright
+& "$RC\pw\Scripts\python.exe" "$RC\smoke.py" --channel msedge --fixtures "$RC\fixtures" *>&1 | Tee-Object "$RC\logs\smoke-edge.log"
+"exit $LASTEXITCODE"
+& "$RC\pw\Scripts\python.exe" "$RC\smoke.py" --channel chrome --fixtures "$RC\fixtures" *>&1 | Tee-Object "$RC\logs\smoke-chrome.log"
+"exit $LASTEXITCODE"
+```
 
 ```powershell
 curl.exe -s "$API/v2/books"
@@ -233,7 +262,71 @@ Stop-Tradurre
 
 Expected: `204`, `[]`, `stopped`.
 
-## 6. Restore the developer's setup (always)
+## 6. A PDF import through the API
+
+The PDF runtime check, without a browser. Start Tradurre again; the launcher doesn't update:
+
+```powershell
+Start-Process -FilePath cmd.exe -WindowStyle Hidden `
+  -ArgumentList "/c `"$RC\start-tradurre.bat --no-browser <NUL >$RC\logs\launcher-3.log 2>&1`""
+Wait-Tradurre '/v2/books'
+$pdf = curl.exe -s -F "source=@$RC\fixtures\easy.source.docx" -F "target=@$RC\fixtures\easy.target.pdf" -F "title=Checklist PDF" "$API/v2/books" | ConvertFrom-Json
+"$($pdf.title) $($pdf.bead_count) beads, warnings: $($pdf.warnings.Count)"
+curl.exe -s -o NUL -w '%{http_code}' -X DELETE "$API/v2/books/$($pdf.id)"
+Stop-Tradurre
+```
+
+Expected: `True`, `Checklist PDF 28 beads, warnings: 0`, `204`, `stopped`. If the import fails, record the whole
+answer: it should name the Microsoft Visual C++ Redistributable.
+
+## 7. The launcher's failure paths
+
+Two failures, on purpose, with a copy of the launcher that wants a newer version from a wheel that doesn't exist.
+Tradurre is stopped (step 6).
+
+```powershell
+(Get-Content "$RC\start-tradurre.bat") `
+  -replace '^set "VERSION=.*"$', 'set "VERSION=0.2.0rc99"' `
+  -replace '^set "WHEEL_URL=.*"$', 'set "WHEEL_URL=file:///C:/tradurre-rc/missing.whl"' |
+  Set-Content -Encoding ASCII "$RC\logs\launcher-test.bat"
+Select-String -Path "$RC\logs\launcher-test.bat" -Pattern '^set "(VERSION|WHEEL_URL)='
+```
+
+Expected: the two changed lines, with `0.2.0rc99` and `missing.whl`.
+
+**(a) The update fails, like when offline.** Nothing is deleted, and the installed version starts:
+
+```powershell
+Start-Process -FilePath cmd.exe -WindowStyle Hidden `
+  -ArgumentList "/c `"$RC\logs\launcher-test.bat --no-browser <NUL >$RC\logs\launcher-test-a.log 2>&1`""
+Wait-Tradurre '/v2/books' 300
+Get-Content "$RC\logs\launcher-test-a.log" | Select-String 'Updating|Could not update|Starting the installed'
+Stop-Tradurre
+```
+
+Expected: `True`; `Updating Tradurre from <VERSION> to 0.2.0rc99...`, `Could not update Tradurre (see the messages
+above). ...` and `Starting the installed version instead...`; `stopped`.
+
+**(b) The installed version is broken.** The launcher must not start it, and must say the books are safe:
+
+```powershell
+$TOOLS = uv tool dir
+Rename-Item "$TOOLS\tradurre\Lib\site-packages\fastapi" 'fastapi.off'
+Start-Process -FilePath cmd.exe -WindowStyle Hidden `
+  -ArgumentList "/c `"$RC\logs\launcher-test.bat --no-browser <NUL >$RC\logs\launcher-test-b.log 2>&1`""
+Wait-Tradurre '/v2/books' 120
+Get-Content "$RC\logs\launcher-test-b.log" | Select-String 'Could not update|Tradurre could not be updated|Your books are safe'
+Rename-Item "$TOOLS\tradurre\Lib\site-packages\fastapi.off" 'fastapi'
+tradurre.exe --help > $null; "help exit $LASTEXITCODE"
+Stop-Tradurre
+```
+
+Expected: `False` (nothing starts); `Could not update Tradurre ...`, `Tradurre could not be updated, and the version
+installed before no longer` and `works. Your books are safe in ...`; `help exit 0` after the rename back;
+`stopped`. **Make sure the rename back happens** even if a check fails: step 8 needs a working uv environment to
+remove.
+
+## 8. Restore the developer's setup (always)
 
 Keep the candidate's data for the developer to inspect, and put the original data back:
 
@@ -246,7 +339,15 @@ if (Test-Path "$env:USERPROFILE\.tradurre.before-rc") { Rename-Item "$env:USERPR
 Put back what step 1 found:
 
 - **Not installed:** `uv tool uninstall tradurre`. Then `Get-Command tradurre.exe -ErrorAction SilentlyContinue`
-  prints nothing.
+  prints nothing. If the uninstall fails with `failed to remove directory` and os error 32, delete uv's folder
+  for it and the commands it left, as the last run had to:
+
+  ```powershell
+  Remove-Item -Recurse -Force "$(uv tool dir)\tradurre"
+  Get-ChildItem "$env:USERPROFILE\.local\bin\tradurre*.exe" | Remove-Item
+  ```
+
+  Delete only `tradurre*.exe` files that step 1 didn't find: in this case it found none.
 - **Installed, empty `[]`** (v0.1.0): run step 2's `uv tool install` line again. Then `tradurre.exe --version`
   prints nothing, as before.
 - **`tradurre X`:** check first that the release exists:
@@ -262,7 +363,7 @@ Put back what step 1 found:
 Expected: the output matches what step 1 recorded, and `%USERPROFILE%\.tradurre` is the developer's data again.
 Say in the results which case applied.
 
-## 7. By hand, for the developer
+## 9. By hand, for the developer
 
 On the **Italian keyboard layout**: run the candidate once more. It runs without being installed, on a database of
 its own in `C:\tradurre-rc\by-hand\`, so it changes neither your installed Tradurre nor your data, and there is

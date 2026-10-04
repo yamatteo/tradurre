@@ -657,7 +657,7 @@ check is the next Windows run, so keep every new line simple and commented, in t
 - The header comment mentions the runtime and the retry.
 
 #### Checklist fixes and candidate rc2
-Status: todo
+Status: done
 **Done when:** as for "Release candidate wheel" above, with `0.2.0rc2`: the folder's wheel installed into
 scratch tool folders answers `tradurre 0.2.0rc2`, the folder's `smoke.py` passes against it, the browser tab of
 the built SPA reads "Tradurre"; `uv run pytest` passes.
@@ -678,7 +678,17 @@ the built SPA reads "Tradurre"; `uv run pytest` passes.
     `tradurre*.exe` left in `%USERPROFILE%\.local\bin` that step 1 didn't find.
   - A new step between 5 and 6, **a pdf import through the API** (`curl.exe -F` with `easy.source.docx` +
     `easy.target.pdf`) → 201, 28 beads, then delete it: the runtime check without a browser.
+  - Another new step after it, **the launcher's failure paths**, with Tradurre stopped and a copy of the launcher
+    (`$RC\logs\launcher-test.bat`, made in PowerShell with `-replace` on `VERSION=…` → `VERSION=0.2.0rc99` and
+    the `WHEEL_URL` → `file:///C:/tradurre-rc/missing.whl`, saved with `-Encoding ASCII`, CRLF kept): (a) run it
+    `--no-browser` hidden as in step 3 → the log shows "Could not update Tradurre" and "Starting the installed
+    version instead" and the app answers (an offline-like failure deletes nothing); stop it. (b) rename uv's
+    `tradurre\Lib\site-packages\fastapi` folder (`uv tool dir`) to `fastapi.off`, run the copy again → the log shows
+    "Tradurre could not be updated" and "Your books are safe" (each on one line of the launcher's output) and nothing answers on 8000; rename it back, and `tradurre.exe
+    --help` exits 0 again. Record both logs' relevant lines.
 - `version = "0.2.0rc2"`, `uv lock`, build, `uv build --wheel`, `uv run python scripts/make_rc.py`.
+
+Report: 2026-10-05 — tab title "Tradurre"; checklist: Windows 10 or 11, runtime check in step 1, 2 executables, `Retrying` grep, venv fallback for playwright, new step 6 (PDF import via API) and step 7 (launcher failure paths), uninstall fallback in step 8, the manual keys now step 9; 0.2.0rc2 built and assembled (launcher CRLF 175/175); the folder's wheel in scratch tool folders answers `tradurre 0.2.0rc2`, serves `<title>Tradurre</title>`, the folder's smoke.py passes 11/11; pytest 387 passed.
 
 #### Second Windows run, then v0.2.0
 Not ready. The developer runs the rc2 folder's checklist (now on Windows 10, the machine without the runtime: the
