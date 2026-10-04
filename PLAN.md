@@ -42,9 +42,18 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
   import through the form too. Since "Length aligner on import" (2026-10-04) the import aligns with
   `services/align.py` (method `length`): reference PDFs 4.8 s, 1256 beads, 12 one-sided; gold alignment F1 0.994.
   The v0.1 `aligner.py` now serves only the old `pairs` API (Stage 7 removes both).
+  Since "Import warnings and run metadata" every import records a run (counts, timings, unprefixed warnings),
+  shown under "Import log" in the book view; segmentation and alignment run outside the write transaction.
+- **Re-planned with the user (2026-10-04), SPEC changed accordingly:** review is one mode, problem-first: jump to
+  the next likely problem, correct, mark one bead, a selected run, or everything up to here as reviewed. The
+  timed scroll "skim review" is dropped. The Colab aligner is **parked** (SPEC §3.2, §5): the baseline scores F1
+  0.994; it returns only if a gold book scores below 0.95. A typical book is 1,000–5,000 sentences a side, with
+  performance targets at 5,000 beads. Order now: Stage 3's last task → Stage 4 → Stage 6 → Stage 7 (v0.2). Then
+  the translator reviews *Contrefeu* in v0.2 for a true gold, and maybe a second book, to score the aligner
+  again. The current gold was made by the user (the developer), not the translator.
 - Licensed AGPL-3.0-only (`LICENSE`).
 - Python 3.14 only (`.python-version`, `requires-python`, launcher). Stage 0 is complete.
-- `uv run pytest`: 375 passed (PyMuPDF is a core dependency), also on a fresh clone (tests read only committed
+- `uv run pytest`: 378 passed (PyMuPDF is a core dependency), also on a fresh clone (tests read only committed
   synthetic fixtures; `-m library` tests run only where `library/contrefeu.*.pdf` exists, and assert counts only).
 - PDF extraction (`extract.py`) works on the reference book (page numbers, chapter numbers, two-up spreads), and
   `POST /api/v2/books` accepts PDFs (extraction in a worker thread; an unreadable PDF is a 400).
@@ -229,29 +238,79 @@ import in the app"; test PDFs embed the font to keep U+00AD.
   assertions or messages (the book is copyrighted). Report the actual numbers.
 
 #### Front and back matter
-Not ready: after "Import warnings and run metadata"; scored by the exclusion F1 of "Gold v2" (baseline 0.592: P
-1.000, R 0.421).
-Decided (user, 2026-10-04, replacing the same day's "align first, then exclude"): **exclude first, then align.**
-Reason (Pauli's measurement, counts only): alignment is weak evidence. Of the 29 source segments the gold excludes
-but the import includes, the length aligner leaves only 6 one-sided; 15 sit in 2:1 beads and 8 are paired 1:1
-with the other edition's front matter. And front/back matter is ~1% of the reference book, so it hardly moves
-alignment (F1 0.994 with it in).
-Design to plan from:
-- Per edition, in `build_book` before alignment (or in extraction, if the features live there): a
-  **conservative** rule, no learned classifier (one gold book would only be memorized). It considers only runs at
-  the very start (before the first chapter heading/number) and the very end (after the last body paragraph) of an
-  edition, and marks a block there `front_matter`/`back_matter` (kinds the schema already has, excluded) when it is
-  short or carries publishing markers (ISBN, ©, "Achevé d'imprimer", "Finito di stampare", "Traduit de",
-  "Titolo originale", "Table", "Indice", …). The thresholds come from the reference book's measured blocks.
-- Bias: leave junk in rather than hide text. A stray title page is obvious at the top of the review; a wrongly
-  excluded epigraph, dedication or preface is hidden (SPEC §2: a one-sided preface that *is* text stays). The
-  rule's precision matters more than its recall; the `Report:` gives both.
-- `x`/Include still override it; nothing is deleted.
-- docx/txt editions have no pages: the rule must work from block order and kind alone there, or leave them
-  untouched (decide when planning, with a docx test).
-Its manual complement, agreed (user, 2026-10-04) and in SPEC §3.3: range exclude/include, planned in Stage 4.
-Earlier measurements (after "PDF blocks", counts only): FR ~25 short blocks on logical pages 3–6 before chapter 1
-and ~6 on the last page; IT ~9 on pages 3–5 and ~7 on the last page.
+Status: done
+**Done when:** `uv run pytest` passes with the new `tests/test_matter.py`; `uv run pytest -m library` passes on
+this machine with the new library test; `npm run test:e2e` passes; `uv run python scripts/gold_score.py` prints
+exclusion precision **1.000** and recall **≥ 0.90**, and alignment F1 **≥ 0.994**. The `Report:` gives the full
+score output except the missed-run texts. (Pauli's probe of exactly this rule, 2026-10-04: exclusion P 1.000 R 0.902
+F1 0.948, was 0.592; alignment P 0.992 R 0.998 F1 0.995; 1232 predicted beads, shapes 1:1 1212, 1:2 16, 2:1 2, 0:1 2.)
+Report: 2026-10-04 — `services/matter.py` (`MARKERS`, `mark_matter`), applied by `extract` to every format; `tests/test_matter.py` 11 tests, library test FR 22/6, IT 7/8 front/back blocks; pytest 391 passed, `-m library` 10 passed, e2e 29 passed. gold_score: extraction 3.6 s, build 1.5 s; beads 1222 gold, 1232 predicted; shapes 1:1 1212, 1:2 16, 2:1 2, 0:1 2; alignment P 0.992 R 0.998 F1 0.995 (boundaries 1221 gold, 1229 predicted); exclusion P 1.000 R 0.902 F1 0.948; excluded chars source 1134 gold / 1127 predicted, target 1979 / 1681. Import stats: 9 low-confidence beads (was 25), 2 one-sided (was 12).
+
+Decided (user, 2026-10-04): **exclude first, then align**, with a conservative rule tuned to the data we have, no
+learned classifier. Reason (counts only): alignment is weak evidence. Of the 29 source segments the gold excludes
+but the import includes, the length aligner leaves only 6 one-sided; 15 sit in 2:1 beads and 8 are paired 1:1 with
+the other edition's front matter. Bias: leave junk in rather than hide text. A stray title page is obvious at the
+top of the review. A wrongly excluded epigraph, dedication or last paragraph is hidden. Precision matters more than
+recall. `x`/Include and range include (Stage 4) still override it, and nothing is deleted.
+
+Measured (Pauli, 2026-10-04, reference book against the gold; features and counts only):
+- The gold excludes exactly two runs per edition: everything before chapter 1 except one title heading, and a tail
+  after the last body paragraph. Nothing in between.
+- Front matter: FR blocks 0–26 on logical pages 3–6, IT blocks 0–7 on pages 3–4 (IT's p.5 title heading is kept
+  by the gold). Paragraphs there are 1–17 words, one of 56 words with a publishing marker; the first chapter
+  number is on p.7 on both sides.
+- Back matter: FR 6 short paragraphs on p.128, IT one note-like run on p.181 (a 1-word heading, 4 and 55 words)
+  and 8 short paragraphs plus a footnote on p.184. **Both books' last body paragraph is short (34 and 32 words),
+  and FR's sits on the page right before the colophon (p.127, which has no page number)**, so "short blocks at the
+  end" or "pages without page numbers" would hide the novel's last paragraph. A publishing marker is what tells
+  them apart.
+- Markers found, front/back/body counts: only publishing terms occur in the front/back runs (©, ISBN, Copyright,
+  Dépôt légal, Imprimé, Du même auteur, www., Éditions, Editore, Titolo originale, Traduzione di/dal, Finito di
+  stampare); none of them occurs in the body. Generic words do: "roman" (9/11 in the body), "Paris", "Table".
+
+The rule, in a new module `tradurre/services/matter.py`:
+- `MARKERS`: case-sensitive substrings `"ISBN"`, `"©"`, `"Copyright"`, `"Dépôt légal"`, `"Achevé d"`, `"Imprimé"`,
+  `"Du même auteur"`, `"Dello stesso autore"`, `"Titre original"`, `"Titolo originale"`, `"Traduit de"`,
+  `"Traduzione di"`, `"Traduzione dal"`, `"Finito di stampare"`, `"Tous droits"`, `"Tutti i diritti"`, `"www."`,
+  `"Éditions"`, `"Edizioni"`, `"Editore"`. A block is **marked** if its text contains one (any kind, excluded
+  kinds included).
+- A **long paragraph** is a `paragraph` block of at least 60 whitespace-separated words (`_LONG = 60`). A **chapter
+  number** is a `heading` whose text matches `extract._CHAPTER_NUMBER` (import it; don't copy the regex).
+- `mark_matter(blocks: list[ExtractedBlock]) -> list[ExtractedBlock]`: a new list (`dataclasses.replace`, the input
+  is not mutated) in which some `paragraph` blocks become `front_matter` or `back_matter`. **Only `paragraph`
+  blocks change kind.** Headings stay as they are: the book's title stays visible and aligns title to title.
+  - Front: `B` = index of the first block that is a chapter number or a long paragraph; none → no front rule. `M` =
+    the last index before `B` of a marked block; none → no front rule. Region: indices `0..M`, plus, when
+    `blocks[M].page` is not `None`, the blocks between `M` and `B` on the same page as `M`. Its paragraphs become
+    `front_matter`.
+  - Back: `E` = index of the last long paragraph; none → no back rule. `F` = the first index after `E` of a marked
+    block; none → no back rule. Region: indices `F..end`, plus, when `blocks[F].page` is not `None`, the blocks
+    between `E` and `F` on the same page as `F`. Its paragraphs become `back_matter`.
+  - No marker, no exclusion: a book whose front matter carries none is left as it is (the translator range-excludes
+    it).
+- `tradurre/services/extract.py`: `extract` applies `mark_matter` to the result of every format (txt, docx and
+  pdf: block order alone works without pages), keeping the warnings. `EXCLUDED_KINDS` already holds both kinds,
+  so the build excludes them and the import stats count them with no other change.
+- Accepted misses (both measured): FR's 1-word heading on p.5 (headings are never re-kinded) and IT's p.181 run
+  (a page without a marker; it may be a note, which is text; the translator range-excludes it if not).
+- `tests/test_matter.py` (synthetic `ExtractedBlock`s, no book text):
+  - a front run of short paragraphs with a marker on its last page, then a chapter number → those paragraphs are
+    `front_matter`, a heading among them stays `heading`;
+  - the same without any marker → nothing changes;
+  - a short paragraph after `M` on `M`'s page is front matter; one on a later page before `B` is not;
+  - a long paragraph as the first body block when there is no chapter number → `B` is that paragraph;
+  - a short last body paragraph on the page before a marked colophon page stays `paragraph`, while the colophon
+    page's paragraphs (including an unmarked one before the marker) become `back_matter`;
+  - a marker inside the body (between the first and last long paragraph) changes nothing;
+  - `page=None` blocks (docx-like): regions by index only;
+  - an empty list and an all-short list without markers → unchanged;
+  - `extract` on a small docx built in the test with a marked first paragraph followed by a long one → first
+    block `front_matter`.
+- `tests/test_library.py`: per side, the counts of `front_matter`/`back_matter` blocks after `extract` (probe: FR
+  22/6, IT 7/8); assert each is at least 1, report the actual numbers. Counts only.
+- Don't change the aligner, the segmenter, the API, the frontend, or the existing extraction tests (none of their
+  fixtures carries a marker; if one fails, stop and report).
+- Then re-run `gold_score.py` (no re-export of the gold needed).
 
 Decided (user, 2026-10-03): sources are mixed and unknown per book (PDF, sometimes the translator's own .docx for
 the Italian side), so both paths stay first-class: the PDF pipeline is not the only road, and docx import keeps
@@ -494,8 +553,8 @@ by a closing `»`, a dialogue dash, an opening `«`, and splits after "M." or "S
 ### Baseline local aligner
 SPEC §3.1.4: a baseline alignment runs locally (no GPU, seconds per book), producing beads with real confidence.
 Decided (user, 2026-10-03): this work is **capped**: one anchor + length aligner, a target alignment F1 on the
-gold agreed with the user, no further tuning rounds. After the first real book has gone through import and
-review, /pauli asks again whether Colab (Stage 5) should come before any more local-aligner work.
+gold agreed with the user, no further tuning rounds. Asked again after the first book (user, 2026-10-04): no
+Colab, no more aligner work unless a gold book scores below 0.95.
 
 Baseline (Gold v2 report, 2026-10-04, interim anchor aligner): alignment F1 **0.870** (P 0.840, R 0.903),
 1353 predicted beads vs 1222 gold. Measured by Pauli (counts only): segmentation is identical in gold and import
@@ -520,7 +579,7 @@ Known weakness (Pauli, synthetic probe, not a task yet): the length ratio is tak
 material included, so a large one-sided run skews it. 600 sentences against the same 600 plus N other sentences
 at the end: N = 10 → 598/600 pairs right, N = 30 → 591, N = 60 → 523 (the extra text gets smeared over the book
 as 1:2 beads). Real text has anchors that resist this, and excluding front/back matter before alignment would
-remove the main source; revisit with "Front and back matter", or if a real book shows it.
+remove the main source; "Front and back matter" now does that for marked front/back matter. Revisit if a real book shows it.
 
 #### Length aligner
 Status: done
@@ -732,8 +791,8 @@ text unchanged and is recorded as a bead-boundary move; any other paste is a tex
 undoable). SPEC §3.3 gets a line for it when this stage is planned (wording to agree with the user then).
 
 The correction screen of Stage 2 grows into the main screen of SPEC §3.3: virtualized bead list, confidence
-and unmatched highlighting, next-problem navigation, a toggle that highlights beads holding more than one segment
-on either side (requested by the user, 2026-10-04; SPEC §3.3 "On request, beads holding more than one segment…", agreed), skim-review pass, cut/copy/paste between rows, re-align
+and unmatched highlighting, next-problem navigation (the main review workflow), a toggle that highlights beads holding more than one segment
+on either side (requested by the user, 2026-10-04; SPEC §3.3 "On request, beads holding more than one segment…", agreed), marking a selected run of beads reviewed, cut/copy/paste between rows, re-align
 range, incremental updates instead of whole-book refetch, and showing a segment's original extracted text with
 "revert to original" (SPEC §2: "the translator can always compare or revert"; `original_text` is stored but not
 yet in the API). Plain text editing; TipTap is not used here.
@@ -760,6 +819,8 @@ reviewed.
 ---
 
 ## Stage 5 — Colab round trip
+**Parked (user, 2026-10-04; SPEC §3.2, §5).** Skipped: after Stage 4 comes Stage 6. It returns only if a gold book
+scores alignment F1 < 0.95. The notes below are kept for that case.
 
 Decided (user, 2026-10-03): the Colab alignment is meant to run **right after import**, before review. The
 bundle records a fingerprint of the project's text layer (segment ids and texts, block exclusion); loading an

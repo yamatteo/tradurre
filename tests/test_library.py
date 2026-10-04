@@ -58,6 +58,14 @@ def test_same_number_of_chapter_numbers_on_both_sides(both):
     assert counts["fr"] == counts["it"], f"number-only headings: {counts}"
 
 
+def test_front_and_back_matter_are_found(side):
+    lang, blocks = side
+    front = sum(b.kind == "front_matter" for b in blocks)
+    back = sum(b.kind == "back_matter" for b in blocks)
+    print(f"\n{lang}: {front} front_matter, {back} back_matter blocks")
+    assert front >= 1 and back >= 1, f"{lang}: {front} front_matter, {back} back_matter"
+
+
 def test_import_through_the_api(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
 

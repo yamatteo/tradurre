@@ -271,12 +271,17 @@ def _extract_pdf(content: bytes) -> Extraction:
 
 
 def extract(filename: str, content: bytes) -> Extraction:
-    """Extract the blocks of a .txt, .docx or .pdf file, in reading order."""
+    """Extract the blocks of a .txt, .docx or .pdf file, in reading order, with marked front and back matter
+    re-kinded (`matter.mark_matter`)."""
+    from tradurre.services.matter import mark_matter  # matter imports this module
+
     name = (filename or "").lower()
     if name.endswith(".txt"):
-        return _extract_txt(content)
-    if name.endswith(".docx"):
-        return _extract_docx(content)
-    if name.endswith(".pdf"):
-        return _extract_pdf(content)
-    raise ValueError(f"Unsupported file type: {filename!r} (expected .txt, .docx or .pdf)")
+        extraction = _extract_txt(content)
+    elif name.endswith(".docx"):
+        extraction = _extract_docx(content)
+    elif name.endswith(".pdf"):
+        extraction = _extract_pdf(content)
+    else:
+        raise ValueError(f"Unsupported file type: {filename!r} (expected .txt, .docx or .pdf)")
+    return Extraction(mark_matter(extraction.blocks), extraction.warnings)

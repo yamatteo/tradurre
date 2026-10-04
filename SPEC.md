@@ -29,7 +29,7 @@ One translator, non-technical, working on Windows. Single user, single machine. 
 
 ### Scale
 
-Dozens of books, one language pair (French → Italian). A book is roughly 3,000–10,000 sentences per side.
+Dozens of books, one language pair (French → Italian). A typical book is roughly 1,000–5,000 sentences per side.
 Language codes are stored per project, but nothing is tuned for pairs other than FR→IT.
 
 ### Non-goals
@@ -104,43 +104,29 @@ silently destroy text.
 5. Extraction problems the tool cannot fix are reported as **warnings attached to the project** and shown in the
    review view, never only in a log file.
 
-### 3.2 High-quality alignment (Colab)
+### 3.2 High-quality alignment (parked)
 
-The best alignment needs a GPU (sentence embeddings + an LLM judge). That runs on Colab:
-
-1. From the app, the translator exports a **project bundle** (the extracted, possibly already corrected text
-   layer of both editions).
-2. A notebook runs the heavy aligner on the bundle and produces an **alignment file**: beads over the bundle's
-   segments, with confidence and method.
-3. The translator loads the alignment file back into the project. It replaces the beads of the regions not yet
-   reviewed; reviewed beads are kept. Text is never changed by this round trip.
-
-The round trip is meant to run right after import, before review. Loading is refused if the project's text has
-changed since the bundle was exported; the translator then exports a new bundle.
-
-The heavy aligner may also be run directly on the two original files (as a convenience), producing a bundle plus
-alignment in one go.
+A GPU aligner (sentence embeddings + an LLM judge, run on Colab through a project bundle) is **parked**: the local
+baseline already aligns the reference book at F1 0.994 against the translator's own alignment. It comes back
+(see §5) only if a gold book scores below **0.95**.
 
 ### 3.3 Review
 
-The translator skims **the whole book**. The review view is optimized for steady reading and quick corrections:
+The translator reviews **the whole book**, guided by the tool: they jump from one likely problem to the next,
+correct it, and mark what they have checked. The review view is optimized for quick navigation and quick
+corrections:
 
 - One continuous, scrollable list of beads, source left, target right, paragraph and heading structure visible.
-  Performance stays smooth on a 10,000-bead book.
+  Performance stays smooth on a 5,000-bead book.
 - Low-confidence beads and unmatched (1:0, 0:1) beads stand out visually; there are shortcuts to jump to the next
   one.
 - On request, beads holding more than one segment on either side are highlighted too, so many-to-one beads and
   false sentence splits are easy to spot.
-- **Reviewed marks.** Each bead is reviewed or not, and the mark can be set or cleared on any single bead, and
-  every bead from the top of the book to the current one can be marked reviewed at once. Beads
+- **Reviewed marks.** Each bead is reviewed or not, and the mark can be set or cleared on any single bead or on a
+  selected run of beads, and every bead from the top of the book to the current one can be marked reviewed at once. Beads
   produced by an aligner start unreviewed; a bead produced by a correction inherits the mark (a merge is reviewed
   only if all merged beads were). Progress shows the share of beads reviewed, with a shortcut to the next unreviewed
   bead.
-- **Skim review.** A pass the translator starts deliberately, typically once after import: starting from the first
-  unreviewed bead, they read the book and fix what's wrong as they go. A bead becomes reviewed when it leaves
-  through the top edge during ordinary downward scrolling after being fully on screen for about a second. Jumps,
-  scrollbar drags and scrolling up mark nothing. The pass ends when the translator stops it or at the end of the
-  book. One undo removes the marks made since the last correction.
 - Keyboard-first corrections on the current bead:
   - move the first/last segment of a side to the previous/next bead;
   - merge with the next bead; split a bead at a chosen segment;
@@ -168,21 +154,20 @@ The corpus is searchable across all projects, from a global search page and from
 
 - **Corpus export** per project or for the whole library: TMX and TSV (one bead per row).
 - **Edition export**: the (corrected) text of one side as .txt or .docx, keeping paragraph structure.
-- **Project bundle** export/import (see 3.2), which also works as a full backup of a project.
+- **Project bundle** export/import: the text layer and alignment of one project, as a full backup.
 
 ---
 
 ## 4. Non-functional requirements
 
-- **Python 3.14** everywhere, including Colab, where the notebook installs it with uv rather than using Colab's
-  system Python.
-- **Local-first.** The app runs on the translator's laptop with no network access needed (except for the
-  optional Colab step). Data lives in a single SQLite file under `~/.tradurre/`; copying that file is a backup.
+- **Python 3.14** everywhere, including Colab if the parked aligner (§5) is ever built (the notebook installs it
+  with uv rather than using Colab's system Python).
+- **Local-first.** The app runs on the translator's laptop with no network access needed. Data lives in a single SQLite file under `~/.tradurre/`; copying that file is a backup.
 - **Easy install and upgrade on Windows** through the self-installing launcher; upgrades never lose data.
   Schema changes migrate the existing database automatically.
 - **Never lose work.** Every edit is saved immediately (no "save" button) and is transactional: a failed request
   leaves the data as it was. Concurrent requests from the UI cannot corrupt the data.
-- **Responsive.** Opening a 10,000-bead book and scrolling through it is smooth; a single correction is reflected
+- **Responsive.** Opening a 5,000-bead book and scrolling through it is smooth; a single correction is reflected
   in well under a second; a search across dozens of books returns in under a second.
 - **Debuggable.** Import and alignment runs record what they did (counts, timings, warnings) in the project, so a
   bad result can be diagnosed from the project itself.
@@ -197,3 +182,6 @@ The corpus is searchable across all projects, from a global search page and from
   formatting (italics, emphasis) carried through import and export.
 - **Inline formatting** in segments, preserved from .docx/PDF and exported to .docx.
 - **Translating from scratch** with the corpus as translation memory.
+- **High-quality alignment (Colab)**, parked (§3.2): the translator exports a project bundle; a notebook runs the
+  GPU aligner on it and produces an alignment file (beads over the bundle's segments, with confidence and method);
+  loading it replaces only unreviewed beads, never text, and is refused if the text changed since the export.
