@@ -88,7 +88,7 @@ def test_round_trip(conn):
     assert book_id != "p1"
     assert _normal(export_bundle(conn, book_id)) == _normal(data)
     # Restored next to the original: the title says so.
-    today = datetime.now(timezone.utc).date().isoformat()
+    today = datetime.now().date().isoformat()
     title, created_at, updated_at = conn.execute(
         "SELECT title, created_at, updated_at FROM projects WHERE id = ?", (book_id,)
     ).fetchone()
@@ -98,6 +98,24 @@ def test_round_trip(conn):
     assert updated_at > "2026-10-02"
     assert check_project(conn, book_id) == []
     assert {hit["project_id"] for hit in search_beads(conn, "marchait")} == {"p1", book_id}
+
+
+class _MidnightInItaly(datetime):
+    """00:30 on 5 October in local time, still 4 October in UTC."""
+
+    @classmethod
+    def now(cls, tz=None):
+        if tz is None:
+            return datetime(2026, 10, 5, 0, 30)
+        return datetime(2026, 10, 4, 22, 30, tzinfo=timezone.utc).astimezone(tz)
+
+
+def test_restored_title_has_the_local_date(conn, monkeypatch):
+    data = export_bundle(conn, "p1")
+    monkeypatch.setattr("tradurre.services.bundle.datetime", _MidnightInItaly)
+    book_id = import_bundle(conn, data)
+    title = conn.execute("SELECT title FROM projects WHERE id = ?", (book_id,)).fetchone()[0]
+    assert title == "Livre (restored 2026-10-05)"
 
 
 def test_contents(conn):

@@ -128,7 +128,8 @@ test('More → Project bundle downloads a backup; Restore a bundle opens it as a
   await (await chooser).setFiles(file)
   await expect(page).toHaveURL(/\/book\/[0-9a-f-]+$/)
   expect(page.url()).not.toContain(id)  // a new book, not the original
-  const today = new Date().toISOString().slice(0, 10)
+  const now = new Date()
+  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
   await expect(page.getByTestId('book-title')).toHaveText(`Backup (restored ${today})`)
   await expect(rows).toHaveCount(count)
 

@@ -133,7 +133,7 @@ def import_bundle(conn: sqlite3.Connection, data: bytes) -> str:
                 "AND EXISTS (SELECT 1 FROM documents d WHERE d.project_id = p.id)",
                 (title,),
             ).fetchone():
-                title = f"{title} (restored {datetime.now(timezone.utc).date().isoformat()})"
+                title = f"{title} (restored {datetime.now().date().isoformat()})"
             conn.execute(
                 "INSERT INTO projects (id, title, source_lang, target_lang, created_at, updated_at) "
                 "VALUES (?, ?, ?, ?, ?, ?)",

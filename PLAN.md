@@ -36,7 +36,7 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
   Restyled to design variant A; smooth at 5,000 beads. Stages 4 and 6 done (search at `/search` and from the
   book; More → Export: edition .txt/.docx and the project bundle; "Restore a bundle" on the library page).
   Stage 7: search grouped by book, the library order, database snapshots (local-time names) and the v1
-  retirement (code and docs) done; next the release (fixtures done): a browser smoke script, a Windows
+  retirement (code and docs) done; next the release (fixtures and smoke script done): restored-book dates, a Windows
   checklist, a candidate wheel, then v0.2.0. On the reference book the problem flags catch
   none of the 15 real errors: review is reading-first; better signals come after v0.2.
 - **Re-planned with the user (2026-10-04), SPEC changed accordingly:** review is one mode, problem-first: jump to
@@ -457,21 +457,97 @@ test:e2e` (that runs the dev servers); it reuses its `data-testid`s.
   `restore-bundle-file`'s `set_input_files`, the delete confirm with a `dialog` handler that accepts.
 - No test framework, no new dependency in `pyproject.toml`. `README.md` "Development": one line on how to run it.
 
+#### Restored books dated in local time
+Status: done
+Report: 2026-10-04 — `bundle.py` dates a restored title with the local date; `test_restored_title_has_the_local_date` (fake clock: 5 Oct local, 4 Oct UTC) failed on the old line and passes; `test_round_trip`, `e2e/book-layout.spec.ts` and `packaging/smoke.py` expect the local date; pytest 386 passed, e2e 71 passed, type-check clean, smoke script passed on a built app with a scratch database.
+**Done when:** the new test fails on the current `bundle.py` (check by restoring the old line) and passes after;
+`uv run pytest` and `npm --prefix frontend run test:e2e` pass; `packaging/smoke.py` passes once more as in the task
+above (built SPA, scratch database, `--channel chromium`).
+
+A restored book is titled "<title> (restored YYYY-MM-DD)" with the **UTC** date (`services/bundle.py:136`): in
+Italy, from midnight to 1:00/2:00, the title says yesterday. Snapshot names are already local time (user decision);
+the title is for the same person, so it follows.
+- `services/bundle.py:136`: `datetime.now().date()` (local). The other `datetime.now(timezone.utc)` uses in the file
+  (`exported_at`, `created_at`/`updated_at` stamps) are machine timestamps and stay UTC.
+- `tests/test_bundle.py`: a test that monkeypatches `tradurre.services.bundle.datetime` with a `datetime` subclass
+  whose `now(tz=None)` returns 2026-10-05 00:30 local when `tz` is None and 2026-10-04 22:30 UTC otherwise, restores
+  next to a same-titled book and expects "(restored 2026-10-05)". `test_round_trip` (`tests/test_bundle.py:91`)
+  computes `today` in UTC: make it `datetime.now().date()`.
+- `frontend/e2e/book-layout.spec.ts:131` and `packaging/smoke.py` (`restore_bundle`): expect the local date (in the
+  e2e, from `getFullYear/getMonth/getDate`; in the script, `datetime.now().date()`), and drop the "dates the copy in
+  UTC" comment.
+
 #### Windows checklist
-Not ready (written after the smoke script). `packaging/WINDOWS-CHECKLIST.md`, for the shell-only agent, every
-step a command and its expected output; no *Contrefeu* text. First **back up** `%USERPROFILE%\.tradurre` (rename it)
-and restore it at the end, whatever happens. Covers: install v0.1.0 from its release launcher, create a v0.1
-project with `curl` on `/api/v1`; run the candidate's launcher (the `.bat` from `packaging/` with `__VERSION__`
-and `__WHEEL_URL__` replaced by the candidate's version and `file:///` wheel path) → it upgrades, starts, the v0.1
-project is gone and a snapshot in `backups` still holds it; fixtures from the repo; `packaging/smoke.py` with
-`msedge` and with `chrome`; restart and check undo history, snapshots (two starts, two files); edition export
-opens in Word/Notepad as text (by file content, not GUI). A final section **for the developer, by hand**: the
-Italian-layout keys of the book screen (letters, Shift+letters, arrows, Enter, Tab, Esc, Ctrl+Z/Y/X/C/V), each
-with what should happen. The agent writes its results to a file the developer brings back.
+Status: todo
+**Done when:** `packaging/WINDOWS-CHECKLIST.md` exists, `grep -ri contrefeu` on it finds nothing, and the
+**Linux rehearsal** below passed and is in the report (commands and outputs, shortened).
+
+`packaging/WINDOWS-CHECKLIST.md` is read and run by a Claude Code agent on the developer's Windows 11 machine, in
+PowerShell, with no GUI: every step is a command (copyable as is) and its expected result. The agent appends to
+`C:\tradurre-rc\RESULTS.md`, per step, `PASS`/`FAIL`, the command's relevant output and anything unexpected; on
+a FAIL it goes on with the next independent step and, whatever happens, runs the restore step last. No *Contrefeu*
+text, nothing from the developer's library in the results (counts only).
+
+Facts it builds on (checked by Pauli, 2026-10-04):
+- The candidate arrives as the folder `C:\tradurre-rc\` (made by "Release candidate wheel"): the wheel; the
+  launcher `start-tradurre.bat` with `VERSION=0.2.0rc1` and `WHEEL_URL=file:///C:/tradurre-rc/<wheel name>`;
+  `smoke.py`; `fixtures\` (`easy.source.docx`, `easy.target.pdf`, `easy.source.txt`, `easy.target.txt`); the
+  checklist itself.
+- v0.1.0 is on GitHub: `https://github.com/yamatteo/tradurre/releases/download/v0.1.0/tradurre-0.1.0-py3-none-any.whl`
+  (extras `pdf`, `requires-python >=3.12`). Its CLI has `--no-browser` and `--port`, **no** `--version` and **no**
+  `TRADURRE_DB` (it always uses `%USERPROFILE%\.tradurre\tradurre.db`). Its API: `POST /api/v1/projects`
+  with JSON `{"title", "source_lang", "target_lang"}` → 201.
+- The launcher (`packaging/start-tradurre.bat`) passes its arguments to `tradurre.exe` (`--no-browser` works),
+  upgrades when `tradurre.exe --version` differs from `VERSION` ("Updating Tradurre from an older version to …"),
+  and runs `pause` on errors: start it with input from NUL so a failure can't hang the agent.
+- `tradurre.exe` runs in the foreground: start it with `Start-Process` (output to a log file) and stop it by the
+  process id of `tradurre.exe` (`Get-Process tradurre`), never by a name pattern that could match the agent's
+  shell. Wait for `http://127.0.0.1:8000/api/v2/books` (v0.2) or `/api/v1/projects` (v0.1) to answer before going
+  on. `curl.exe`, not PowerShell's `curl` alias.
+
+Steps, in this order:
+1. **Prepare and back up.** Edge and Chrome are installed (paths); `uv` present or installed with the official
+   PowerShell one-liner. Record whether `tradurre.exe` exists and its `--version` output. Stop any running
+   Tradurre. Rename `%USERPROFILE%\.tradurre` to `%USERPROFILE%\.tradurre.before-rc` if it exists.
+2. **v0.1.0.** `uv tool install --force --python 3.14 "tradurre[pdf] @ <v0.1.0 wheel URL>"`; start it with
+   `--no-browser`; create the project "Checklist v0.1" (fr→it) → 201; stop it.
+3. **Upgrade through the candidate launcher.** Run `C:\tradurre-rc\start-tradurre.bat --no-browser` (input from
+   NUL, output to a log): the log says it updates to 0.2.0rc1; the app answers; `tradurre.exe --version` →
+   `tradurre 0.2.0rc1`; `GET /api/v2/books` → `[]` (migration 6 dropped the v0.1 project); `backups\` holds one
+   `tradurre-*.db` whose `projects` table (read with `uv run --python 3.14 python -c "import sqlite3…"`) has
+   "Checklist v0.1".
+4. **Browsers.** `uv run --python 3.14 --with playwright python C:\tradurre-rc\smoke.py --channel msedge
+   --fixtures C:\tradurre-rc\fixtures`, then `--channel chrome`: both exit 0; full output into the results.
+5. **API round trip and a restart.** Import the .txt pair with `curl.exe -F` → 201; mark its first bead reviewed
+   (`POST /api/v2/books/{id}/reviewed`); stop and restart (the launcher again: this time **no** "Updating" line);
+   `POST /api/v2/books/{id}/undo` → the bead is unreviewed again (undo survives a restart); `backups\` now holds
+   two snapshots; `GET /api/v2/books/{id}/export/edition` for the target .txt starts with the UTF-8 BOM and
+   contains the last word of `easy.target.txt`, the .docx opens with python-docx (`uv run --with python-docx`)
+   and contains it too (the query parameters: as `api/books.py` defines them); delete the book → 204.
+6. **Restore.** Stop Tradurre. Move `%USERPROFILE%\.tradurre` to `C:\tradurre-rc\rc-data` (kept for the
+   developer to inspect), rename `.tradurre.before-rc` back. Put back what step 1 found: no `tradurre.exe` →
+   `uv tool uninstall tradurre`; otherwise reinstall that version from its release wheel. Final `--version`
+   matches step 1.
+7. **By hand, for the developer** (not the agent): on the Italian layout, in the book screen of a fixture book,
+   each key of `frontend/src/keys.ts` (letters, Shift+letters, arrows, Enter, Tab/Shift+Tab, Esc,
+   Ctrl+Z/Y/X/C/V, Alt+↑/↓, Ctrl+Enter while editing, `h` for the panel) with what should happen, as a table with
+   an empty "OK?" column. Also: the edition .docx opens in Word and the .txt in Notepad with accents right.
+
+**Linux rehearsal** (Braun runs it; what can't run on Linux is said so in the report):
+- Steps 2–3 for real: `HOME` set to a scratch folder (v0.1 has no `TRADURRE_DB`), v0.1.0 run with
+  `uvx --python 3.14 --from "tradurre[pdf] @ <v0.1.0 wheel URL>" tradurre --no-browser --port 8124`, the project
+  created with the checklist's request body; then the current code (`uv run tradurre --no-browser --port 8124`,
+  same `HOME`): `/api/v2/books` is `[]` and the snapshot holds "Checklist v0.1".
+- Step 5's requests, with `curl` (same paths, bodies and expected results as written in the checklist), against
+  the current code.
+- Every path, endpoint and testid in the checklist exists in the code (grep).
 
 #### Release candidate wheel
-Not ready. `version = "0.2.0rc1"`, `npm run build`, `uv build --wheel`, the wheel holds `tradurre/static/index.html`
-and installs (`uv tool install` into a scratch `UV_TOOL_DIR`) with `tradurre --version` → `0.2.0rc1`.
+Not ready (after the checklist). `version = "0.2.0rc1"`, `npm run build`, `uv build --wheel`, the wheel holds
+`tradurre/static/index.html` and installs (`uv tool install` into a scratch `UV_TOOL_DIR`) with `tradurre
+--version` → `0.2.0rc1`. Then the folder `C:\tradurre-rc\` of the checklist, built on Linux as
+`dist/tradurre-rc/` (gitignored, a small committed script): the wheel, the launcher with `__VERSION__` and
+`__WHEEL_URL__` filled in, `smoke.py`, the four fixtures, the checklist. Copied to Windows by the developer.
 
 #### Run on Windows, then v0.2.0
 Not ready. The developer runs the checklist; its results come back into this plan as fixes; then

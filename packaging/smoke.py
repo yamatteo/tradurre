@@ -13,7 +13,7 @@ import argparse
 import re
 import secrets
 import sys
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
 from playwright.sync_api import Page, expect, sync_playwright
@@ -161,8 +161,7 @@ def run(page: Page, url: str, fixtures: Path, created: list[str]) -> None:
             raise Failed("the restore opened the original book")
         created.append(restored)
         state["restored"] = restored
-        # The server dates the copy in UTC (`services/bundle.py`).
-        today = datetime.now(timezone.utc).date().isoformat()
+        today = datetime.now().date().isoformat()
         expect(page.get_by_test_id("book-title")).to_have_text(f"{title} (restored {today})")
         expect(page.get_by_test_id("bead-row")).to_have_count(state["count"])
 
