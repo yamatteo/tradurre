@@ -623,8 +623,11 @@ passes.
   still imports (201).
 
 #### Launcher: the VC++ runtime and a sturdier upgrade
-Status: todo
-**Done when:** `git ls-files --eol packaging/start-tradurre.bat` still says `w/crlf`; the release workflow's
+Status: done
+Report: 2026-10-04 — `start-tradurre.bat`: `:uv_install` (uv output to `%TEMP%\tradurre-install.log`, then shown), delete-and-retry only when the log has `failed to remove directory`, `:install_failed`, `:fail_update` starts the old version only if `tradurre.exe --help` runs, else `:fail_broken`; `:run` checks `msvcp140.dll` and calls `:ensure_vcredist` when `EXTRAS` has `pdf`; header comment; 175/175 CRLF lines, `git ls-files --eol` `w/crlf`; the release workflow's sed and placeholder check pass on a copy; `make_rc.py` builds the folder; not run in cmd (Linux), paths walked in the report; pytest 387 passed.
+**Done when:** `git ls-files --eol packaging/start-tradurre.bat` still says `w/crlf`; the report walks the three
+upgrade paths through the final file (removal failure → retry; offline failure → old install starts; old install
+broken → the new message) and the runtime check's paths (present, installed, declined/failed); the release workflow's
 substitution still works (run its two `sed` expressions from `.github/workflows/release.yml` on a copy and its
 placeholder `grep` finds nothing); `uv run python scripts/make_rc.py` still builds the folder (after a wheel
 build); the report quotes the final `:run`, `:install_tradurre` and new labels. cmd can't run here: the real
@@ -638,13 +641,19 @@ check is the next Windows run, so keep every new line simple and commented, in t
   suggested) and `1638` (a newer one is installed) are success; anything else, or a failed download, prints that PDF
   import won't work until it's installed by hand, with the link, and Tradurre starts anyway (`exit /b 0`). (This
   is the patch the Windows agent dry-ran in `RESULTS.md`; x64 only, which is what uv's Python is.)
-- **Upgrade**: when `uv.exe tool install` fails, find uv's tool folder (`for /f "delims=" %%d in ('uv.exe tool dir
-  2^>nul')`), `rmdir /s /q` its `tradurre` subfolder (uv's environment only; the books are in
-  `%USERPROFILE%\.tradurre`), print that it is retrying, and run the same install once more.
-- **No broken fallback**: if the retry fails too, check `tradurre.exe --version` (errorlevel 0) before
-  `:fail_update`'s "Starting the installed version instead"; if it doesn't run, a new label prints that Tradurre
-  couldn't be installed, that the books are safe in `%USERPROFILE%\.tradurre`, to close any Tradurre window and run
-  the file again (and the uv and Tradurre install links), then `pause` and `exit /b 1`.
+- **Upgrade**: run `uv.exe tool install` with its output redirected to `%TEMP%\tradurre-install.log`, then
+  `type` the log (so the user still sees it). When it fails **and** the log contains `failed to remove directory`
+  (`findstr /c:"failed to remove directory"`: the os error 32 of the Windows run, which leaves the old environment
+  half-deleted, so there is nothing left to keep), find uv's tool folder (`for /f "delims=" %%d in ('uv.exe tool
+  dir 2^>nul')`), `rmdir /s /q` its `tradurre` subfolder (uv's environment only; the books are in
+  `%USERPROFILE%\.tradurre`), print that it is retrying, and run the same install once more (same log handling).
+  Any other failure (offline, a bad download) deletes nothing: the old install is still whole, and the existing
+  fallback to it stays.
+- **No broken fallback**: before `:fail_update`'s "Starting the installed version instead", check that
+  `tradurre.exe --help` runs (errorlevel 0; `--help`, not `--version`, which v0.1.0 lacks; both versions' `__main__` import `tradurre.app`, so
+  `--help` loads FastAPI, which is what crashed); if it doesn't, a new
+  label prints that Tradurre couldn't be installed, that the books are safe in `%USERPROFILE%\.tradurre`, to close
+  any Tradurre window and run the file again (and the uv and Tradurre install links), then `pause` and `exit /b 1`.
 - The header comment mentions the runtime and the retry.
 
 #### Checklist fixes and candidate rc2
