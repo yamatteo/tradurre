@@ -119,3 +119,7 @@ git push origin v0.2.0
 The `Release` workflow builds the frontend, builds the wheel with the frontend inside it, and publishes a
 GitHub Release with the wheel, `start-tradurre.bat` (the launcher with that release's wheel URL filled in), and
 the install command.
+
+A release candidate (a version like `0.2.0rc1`) is not tagged: after `npm --prefix frontend run build` and
+`uv build --wheel`, `uv run python scripts/make_rc.py` puts it together as `dist/tradurre-rc.zip`, to unzip into
+`C:\` on a Windows machine and check with `packaging/WINDOWS-CHECKLIST.md`.

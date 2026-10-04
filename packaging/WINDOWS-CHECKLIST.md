@@ -249,8 +249,11 @@ Put back what step 1 found:
   prints nothing.
 - **Installed, empty `[]`** (v0.1.0): run step 2's `uv tool install` line again. Then `tradurre.exe --version`
   prints nothing, as before.
-- **`tradurre X`:** run the following, replacing `X` with that version. Then `tradurre.exe --version` prints
-  `tradurre X`.
+- **`tradurre X`:** check first that the release exists:
+  `curl.exe -s -o NUL -w '%{http_code}' https://github.com/yamatteo/tradurre/releases/tag/vX`. If it's not `200`,
+  the developer has a development install: don't guess. Record the step-1 output in the results and leave
+  reinstalling to the developer. Otherwise run the following, replacing `X` with that version. Then
+  `tradurre.exe --version` prints `tradurre X`.
 
   ```powershell
   uv tool install --force --python 3.14 "tradurre[pdf] @ https://github.com/yamatteo/tradurre/releases/download/vX/tradurre-X-py3-none-any.whl"
@@ -261,9 +264,19 @@ Say in the results which case applied.
 
 ## 7. By hand, for the developer
 
-On the **Italian keyboard layout**: run the candidate once more, from step 3's install or by double-clicking
-`start-tradurre.bat`. Import `fixtures\easy.source.docx` and `fixtures\easy.target.pdf` from the library page, then
-try each key on the book screen. Mark the last column; restore your setup as in step 6 afterwards.
+On the **Italian keyboard layout**: run the candidate once more. It runs without being installed, on a database of
+its own in `C:\tradurre-rc\by-hand\`, so it changes neither your installed Tradurre nor your data, and there is
+nothing to restore afterwards. In PowerShell, after the preamble at the top:
+
+```powershell
+$env:TRADURRE_DB = "$RC\by-hand\tradurre.db"
+uvx --python 3.14 --from "tradurre[pdf] @ file:///C:/tradurre-rc/$WHEEL" tradurre
+```
+
+It opens the browser; Ctrl+C in PowerShell ends it. Afterwards run `Remove-Item Env:TRADURRE_DB`.
+
+Import `fixtures\easy.source.docx` and `fixtures\easy.target.pdf` from the library page, then try each key on the
+book screen and mark the last column.
 
 | Key | Where | What should happen | OK? |
 |---|---|---|---|

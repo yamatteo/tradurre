@@ -208,6 +208,9 @@ def _wait(page: Page, condition, message: str, timeout_ms: int = 10_000) -> None
 
 
 def main() -> int:
+    # Redirected output on Windows is not UTF-8 by default, and the step names have arrows.
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description="Browser smoke test of an installed Tradurre.")
     parser.add_argument("--url", default="http://127.0.0.1:8000", help="the running app (default %(default)s)")
     parser.add_argument("--channel", choices=["msedge", "chrome", "chromium"], default="chromium",

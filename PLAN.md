@@ -36,8 +36,8 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
   Restyled to design variant A; smooth at 5,000 beads. Stages 4 and 6 done (search at `/search` and from the
   book; More → Export: edition .txt/.docx and the project bundle; "Restore a bundle" on the library page).
   Stage 7: search grouped by book, the library order, database snapshots (local-time names) and the v1
-  retirement (code and docs) done; next the release (fixtures, smoke script, local restore dates done): a Windows
-  checklist, a candidate wheel, then v0.2.0. On the reference book the problem flags catch
+  retirement (code and docs) done; next the release (fixtures, smoke script, local restore dates, the Windows checklist
+  done): the candidate wheel and folder, the Windows run, then v0.2.0. On the reference book the problem flags catch
   none of the 15 real errors: review is reading-first; better signals come after v0.2.
 - **Re-planned with the user (2026-10-04), SPEC changed accordingly:** review is one mode, problem-first: jump to
   the next likely problem, correct, mark one bead, a selected run, or everything up to here as reviewed. The
@@ -544,11 +544,45 @@ Steps, in this order:
 - Every path, endpoint and testid in the checklist exists in the code (grep).
 
 #### Release candidate wheel
-Not ready (after the checklist). `version = "0.2.0rc1"`, `npm run build`, `uv build --wheel`, the wheel holds
-`tradurre/static/index.html` and installs (`uv tool install` into a scratch `UV_TOOL_DIR`) with `tradurre
---version` → `0.2.0rc1`. Then the folder `C:\tradurre-rc\` of the checklist, built on Linux as
-`dist/tradurre-rc/` (gitignored, a small committed script): the wheel, the launcher with `__VERSION__` and
-`__WHEEL_URL__` filled in, `smoke.py`, the four fixtures, the checklist. Copied to Windows by the developer.
+Status: done
+Report: 2026-10-04 — version 0.2.0rc1 (+ `uv lock`); `scripts/make_rc.py` builds `dist/tradurre-rc/` (wheel, launcher with VERSION and `file:///C:/tradurre-rc/tradurre-0.2.0rc1-py3-none-any.whl`, 98/98 CRLF lines, no placeholder; smoke.py, checklist, 4 fixtures) and `dist/tradurre-rc.zip` (folder at its root); checklist step 7 runs the candidate with `uvx` on `C:\tradurre-rc\by-hand\`, step 6 checks the release exists before reinstalling; smoke.py writes UTF-8; README "Releasing" line; the wheel installed with `uv tool install` into scratch tool folders prints `tradurre 0.2.0rc1` and the folder's smoke.py passed against it (output redirected); `dist/` ignored by uv's own `.gitignore`; pytest 386 passed.
+**Done when:** `dist/tradurre-rc/` and `dist/tradurre-rc.zip` exist with exactly the files below; the launcher in
+it has CRLF line endings, `VERSION=0.2.0rc1` and the `file:///C:/tradurre-rc/…` URL, and no `__` placeholder
+left; the folder's wheel, installed as the launcher would (`uv tool install --python 3.14 "tradurre[pdf] @
+file://<absolute path>"`, with `UV_TOOL_DIR`/`UV_TOOL_BIN_DIR` in the scratchpad), answers `tradurre --version` →
+`tradurre 0.2.0rc1`, and `packaging/smoke.py` passes against it (installed `tradurre --no-browser --port 8123`,
+`TRADURRE_DB` in the scratchpad: this is the first run of the SPA from a wheel); `uv run pytest` passes;
+`git status` shows only the intended changes (nothing under `dist/`). Then stop the server and delete the scratch
+tool folders and database (keep `dist/`).
+
+The folder the developer copies to `C:\tradurre-rc\` for `packaging/WINDOWS-CHECKLIST.md`, plus two fixes to the
+checklist from its review.
+- **Checklist fixes** (`packaging/WINDOWS-CHECKLIST.md`):
+  - Step 7 must not touch the developer's installed Tradurre or data (it ran after step 6, through the launcher:
+    the installed tool replaced and their real database migrated). It runs the candidate without installing it, on
+    a database of its own: `$env:TRADURRE_DB = "$RC\by-hand\tradurre.db"` then `uvx --python 3.14 --from
+    "tradurre[pdf] @ file:///C:/tradurre-rc/$WHEEL" tradurre` (opens the browser; Ctrl+C ends it); afterwards
+    `Remove-Item Env:TRADURRE_DB`. Nothing to restore after it; say so instead of "restore your setup".
+  - Step 6, case `tradurre X`: if `https://github.com/yamatteo/tradurre/releases/tag/vX` doesn't exist (a
+    development install), don't guess: record the step-1 output in the results and leave reinstalling to the
+    developer.
+- `packaging/smoke.py`: `sys.stdout.reconfigure(encoding="utf-8")` (and stderr) at the start of `main()`, so its
+  output survives a redirect on Windows; the checklist keeps `PYTHONUTF8=1` (harmless, and covers uv's own Python
+  messages).
+- `pyproject.toml` `version = "0.2.0rc1"`; `uv lock` (the lock records the project version).
+- `npm --prefix frontend run build`, then `uv build --wheel` → `dist/tradurre-0.2.0rc1-py3-none-any.whl` (uv writes
+  a `.gitignore` of `*` into `dist/`; check it's there, so nothing below is ever committed).
+- `scripts/make_rc.py` (committed; stdlib only): reads the version from `pyproject.toml` (`tomllib`); refuses
+  (exit 1, a message) if `dist/tradurre-<version>-py3-none-any.whl` is missing or lacks
+  `tradurre/static/index.html`; rebuilds `dist/tradurre-rc/` from scratch with: the wheel; `start-tradurre.bat`
+  from `packaging/` with `__VERSION__` → the version and `__WHEEL_URL__` → `file:///C:/tradurre-rc/<wheel name>`,
+  replaced on the **bytes** so the CRLF line endings survive (`.gitattributes`: cmd mis-parses LF batch files);
+  `smoke.py` and `WINDOWS-CHECKLIST.md` from `packaging/`; `fixtures/` with the four `tests/fixtures/easy.*`
+  files used by the checklist (`.source.docx`, `.target.pdf`, `.source.txt`, `.target.txt`). Then zips the folder
+  as `dist/tradurre-rc.zip` (the folder itself at the zip's root, so unzipping into `C:\` gives
+  `C:\tradurre-rc\`). Prints the file list.
+- `README.md` "Releasing": one line on the candidate (`make_rc.py` and the checklist). No tag, no GitHub release:
+  the candidate travels by hand.
 
 #### Run on Windows, then v0.2.0
 Not ready. The developer runs the checklist; its results come back into this plan as fixes; then
