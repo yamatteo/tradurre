@@ -274,6 +274,26 @@ Report: 2026-10-04 — `scale.spec.ts`: `until` (`waitForFunction`, `polling: 'r
 count)`; bounds unchanged. 5,000 beads, 5 runs alone, all passed: load 1330–1397, Alt+↓ 155–177 (was ~420), Ctrl+Z
 238–290 (~330), m 149–174 (~200), Ctrl+Z 149–166 (~200), Alt+↓ again 169–188 (~315), Ctrl+Z again 148–176 (~400)
 ms, 0 long tasks; 10,000: 20 ↓ ~300 ms, `r` ~250–310. e2e 62 passed; type-check clean; pytest 414 passed.
+Verified (Pauli, 2026-10-04): Done when holds (commit a57bd9e). Every timed wait is frame-precise; untimed ones stay
+`expect`. Corrections at 5,000 beads are 150–290 ms: a 2× margin, so returning the whole book per correction stays.
+Braun's note holds: `npm run type-check` doesn't cover `e2e/` (no tsconfig includes it), next task. Checked here
+with `tsc --strict --lib es2022,dom,dom.iterable --types node`: all e2e files and `playwright.config.ts` have 0
+errors.
+
+#### Type-check the e2e tests
+Status: done
+**Done when:** `npm run type-check` passes and covers `e2e/*.ts` (shown by temporarily adding `const n: number = 'x'`
+to an e2e file: `type-check` fails; then removed); `npm run test:e2e` passes; `uv run pytest` unchanged.
+
+- New `frontend/tsconfig.e2e.json`, like `tsconfig.node.json`: extends `@tsconfig/node24/tsconfig.json`, `include:
+  ["e2e/**/*.ts"]`, `compilerOptions`: `noEmit: true`, `tsBuildInfoFile: "./node_modules/.tmp/tsconfig.e2e.tsbuildinfo"`,
+  `module: "ESNext"`, `moduleResolution: "Bundler"`, `types: ["node"]`, and `lib` of the base plus `"DOM"`,
+  `"DOM.Iterable"` (the page-side functions use `document`; list the base's entries, `lib` replaces, not merges).
+- `frontend/tsconfig.json`: add `{ "path": "./tsconfig.e2e.json" }` to `references`. Nothing else changes; no spec
+  file changes unless the check reports an error (then fix the type only, no behaviour, and list it in the report).
+Report: 2026-10-04 — new `frontend/tsconfig.e2e.json` (node24 base, Bundler, DOM + DOM.Iterable), referenced from
+`tsconfig.json`; no spec file needed a fix. `const n: number = 'x'` in `scale.spec.ts` → `type-check` fails (TS2322),
+removed → passes; e2e 62 passed; pytest 414 passed.
 
 #### Search page
 Status: todo
