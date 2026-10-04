@@ -313,6 +313,14 @@ export const booksApi = {
 
   includeBlock: (id: string, blockId: number) => booksPost(`/books/${id}/blocks/${blockId}/include`),
 
+  /** Exclude every block of `side` from the start of the edition up to the bead (`to: 'start'`), or from it to the end. */
+  excludeRange: (id: string, beadId: number, side: Side, to: 'start' | 'end') =>
+    booksPost(`/books/${id}/blocks/exclude-range`, { bead_id: beadId, side, to }),
+
+  /** Include the excluded blocks of that range, except running heads, page numbers and footnotes. */
+  includeRange: (id: string, beadId: number, side: Side, to: 'start' | 'end') =>
+    booksPost(`/books/${id}/blocks/include-range`, { bead_id: beadId, side, to }),
+
   editSegment: (id: string, segmentId: number, text: string) =>
     booksPost(`/books/${id}/segments/${segmentId}/edit`, { text }),
 

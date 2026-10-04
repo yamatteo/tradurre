@@ -8,7 +8,7 @@ from tradurre.domain.history import Recorder, record, redo, transaction, undo
 from tradurre.domain.invariants import check_project
 from tradurre.domain.layer import NewBead, NewBlock, append_beads, create_document
 from tradurre.domain.beads import merge_with_next
-from tradurre.domain.blocks import exclude_block, include_block
+from tradurre.domain.blocks import exclude_block, exclude_range, include_block, include_range
 
 
 def snapshot(conn):
@@ -188,3 +188,78 @@ def test_refused(db):
     refused(conn, include_block, i["S1"])
     refused(conn, exclude_block, i["other_block"])
     refused(conn, include_block, i["other_block"])
+
+
+def _excluded(conn, *blocks):
+    return [conn.execute("SELECT excluded FROM blocks WHERE id = ?", (b,)).fetchone()[0] for b in blocks]
+
+
+def test_exclude_to_start_takes_a_straddling_block_whole(db):
+    conn, i = db
+    ops = _op_count(conn)
+    run(conn, exclude_range, i["A"], "source", "start")  # A's s1 is in S1, which also holds B's s2, s3
+    assert _op_count(conn) == ops + 1
+    assert _excluded(conn, i["S1"], i["S2"], i["S3"]) == [1, 1, 0]
+    assert [seg(conn, i[s])[2] for s in ("s1", "s2", "s3")] == [None, None, None]
+    assert bead(conn, i["A"]) == ([], [i["t1"]], "anchor", 0.9, 1)
+    assert bead(conn, i["B"]) == ([], [i["t3"]], "length", 0.7, 1)
+    assert bead(conn, i["C"]) == ([i["s4"]], [i["t4"]], "anchor", 0.8, 0)
+
+
+def test_exclude_to_end(db):
+    conn, i = db
+    run(conn, exclude_range, i["B"], "source", "end")  # from S1 (B's s2) to the end; S2 is already excluded
+    assert _excluded(conn, i["S1"], i["S2"], i["S3"]) == [1, 1, 1]
+    assert bead(conn, i["C"]) == ([], [i["t4"]], "anchor", 0.8, 0)
+
+
+def test_exclude_target_to_end_deletes_emptied_beads(db):
+    conn, i = db
+    run(conn, exclude_range, i["C"], "target", "end")  # T1 is the only target block
+    assert bead(conn, i["X"]) is None
+    assert bead(conn, i["A"]) == ([i["s1"]], [], "anchor", 0.9, 1)
+
+
+def test_include_to_start_skips_layout_kinds(db):
+    conn, i = db
+    with transaction(conn):
+        exclude_block(conn, "p1", i["S1"])
+    conn.execute("UPDATE blocks SET kind = 'front_matter' WHERE id = ?", (i["S1"],))
+    conn.execute("UPDATE blocks SET kind = 'page_number' WHERE id = ?", (i["S2"],))
+    conn.commit()
+    run(conn, include_range, i["C"], "source", "start")  # S1 (front matter) comes back, S2 (page number) doesn't
+    assert _excluded(conn, i["S1"], i["S2"], i["S3"]) == [0, 1, 0]
+    new_bead = seg(conn, i["s1"])[2]
+    assert bead(conn, new_bead) == ([i["s1"], i["s2"], i["s3"]], [], "manual", 0.0, 0)
+    assert seg(conn, i["f1"])[2] is None
+
+
+def test_include_to_end_restores_blocks_in_order(db):
+    conn, i = db
+    conn.execute("UPDATE blocks SET kind = 'paragraph' WHERE id = ?", (i["S2"],))
+    conn.commit()
+    with transaction(conn):
+        exclude_block(conn, "p1", i["S3"])
+    run(conn, include_range, i["B"], "source", "end")  # S2 and S3, each as a new unmatched bead, in order
+    assert _excluded(conn, i["S1"], i["S2"], i["S3"]) == [0, 0, 0]
+    f_bead, s4_bead = seg(conn, i["f1"])[2], seg(conn, i["s4"])[2]
+    assert bead(conn, f_bead) == ([i["f1"]], [], "manual", 0.0, 0)
+    assert bead(conn, s4_bead) == ([i["s4"]], [], "manual", 0.0, 0)
+    assert bead_ords(conn) == [i["A"], i["X"], i["B"], f_bead, s4_bead, i["C"]]
+
+
+def test_range_refused(db):
+    conn, i = db
+    with pytest.raises(DomainError, match="The bead has no source segment"):
+        with transaction(conn):
+            exclude_range(conn, "p1", i["X"], "source", "start")
+    with pytest.raises(DomainError, match="Nothing to include"):
+        with transaction(conn):
+            include_range(conn, "p1", i["A"], "source", "start")
+    with pytest.raises(DomainError, match="Nothing to include"):
+        with transaction(conn):
+            include_range(conn, "p1", i["B"], "source", "end")  # only S2, a footnote, is excluded after B
+    refused(conn, exclude_range, i["X"], "source", "end")
+    refused(conn, include_range, i["C"], "target", "start")
+    other_bead = conn.execute("SELECT id FROM beads WHERE project_id = 'p2'").fetchone()[0]
+    refused(conn, exclude_range, other_bead, "source", "start")

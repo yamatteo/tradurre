@@ -23,6 +23,9 @@ const showMulti = ref(false)
 const importRun = shallowRef<BookRun | null>(null)
 const showImportLog = ref(false)
 const showKeys = ref(false)
+// The "More" menu of the second bar (A1): the rare bulk commands. Changes on clicks only (render rule 1 allows it).
+const showMore = ref(false)
+const moreMenu = ref<HTMLElement | null>(null)
 const busy = ref(false)
 
 const currentBeadId = ref<number | null>(null)
@@ -65,7 +68,7 @@ watch(runRange, (range) => {
   for (const key of Object.keys(inRun)) if (!ids.has(Number(key))) delete inRun[Number(key)]
   for (const id of ids) if (!inRun[id]) inRun[id] = true
 }, { flush: 'sync' })
-provide(selectionKey, { currentRow, currentBeadId, currentSide, currentSegmentId, editingSegmentId, inRun, runBounds })
+provide(selectionKey, { currentRow, currentBeadId, currentSide, currentSegmentId, editingSegmentId, inRun, runBounds, book })
 
 function runBeads(): BookBead[] {
   const range = runRange.value
@@ -367,6 +370,11 @@ function onKey(event: KeyboardEvent) {
     showImportLog.value = false
     return
   }
+  if (event.key === 'Escape' && showMore.value) {
+    event.preventDefault()
+    showMore.value = false
+    return
+  }
   if (event.key === 'Escape' && runRange.value) {
     event.preventDefault()
     clearRun()
@@ -410,8 +418,46 @@ function include(blockId: number) {
   correct((id) => booksApi.includeBlock(id, blockId))
 }
 
+const BULK = [
+  { action: 'exclude', to: 'start', label: 'Exclude from the start up to here', testid: 'exclude-to-start' },
+  { action: 'include', to: 'start', label: 'Include from the start up to here', testid: 'include-to-start' },
+  { action: 'exclude', to: 'end', label: 'Exclude from here to the end', testid: 'exclude-to-end' },
+  { action: 'include', to: 'end', label: 'Include from here to the end', testid: 'include-to-end' },
+] as const
+
+/** A "More" item (SPEC §3.3): exclude or include every block of the current side up to here or from here on. */
+async function bulk(action: 'exclude' | 'include', to: 'start' | 'end') {
+  showMore.value = false
+  const bead = currentBead.value
+  if (!bead || !book.value) return
+  const side = currentSide.value
+  const before = book.value.excluded.length
+  const request = action === 'exclude' ? booksApi.excludeRange : booksApi.includeRange
+  if (await correct((id) => request(id, bead.id, side, to))) {
+    const n = Math.abs(book.value.excluded.length - before)
+    const blocks = `${n} block${n === 1 ? '' : 's'}`
+    say(action === 'exclude' ? `Excluded ${blocks} (Ctrl+Z to undo)` : `Included ${blocks}`)
+  }
+}
+
+function toggleMore() {
+  showMore.value = !showMore.value
+  if (showMore.value) showImportLog.value = false
+}
+
+function toggleImportLog() {
+  showImportLog.value = !showImportLog.value
+  if (showImportLog.value) showMore.value = false
+}
+
+/** A click outside the "More" menu closes it. */
+function onWindowMouseDown(event: MouseEvent) {
+  if (showMore.value && !moreMenu.value?.contains(event.target as Node)) showMore.value = false
+}
+
 onMounted(async () => {
   window.addEventListener('keydown', onKey)
+  window.addEventListener('mousedown', onWindowMouseDown)
   try {
     book.value = await booksApi.getBook(props.id)
     const first = book.value.beads[0]
@@ -429,6 +475,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKey)
+  window.removeEventListener('mousedown', onWindowMouseDown)
   window.clearTimeout(statusTimer)
 })
 </script>
@@ -462,7 +509,7 @@ onBeforeUnmount(() => {
         <div v-if="importRun" class="shrink-0 relative">
           <button type="button" data-testid="import-log" :aria-expanded="showImportLog"
             :title="importRun.warnings.length ? `Import log: ${importRun.warnings.length} warning${importRun.warnings.length === 1 ? '' : 's'}` : 'Import log'"
-            @click="showImportLog = !showImportLog"
+            @click="toggleImportLog"
             class="h-7 px-2 flex items-center gap-1.5 rounded text-ink hover:bg-hover"
             :class="showImportLog ? 'bg-hover' : ''">
             <svg v-if="importRun.warnings.length" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor"
@@ -522,6 +569,24 @@ onBeforeUnmount(() => {
         <BeadActions class="shrink-0" group="review" :book="book" :disabled="busy || editingSegmentId !== null" @correct="runCorrection" />
         <span class="shrink-0 w-px h-5 bg-bar-rule" />
         <BeadActions class="shrink-0" group="corrections" :book="book" :disabled="busy || editingSegmentId !== null" @correct="runCorrection" />
+        <div ref="moreMenu" class="shrink-0 relative">
+          <button type="button" data-testid="more" :aria-expanded="showMore" title="More commands"
+            :disabled="busy || editingSegmentId !== null" @click="toggleMore"
+            class="h-7 px-2 flex items-center gap-1 rounded text-ink hover:bg-hover disabled:opacity-40 disabled:hover:bg-transparent disabled:cursor-not-allowed"
+            :class="showMore ? 'bg-hover' : ''">
+            More
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 3.5L5 6.5 8 3.5" /></svg>
+          </button>
+          <div v-if="showMore" data-testid="more-menu" role="menu"
+            class="absolute left-0 top-full mt-1.5 z-30 w-[310px] py-1.5 bg-white border border-bar-rule rounded-md shadow-lg">
+            <p class="px-3 pb-1 text-[10.5px] uppercase tracking-wider text-faint">Exclude or include in bulk</p>
+            <button v-for="item in BULK" :key="item.testid" type="button" role="menuitem" :data-testid="item.testid"
+              :disabled="!currentBead" @click="bulk(item.action, item.to)"
+              class="w-full h-[30px] px-3 flex items-center text-left text-ink hover:bg-hover disabled:opacity-40">
+              {{ item.label }}
+            </button>
+          </div>
+        </div>
         <span class="flex-1" />
         <button type="button" data-testid="undo" aria-label="Undo" title="Undo (Ctrl+Z)" :disabled="!book.can_undo || busy || editingSegmentId !== null" @click="undo"
           class="shrink-0 w-7 h-7 flex items-center justify-center rounded text-ink hover:bg-hover disabled:opacity-40 disabled:hover:bg-transparent disabled:cursor-not-allowed">

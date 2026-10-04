@@ -11,6 +11,8 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
 - Every leaf carries a status line right under its heading:
   `Status: todo | in progress | done | blocked | dropped`, followed by **Done when:** (the verifiable outcome).
   A done leaf gets a one-line `Report:` (date, what changed, test result) from `/braun`.
+- A test written for a bug fix must fail on the code before the fix: `/braun` checks it (temporarily restoring the
+  old code, then the fix) and says so in the `Report:`. A test that passes either way proves nothing.
 - Stages are done in order. Within a stage, tasks are done top to bottom unless noted.
 - Detail lives where work is imminent: the current stage is broken down to tasks; later stages stay broad until
   `/pauli` refines them.
@@ -39,7 +41,7 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
   gold (the current one was made by the user, the developer), and maybe a second book, to score the aligner again.
 - `uv run pytest`: 388 passed, also on a fresh clone (tests read only committed synthetic fixtures; `-m library`
   tests run only where `library/contrefeu.*.pdf` exists, and assert counts only).
-- `npm run type-check` passes; releases build with `npm run build`. `npm run test:e2e` (39 tests) runs on its own
+- `npm run type-check` passes; releases build with `npm run build`. `npm run test:e2e` (42 tests) runs on its own
   backend (:8001, throwaway `.e2e.db`) and Vite (:5174), never the user's database. Setup per machine: `npx
   playwright install chromium` (on Ubuntu 26.04 with `PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=ubuntu24.04-x64`); tests
   use the full Chromium headless (`channel: 'chromium'`).
@@ -395,6 +397,10 @@ bar, bottom-bar summary, ~150 px left free on the second bar at 1366). Three def
 #### Run and key fixes
 Status: done
 Report: 2026-10-04 — letter keys looked up by Shift, not Caps Lock (`BookView.onKey`); the Reviewed/Unreviewed label follows the run via `runBounds` (`BeadActions`); Shift+mousedown on text cells (not the editor) prevents the native selection (`BeadRow`); 3 new e2e tests in `review.spec.ts`, each failing on the old code (the button test runs Shift+↑ from bead 2 so the current bead is the reviewed one, and the selection test plain-clicks bead 1 first to leave a caret: as worded, both passed on the old code); `press('R')` sends no Shift, no dispatch fallback needed; e2e 42 passed, pytest 388 passed, type-check clean.
+Verified (Pauli, 2026-10-04): Done when holds (commit 1e9f12c). Both test changes accepted: my scenarios were
+non-discriminating; the fail-before check is now a convention (top of this file). Left over: the bottom bar's run
+summary still says "R marks them all reviewed" when all are reviewed and `r` would clear them; fixed in "Range
+exclude/include".
 **Done when:** `npm run type-check` passes; `npm run test:e2e` passes with the three new tests below in
 `frontend/e2e/review.spec.ts`, all earlier tests unchanged; `uv run pytest` unchanged.
 
@@ -422,7 +428,8 @@ Found in review of the task above (Pauli, 2026-10-04):
   nothing new).
 
 ### Range exclude/include
-Status: todo
+Status: done
+Report: 2026-10-04 — `blocks.py` bodies factored into `_exclude`/`_include`, new `exclude_range`/`include_range` (shared `_range_blocks`); `POST /blocks/exclude-range` and `/include-range` with `BookRangeRequest`; `client.ts` `excludeRange`/`includeRange`; "More" menu in the second bar (Esc, click outside, item; toggles against the import log; Esc order panel > import log > More > run); `BookStatus` says "R clears them all." when the run is all reviewed (`book` added to `Selection`; its test fails on the old code); 6 domain tests, 2 API tests, 3 e2e tests; pytest 396 passed, e2e 45 passed (book-layout at 1366 unchanged), type-check clean. "Nothing to exclude" is unreachable (a bead's own block is never excluded), so untested; the open import log covers the More button, so that toggle's test dispatches the click.
 **Done when:** `uv run pytest` passes with the new domain and API tests; `npm run type-check` passes; `npm run
 test:e2e` passes with the new tests in `frontend/e2e/review.spec.ts`.
 
@@ -465,6 +472,12 @@ end". Agreed (user, 2026-10-04): one operation, one undo; range *include* skips 
   excludes the current bead's own block too ("up to here" is inclusive): the source texts of beads 1 and 2 leave
   the list, "Show excluded" shows them as two excluded rows, Ctrl+Z brings both back in one step.
 - Don't change the single-block exclude/include behaviour or keys.
+- Left over from "Run and key fixes": `BookStatus.vue`'s run summary ends "R clears them all." instead of "R marks
+  them all reviewed." when every bead of the run is reviewed (the same rule as the button's `marks` in
+  `BeadActions.vue`: compute it from `runBounds` and a slice of the beads, which `BookStatus` gets by injection: add
+  `book: Readonly<Ref<Book | null>>` to `Selection` in `selection.ts`, provided by `BookView`). Test in
+  `review.spec.ts`: a run of 2 marked with `r`, then the bar says `2 beads selected (1–2). R clears them all.`;
+  it must fail before the change.
 
 ### Original text and revert
 Not ready. SPEC §2: the extracted text is kept "so the translator can always compare or revert"; `original_text`

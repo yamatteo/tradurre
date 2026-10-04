@@ -202,3 +202,58 @@ test('Shift+click selects no page text', async ({ page, request }) => {
   await expect.poll(() => inRun(page)).toEqual(['true', 'true', 'true'])
   expect(await page.evaluate(() => window.getSelection()?.toString() ?? '')).toBe('')
 })
+
+function sourceTexts(page: Page) {
+  return page.getByTestId('bead-row').evaluateAll((els) =>
+    els.map((el) => el.querySelector('[data-cell="source"]')!.textContent!.trim()))
+}
+
+test('Exclude from the start up to here takes the current bead\'s block too, in one undo step', async ({ page, request }) => {
+  const { id } = await importBook(request, 'Range exclude')
+  await open(page, id)
+  await page.keyboard.press('ArrowDown')
+  await page.getByTestId('more').click()
+  await expect(page.getByTestId('more')).toHaveAttribute('aria-expanded', 'true')
+  await page.getByTestId('exclude-to-start').click()
+  await expect(page.getByTestId('more-menu')).toHaveCount(0)
+  await expect.poll(() => sourceTexts(page)).toEqual([
+    'Not in this edition', 'Not in this edition', 'Paul partit.Il ne dit rien.',
+  ])
+  await expect(page.getByTestId('status')).toHaveText('Excluded 2 blocks (Ctrl+Z to undo)')
+  await page.getByTestId('show-excluded').check()
+  await expect(page.getByTestId('excluded-row')).toHaveCount(2)
+  await page.getByTestId('show-excluded').uncheck()
+  await page.keyboard.press('Control+z')
+  await expect.poll(() => sourceTexts(page)).toEqual(['Marie arriva.', 'Il pleuvait.', 'Paul partit.Il ne dit rien.'])
+})
+
+test('the More menu closes with Esc and a click outside, before the run', async ({ page, request }) => {
+  const { id } = await importBook(request, 'More menu')
+  await open(page, id)
+  await page.keyboard.press('Shift+ArrowDown')
+  await page.getByTestId('more').click()
+  await expect(page.getByTestId('more-menu')).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(page.getByTestId('more-menu')).toHaveCount(0)
+  await expect.poll(() => inRun(page)).toEqual(['true', 'true', 'false'])  // Esc closed the menu, not the run
+  await page.getByTestId('more').click()
+  await page.getByTestId('book-title').click()
+  await expect(page.getByTestId('more-menu')).toHaveCount(0)
+  await page.getByTestId('more').click()
+  await page.getByTestId('import-log').click()
+  await expect(page.getByTestId('more-menu')).toHaveCount(0)
+  await expect(page.getByTestId('import-log-panel')).toBeVisible()
+  // The open import log covers the More button, so the click is dispatched to it, not made at its position.
+  await page.getByTestId('more').dispatchEvent('click')
+  await expect(page.getByTestId('import-log-panel')).toHaveCount(0)
+  await expect(page.getByTestId('more-menu')).toBeVisible()
+})
+
+test('the run summary says R clears them when all are reviewed', async ({ page, request }) => {
+  const { id } = await importBook(request, 'Run clears')
+  await open(page, id)
+  await page.keyboard.press('Shift+ArrowDown')
+  await page.keyboard.press('r')
+  await expect.poll(() => reviewed(page)).toEqual(['true', 'true', 'false'])
+  await expect(page.getByTestId('status')).toHaveText('2 beads selected (1–2). R clears them all.')
+})

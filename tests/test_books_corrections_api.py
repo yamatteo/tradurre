@@ -169,6 +169,42 @@ def test_exclude_and_include_block(client, book):
     assert result["excluded"] == []
 
 
+def test_exclude_and_include_range(client, gap):
+    book_id, data = gap
+    b, c = data["beads"][1]["id"], data["beads"][2]["id"]
+    result = _ok(client, book_id, "blocks/exclude-range", {"bead_id": b, "side": "source", "to": "start"})
+    assert _rows(result) == [
+        ([], ["Marie arrivò."]),
+        (["Paul partit."], ["Paul partì."]),
+        (["Il ne dit rien."], ["Non disse niente."]),
+    ]
+    assert len(result["excluded"]) == 2
+    result = _ok(client, book_id, "undo")
+    assert _rows(result) == _rows(data)
+    _ok(client, book_id, "redo")
+    result = _ok(client, book_id, "blocks/include-range", {"bead_id": c, "side": "source", "to": "start"})
+    assert _rows(result) == [
+        (["Marie arriva."], []),
+        (["Il pleuvait."], []),
+        ([], ["Marie arrivò."]),
+        (["Paul partit."], ["Paul partì."]),
+        (["Il ne dit rien."], ["Non disse niente."]),
+    ]
+    assert result["excluded"] == []
+
+
+def test_range_refusals(client, gap):
+    book_id, data = gap
+    b = data["beads"][1]["id"]
+    resp = _post(client, book_id, "blocks/exclude-range", {"bead_id": b, "side": "target", "to": "end"})
+    assert (resp.status_code, resp.json()["detail"]) == (409, "The bead has no target segment")
+    resp = _post(client, book_id, "blocks/include-range", {"bead_id": b, "side": "source", "to": "end"})
+    assert (resp.status_code, resp.json()["detail"]) == (409, "Nothing to include")
+    resp = _post(client, book_id, "blocks/exclude-range", {"bead_id": b, "side": "source", "to": "middle"})
+    assert resp.status_code == 422
+    assert client.get(f"/api/v2/books/{book_id}").json() == data
+
+
 def test_undo_redo_round_trip(client, book):
     book_id, data = book
     seg = _segment(data, "Il pleuvait.")["segment_id"]

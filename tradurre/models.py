@@ -267,6 +267,12 @@ class BookReviewedRequest(BaseModel):
     reviewed: bool
 
 
+class BookRangeRequest(BaseModel):
+    bead_id: int
+    side: Literal["source", "target"]
+    to: Literal["start", "end"]
+
+
 class BookEditRequest(BaseModel):
     text: str
 

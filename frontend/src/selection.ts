@@ -1,5 +1,5 @@
 import type { InjectionKey, Ref } from 'vue'
-import type { Side } from '@/api/client'
+import type { Book, Side } from '@/api/client'
 
 /** The book view's selection, provided by `BookView.vue` to every `BeadRow.vue`. */
 export interface Selection {
@@ -13,6 +13,8 @@ export interface Selection {
   inRun: Readonly<Record<number, true>>
   /** The selected run's 1-based bead numbers, or null without a run: for the bottom bar. */
   runBounds: Readonly<Ref<{ first: number; last: number; size: number } | null>>
+  /** The book, for children that summarize the run (`BookStatus.vue`); `BookView`'s template never reads it for that. */
+  book: Readonly<Ref<Book | null>>
 }
 
 export const selectionKey: InjectionKey<Selection> = Symbol('selection')

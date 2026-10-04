@@ -19,7 +19,7 @@ from starlette.concurrency import run_in_threadpool
 from tradurre.db import get_db
 from tradurre.domain import DomainError, history
 from tradurre.domain.beads import merge_with_next, move_first_to_previous, move_last_to_next, set_reviewed, split_bead
-from tradurre.domain.blocks import exclude_block, include_block
+from tradurre.domain.blocks import exclude_block, exclude_range, include_block, include_range
 from tradurre.domain.history import transaction
 from tradurre.domain.invariants import check_project
 from tradurre.domain.segments import edit_text, join_with_next, split_segment
@@ -27,6 +27,7 @@ from tradurre.models import (
     BookEditRequest,
     BookImportResponse,
     BookMoveRequest,
+    BookRangeRequest,
     BookResponse,
     BookReviewedRequest,
     BookRun,
@@ -341,6 +342,16 @@ def exclude(book_id: str, block_id: int, db: sqlite3.Connection = Depends(get_db
 @router.post("/books/{book_id}/blocks/{block_id}/include", response_model=BookResponse)
 def include(book_id: str, block_id: int, db: sqlite3.Connection = Depends(get_db)):
     return _correct(db, book_id, lambda: include_block(db, book_id, block_id))
+
+
+@router.post("/books/{book_id}/blocks/exclude-range", response_model=BookResponse)
+def exclude_blocks(book_id: str, body: BookRangeRequest, db: sqlite3.Connection = Depends(get_db)):
+    return _correct(db, book_id, lambda: exclude_range(db, book_id, body.bead_id, body.side, body.to))
+
+
+@router.post("/books/{book_id}/blocks/include-range", response_model=BookResponse)
+def include_blocks(book_id: str, body: BookRangeRequest, db: sqlite3.Connection = Depends(get_db)):
+    return _correct(db, book_id, lambda: include_range(db, book_id, body.bead_id, body.side, body.to))
 
 
 @router.post("/books/{book_id}/undo", response_model=BookResponse)
