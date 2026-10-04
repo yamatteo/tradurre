@@ -41,7 +41,7 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
   gold book scores below 0.95. A typical book is 1,000–5,000 sentences a side; performance targets are at 5,000
   beads. Order: Stage 6 → Stage 7 (v0.2), confirmed 2026-10-04. Then the translator reviews *Contrefeu* in v0.2 for a true
   gold (the current one was made by the user, the developer), and maybe a second book, to score the aligner again.
-- `uv run pytest`: 404 passed, also on a fresh clone (tests read only committed synthetic fixtures; `-m library`
+- `uv run pytest`: 411 passed, also on a fresh clone (tests read only committed synthetic fixtures; `-m library`
   tests run only where `library/contrefeu.*.pdf` exists, and assert counts only).
 - `npm run type-check` passes; releases build with `npm run build`. `npm run test:e2e` (61 tests; the three timing tests run last, alone, in project `scale`) runs on its own
   backend (:8001, throwaway `.e2e.db`) and Vite (:5174), never the user's database. Setup per machine: `npx
@@ -172,6 +172,9 @@ order: search, then export (edition export, then the project bundle).
 #### Search: word beginnings, either side, and the API
 Status: done
 Report: 2026-10-04 — `fts_query` makes every token a prefix (`"tok" * + …` per phrase) with sides `source`/`target`/`either` (`source : (B) OR target : (B)`), `search_beads` takes `offset`; `GET /api/v2/search` with `BookSearchSpan`/`BookSearchResult` (named so beside the v1 `SearchResult`), `booksApi.search`; `fts_query` tests rewritten, 4 new domain tests and 3 API tests (`tests/test_books_search_api.py`), all 7 failing on the old code; pytest 411 passed, type-check clean, e2e 61 passed.
+Verified (Pauli, 2026-10-04): Done when holds (commit 47b0404; pytest 411 here). The `BookSearch*` names are
+right (the v1 `SearchResult` still exists until Stage 7); the page task below uses them. Checked: with `either`, a
+side that doesn't match the whole query gets no stray highlight (`highlight()` marks only the matching column).
 **Done when:** `uv run pytest` passes with the updated and new tests below (the new behaviour tests fail on the old
 code); `npm run type-check` passes; `npm run test:e2e` unchanged.
 
@@ -205,7 +208,8 @@ with the whole tokens highlighted, and `source : (B) OR target : (B)` keeps the 
 - The v1 search (`api/search.py`, `SearchView.vue`, `translation_memory`) is untouched (Stage 7 removes it).
 
 #### Search at library scale
-Status: todo
+Status: done
+Report: 2026-10-04 — new `scripts/search_scale.py`, no app change. Build 21.1 s, 40 books, 100,000 beads, 101.8 MB. Medians (5 runs): `d` 139.2 ms, `de` 85.2, a full word 11.7, a two-word phrase 1.5, `d` source only 84.4, `d` offset 200 144.1, a full word in one book 1.1 ms; worst 144.1 ms < 1,000 (`d` matches ~80% of beads: 2 of the 30 syllables start with d); pytest 411 passed.
 **Done when:** `uv run python scripts/search_scale.py` runs and every query's median is < 1,000 ms (report the
 build time and every number); `uv run pytest` unchanged.
 
