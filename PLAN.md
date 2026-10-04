@@ -20,10 +20,10 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
 
 ## Current state, in brief (2026-10-04)
 
-- **Two models coexist until Stage 7.** The v0.1 `pairs` table, its `/api/v1` API, import wizard, TipTap pair
-  editor and `aligner.py` still exist, unused by the new path. The new model (migrations 2–5: documents, blocks,
-  segments, beads, operations, `bead_index`, runs, warnings) is served by `/api/v2/books` (`api/books.py`) and the
-  book screen (`BookView.vue`, `/book/:id`).
+- **One model since Stage 7.** The v0.1 code is gone (migration 6 drops `pairs`, `translation_memory` and the
+  v0.1 projects; no `/api/v1`, no TipTap, no old Colab aligner). Books (migrations 2–5: documents, blocks, segments,
+  beads, operations, `bead_index`, runs, warnings) are served by `/api/v2` (`api/books.py`) to the library
+  (`ProjectList.vue`, `/`), import (`/book/import`), book screen (`/book/:id`) and search (`/search`).
 - **Import** (Stage 3): .txt/.docx/.pdf pairs. Layout-aware PDF extraction, front/back matter by publishing
   markers, French/Italian segmentation, the length aligner; the run's stats and warnings are stored and shown
   under "Import log". Reference book: ~5 s, 1232 beads, 2 one-sided, 9 below confidence 0.5; against the gold,
@@ -35,7 +35,7 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
   "Restore original", re-align of the selection (More menu), cut/copy/paste of whole sentences (Ctrl+X/C/V).
   Restyled to design variant A; smooth at 5,000 beads. Stages 4 and 6 done (search at `/search` and from the book; More → Export: edition .txt/.docx and the
   project bundle; "Restore a bundle" on the library page). Stage 7: search grouped by book and the library order
-  done, and database snapshots (local-time names); retire v1: library on books and the v1 frontend done, 2 tasks left; a Windows checklist, then the v0.2 tag. On the reference book the problem flags catch
+  done, and database snapshots (local-time names); v1 retired (code); next CLAUDE.md/README for v0.2, a Windows checklist, then the v0.2 tag. On the reference book the problem flags catch
   none of the 15 real errors: review is reading-first; better signals come after v0.2.
 - **Re-planned with the user (2026-10-04), SPEC changed accordingly:** review is one mode, problem-first: jump to
   the next likely problem, correct, mark one bead, a selected run, or everything up to here as reviewed. The
@@ -43,7 +43,7 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
   gold book scores below 0.95. A typical book is 1,000–5,000 sentences a side; performance targets are at 5,000
   beads. Order: Stage 6 → Stage 7 (v0.2), confirmed 2026-10-04. Then the translator reviews *Contrefeu* in v0.2 for a true
   gold (the current one was made by the user, the developer), and maybe a second book, to score the aligner again.
-- `uv run pytest`: 449 passed, also on a fresh clone (tests read only committed synthetic fixtures; `-m library`
+- `uv run pytest`: 384 passed (65 fewer: the v1 tests went), also on a fresh clone (tests read only committed synthetic fixtures; `-m library`
   tests run only where `library/contrefeu.*.pdf` exists, and assert counts only).
 - `npm run type-check` passes; releases build with `npm run build`. `npm run test:e2e` (71 tests; the three timing tests run last, alone, in project `scale`) runs on its own
   backend (:8001, throwaway `.e2e.db`) and Vite (:5174), never the user's database. Setup per machine: `npx
@@ -379,20 +379,22 @@ gitignored build, rebuilt by `npm run build`) finds only
 Report: 2026-10-04 — `_m006_drop_v1`; 5 v1 routers, 11 services (doc_adapter's cleanup moved into extract.py), the v1 models, `tradurre-align` and the `align` extra (`uv lock`: −987 lines) removed; README Colab note gone; grep as allowed; pytest 384 (449 − 71 in the 5 deleted test files + 4 moved + 2 migration tests), e2e 71, `tradurre --version` ok.
 
 #### CLAUDE.md and README describe v0.2
-Status: todo
+Status: done
 **Done when:** every module, command, route and table named in `CLAUDE.md` exists (check each with `ls`/`grep`,
 list the checks in the report); nothing in `CLAUDE.md` or `README.md` names `pairs`, `/api/v1`, TipTap, the import
 wizard or translation memory.
-- `CLAUDE.md` "Architecture": the code as it is now: `api/books.py` (`/api/v2`), `domain/` (layer, beads, blocks,
-  segments, history/undo, invariants, search), `services/` (extract, matter, segment, align, build, realign,
+- `CLAUDE.md` "Architecture": the code as it is now: `api/books.py` (`/api/v2`), `domain/` (layer, ordering, beads, blocks,
+  segments, replace, history/undo, invariants, search), `services/` (extract, matter, segment, align, build, realign,
   edition, bundle, gold, glyph_resolver), `backup.py`; the data model (projects → documents → blocks → segments,
   beads, operations, runs/warnings, `bead_index` kept by triggers: never write to it); the migration rule stays;
-  the frontend views (`ProjectList`, `BookImport`, `BookView`, `BookSearch`) and components. Drop the v1 data
+  the frontend views (`ProjectList`, `BookImport`, `BookView`, `BookSearch`), components, `composables/` and the
+  plain modules (`keys.ts`, `selection.ts`, `review.ts`); `scripts/` (gold export/score, search timing). Drop the v1 data
   model paragraph and the negative-position reindexing note. Keep "Workflow" and "Commands" (fix the example test
   names to existing files). The intro sentence saying the architecture notes describe code "the plan is
   replacing" goes.
 - `README.md`: the intro speaks of books (import a source and its translation, review the alignment, search
   everything); no "translation memory" wording, no edit-both-sides-in-an-editor claim.
+Report: 2026-10-04 — CLAUDE.md intro, Commands examples and Architecture/Data model/Frontend rewritten for the books model; README intro on books, "projects" → "books"; 127 names checked (files, symbols, tables, columns, routes, commands incl. running both example pytest commands), all present; no forbidden term; pytest 384.
 
 ### Windows checklist and release
 Not ready (written once the old model is gone; the checklist's "upgrade from v0.1" step means: a v0.1
@@ -400,7 +402,8 @@ database opens and loses its v1 projects, as agreed). `packaging/WINDOWS-CHECKLI
 on the developer's Windows machine: each step a command or browser action and its expected result (fresh install
 through the launcher from the release candidate's wheel, upgrade from v0.1, Edge and Chrome, the Italian-layout
 keys of the book screen, import of a .txt/.docx/.pdf pair, corrections and undo after a restart, search,
-edition export, bundle download and restore, a snapshot in `backups`). No *Contrefeu* text in it. Then tag v0.2.0.
+edition export, bundle download and restore, a snapshot in `backups`). No *Contrefeu* text in it. The version in
+`pyproject.toml` is still `0.1.0`: the release candidate is built as `0.2.0`. Then tag v0.2.0.
 
 ---
 
@@ -415,3 +418,6 @@ Agreed (user, 2026-10-04), postponed until after v0.2:
   dialogue dashes) that differ across sides; a bead's length ratio out of line with its neighbours.
 - **Reading optimization** of the review screen (comfort and speed of a top-to-bottom read).
 - The translator's own review of *Contrefeu* (in v0.2) becomes the gold these are scored against.
+- Small cleanup: `glyph_resolver.py`'s LLM paths (`generate`, `_check_substitution_plausible`,
+  `llm_resolve_remaining_markers`) had their only caller in the removed Colab pipeline; `extract.py` never passes
+  `generate`. Remove them, or keep them for an unparked aligner.

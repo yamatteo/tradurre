@@ -1,10 +1,11 @@
 # Tradurre
 
-A local-first workbench for literary translation. You import a source text and its translation, and Tradurre
-aligns them paragraph by paragraph and sentence by sentence. You then edit both sides next to each other, and
-can search everything you've translated before (translation memory).
+A local-first workbench for literary translation. You import a book and its published translation (.txt, .docx or
+.pdf); Tradurre extracts the text, sets aside running heads, page numbers and footnotes, and aligns the two sides
+sentence by sentence. You review the alignment and correct it where it's wrong. Then you can search all your books
+at once, each match shown next to its translation.
 
-Everything runs on your own computer. Your projects are stored in a single file,
+Everything runs on your own computer. Your books are stored in a single file,
 `~/.tradurre/tradurre.db` (on Windows: `%USERPROFILE%\.tradurre\tradurre.db`, which you can paste into the
 Explorer address bar). To back up your work, copy that file.
 
@@ -19,7 +20,7 @@ PDF support), then starts it; after that it just starts Tradurre.
 Windows may warn "Windows protected your PC" because the file was downloaded: click *More info → Run anyway*.
 
 To upgrade, download the newer release's `start-tradurre.bat` and double-click it: it notices that a different
-version is installed and installs its own (close Tradurre first). Your projects are kept.
+version is installed and installs its own (close Tradurre first). Your books are kept.
 
 ### From a terminal
 
@@ -48,7 +49,7 @@ uv tool install --force "tradurre[pdf] @ https://github.com/yamatteo/tradurre/re
 
 If the terminal then says `tradurre` isn't found, run `uv tool update-shell` and open a new terminal.
 
-To **upgrade**, run the same command with the newer release's link. Your projects are kept.
+To **upgrade**, run the same command with the newer release's link. Your books are kept.
 
 ## Use
 
