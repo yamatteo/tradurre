@@ -361,3 +361,51 @@ test('inside the sentence editor cut and paste work on the text', async ({ page,
   await expect.poll(() => rows(page)).toEqual(ORIGINAL)
   await expect(cutSpans(page)).toHaveCount(0)
 })
+
+test('the cut survives a review mark and the paste still works', async ({ page, request }) => {
+  const { id } = await importBook(request, 'Cut kept')
+  await open(page, id)
+  await page.getByText('Il pleuvait.').click()  // C
+  await page.keyboard.press('Control+x')
+  await page.keyboard.press('r')
+  await expect(current(page)).toHaveAttribute('data-reviewed', 'true')
+  await expect(page.getByText('Il pleuvait.')).toHaveAttribute('data-cut', 'true')
+  await page.keyboard.press('ArrowUp')  // B
+  await page.keyboard.press('Control+v')
+  await expect.poll(() => rows(page)).toEqual(B_MERGED)
+  await expect(cutSpans(page)).toHaveCount(0)
+})
+
+test('the cut follows its sentence while it stays at an edge of a bead, and is dropped in the middle', async ({ page, request }) => {
+  const { id } = await importBook(request, 'Cut follows')
+  await open(page, id)
+  await page.getByText('Marie arriva.').click()  // B
+  await page.keyboard.press('Control+x')
+  await page.keyboard.press('ArrowUp')  // A
+  await page.keyboard.press('m')
+  await expect.poll(async () => (await rows(page))[0]![0]).toEqual(['Chapitre un', 'Marie arriva.'])
+  await expect(page.getByText('Marie arriva.')).toHaveAttribute('data-cut', 'true')
+  await page.keyboard.press('m')  // A takes "Il pleuvait." too: "Marie arriva." is in the middle
+  await expect.poll(async () => (await rows(page))[0]![0]).toEqual(['Chapitre un', 'Marie arriva.', 'Il pleuvait.'])
+  await expect(cutSpans(page)).toHaveCount(0)
+})
+
+test('Ctrl+C copies text selected in the import log, not the sentence', async ({ page, context, request }) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write'])
+  const { id } = await importBook(request, 'Copy log')
+  await open(page, id)
+  await page.getByTestId('import-log').click()
+  await expect(page.getByTestId('import-stats')).toBeVisible()
+  const selected = await page.getByTestId('import-stats').evaluate((el) => {
+    const range = document.createRange()
+    range.selectNodeContents(el)
+    const selection = document.getSelection()!
+    selection.removeAllRanges()
+    selection.addRange(range)
+    return selection.toString()
+  })
+  expect(selected).not.toBe('')
+  await page.keyboard.press('Control+c')
+  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(selected)
+  await expect(page.getByTestId('status')).not.toHaveText('Sentence copied')
+})

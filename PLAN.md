@@ -32,8 +32,8 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
   excluded", every SPEC §3.3 single-bead correction (keys and header buttons), inline segment editing, persistent
   undo/redo, problem navigation (`p`/`P`), selected runs (Shift+↑/↓, Shift+click) marked with `r`, and `R` "up to
   here", range exclude/include in the "More" menu, edited sentences marked with their original on `o` and
-  "Restore original", re-align of the selection (More menu). Restyled to design variant A; cut/copy/paste and the
-  5,000-bead check to come (Stage 4).
+  "Restore original", re-align of the selection (More menu), cut/copy/paste of whole sentences (Ctrl+X/C/V).
+  Restyled to design variant A; two cut/copy fixes and the 5,000-bead check to come (Stage 4).
 - **Re-planned with the user (2026-10-04), SPEC changed accordingly:** review is one mode, problem-first: jump to
   the next likely problem, correct, mark one bead, a selected run, or everything up to here as reviewed. The
   timed scroll "skim review" is dropped. The Colab aligner is **parked** (SPEC §3.2, §5): it returns only if a
@@ -42,7 +42,7 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
   gold (the current one was made by the user, the developer), and maybe a second book, to score the aligner again.
 - `uv run pytest`: 404 passed, also on a fresh clone (tests read only committed synthetic fixtures; `-m library`
   tests run only where `library/contrefeu.*.pdf` exists, and assert counts only).
-- `npm run type-check` passes; releases build with `npm run build`. `npm run test:e2e` (51 tests) runs on its own
+- `npm run type-check` passes; releases build with `npm run build`. `npm run test:e2e` (57 tests) runs on its own
   backend (:8001, throwaway `.e2e.db`) and Vite (:5174), never the user's database. Setup per machine: `npx
   playwright install chromium` (on Ubuntu 26.04 with `PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=ubuntu24.04-x64`); tests
   use the full Chromium headless (`channel: 'chromium'`).
@@ -655,6 +655,12 @@ Agreed (user, 2026-10-04): "if realign does not change anything, don't un-review
 ### Cut/copy/paste between rows
 Status: done
 Report: 2026-10-04 — Ctrl+C/X/V outside the editor in `BookView.vue` (`cut` + `cutRow` in `Selection`, dashed accent border and `data-cut` in `BeadRow.vue`, Esc before the run, cleared by any successful correction); `correct` clears run and cut only after success, so `BookStatus.vue` now shows a message over the run summary and a change of the run clears the message; 3 `SHORTCUTS` entries; 5 e2e tests in `book-corrections.spec.ts`, 1 in `review.spec.ts`, all failing on the old code except the editor test (a guard, passes either way); e2e 57 passed, pytest 404 passed, type-check clean; 20 ArrowDown on 10,000 beads 1.17–1.21 s.
+Verified (Pauli, 2026-10-04): Done when holds (commit 3187c9a; pytest 404, e2e 57 here). Braun's status-bar
+rule is accepted: a message shows over the run summary until it expires, and a change of the run's bounds clears
+it (`BookStatus.vue`, `watch(runRange)` in `BookView.vue`); without it a refusal would be invisible while the run
+stays. Two follow-ups in "Cut and copy: fixes" below: clearing the cut on *every* successful correction (as this
+task said) is stricter than "as usual" (SPEC §3.3), and Ctrl+C now blocks the browser's copy of selected text
+outside the bead list (the import log).
 **Done when:** `npm run type-check` passes; `npm run test:e2e` passes with the new tests below (each failing
 before the change); `uv run pytest` unchanged; 20 ArrowDown on 10,000 beads not worse than ~1.2–1.3 s alone.
 
@@ -698,10 +704,53 @@ Outside it they work on whole sentences …". Frontend only: the paste is the ex
   un", "Marie arriva.", "Il pleuvait."), select "Marie arriva.", Ctrl+X → the refusal message, no `data-cut`. Inside the editor, select all, Ctrl+X, Ctrl+V, Enter → the text is unchanged and nothing is
   marked cut.
 
+### Cut and copy: fixes
+Status: done
+Report: 2026-10-04 — `keepCut` in `correct` (the cut follows its sentence while it is first or last of its side in a bead, else dropped; `pasteSentence` clears it after a move); Ctrl+C/X left to the browser when a text selection lies outside the bead list (`list` ref); 3 e2e tests in `book-corrections.spec.ts`, all failing on the old code; e2e 60 passed, pytest 404 passed, type-check clean.
+**Done when:** `npm run type-check` passes; `npm run test:e2e` passes with the new tests below (each failing
+before the change); `uv run pytest` unchanged.
+
+SPEC §3.3: cut, copy and paste "as usual". Frontend only, `BookView.vue` (and the new tests).
+- **The cut survives corrections that keep it valid.** In an editor a cut waits until it is pasted or replaced;
+  here marking a bead reviewed (`r`) between Ctrl+X and Ctrl+V drops it, which is not "as usual". In `correct`,
+  replace `cut.value = null` on success: after `book.value = reconcile(...)` (and before the `!beads.length`
+  return), find the bead whose `cut.side` holds `cut.segmentId`; if the segment is the first or last of that side
+  there, keep the cut with that bead's id (`cut.value = { ...cut, beadId }` only when the id changed), else
+  `cut.value = null` (gone, excluded, or now in the middle). Undo/redo follow the same rule (they go through
+  `correct`). `pasteSentence` sets `cut.value = null` itself after a successful move (the moved sentence is at an
+  edge of its new bead, so the rule alone would keep it). Esc and the refusals don't change. Update `correct`'s
+  comment.
+- **Copy of selected text outside the bead list is the browser's.** Give the bead list's scrolling container a
+  ref (`list`). In `onKey`'s Ctrl+C/X/V branch, for `c` and `x` only: if `document.getSelection()` is not collapsed
+  and its `anchorNode` is not inside `list`, return **without** `preventDefault` (the browser copies the selection,
+  e.g. from the import log). Inside the list, or with no selection, today's whole-sentence behaviour stays.
+- Tests (`book-corrections.spec.ts`, its `gap` book): cut "Il pleuvait." (C), `r` → C is reviewed and
+  `data-cut` is still on it; ↑, Ctrl+V → `B_MERGED`, no `data-cut`. Cut "Marie arriva." (B), ↑ to A, `m` → A's
+  source is "Chapitre un", "Marie arriva." and `data-cut` is still on "Marie arriva."; `m` again (A takes "Il
+  pleuvait." too) → no `data-cut`. Copy from the import log (grant `clipboard-read`/`clipboard-write`): open it,
+  select the text of `import-stats` with a DOM range (`page.evaluate`), Ctrl+C → `navigator.clipboard.readText()`
+  equals that selection's `toString()` and the status is not "Sentence copied".
+
 ### Scale check at 5,000 beads
-Not ready. Stage 2's e2e checks pass at 10,000 beads (load < 5 s, 20 ↓ < 2 s, `r` < 1.5 s) with whole-book
-refetch and no virtualization. Re-measure after the steps above add rows' work; virtualize or go incremental only
-if a check at 5,000 fails.
+Status: todo
+**Done when:** the new test below passes three runs in a row (report each run's numbers); `npm run type-check`
+passes; the rest of `npm run test:e2e` and `uv run pytest` unchanged.
+
+SPEC §5 "Responsive": a 5,000-bead book opens and scrolls smoothly; a single correction is reflected in well under
+a second. Stage 2's checks pass at 10,000 beads (load < 5 s, 20 ↓ < 2 s, `r` < 1.5 s) with a whole-book refetch
+per correction and no virtualization; nothing yet measures structural corrections or scrolling. This task only
+measures: **if a bound fails, don't optimize and don't loosen it**: stop (`blocked`) with the numbers, and
+`/pauli` plans virtualization or incremental updates from them.
+- New test in `frontend/e2e/book-view.spec.ts`, "a 5,000-bead book: load, corrections and scrolling", built like
+  the 10,000-bead one there (`Phrase numéro k.` / `Frase numero k.`, `test.setTimeout(120_000)`), logging every
+  number with `console.log` and `test.info().annotations` as that test does. Bounds:
+  - load (goto → last row attached) < 3,000 ms;
+  - on bead 20 (20 ↓ from the first), each step timed from the key press to its visible result, each < 500 ms:
+    Alt+↓ (bead 21's source cell shows 2 sentences), Ctrl+Z (1 again), `m` (5,000 → 4,999 rows), Ctrl+Z (5,000);
+  - scrolling: after load, register a `PerformanceObserver` for `longtask` in the page (`page.evaluate`, entries
+    pushed to a `window` array), hover the list, 20 × `page.mouse.wheel(0, 1500)` with 50 ms between, then 200 ms
+    more; the longest long task < 100 ms (none at all is fine).
+- No change to app code.
 
 ---
 

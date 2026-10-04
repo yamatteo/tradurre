@@ -29,6 +29,7 @@ const showKeys = ref(false)
 const showMore = ref(false)
 const moreMenu = ref<InstanceType<typeof MoreMenu> | null>(null)
 const importLog = ref<HTMLElement | null>(null)
+const list = ref<HTMLElement | null>(null)
 // The original-sentence popover (key `o`): read by OriginalPopover.vue only, never by this template (render rule 1).
 const showOriginal = ref(false)
 provide(originalKey, showOriginal)
@@ -208,8 +209,9 @@ function reconcile(old: Book, next: Book): Book {
 /**
  * Send one correction and show its result. The current bead stays if it still exists, else the bead now at its
  * old index (clamped); `selectIndex` overrides that (after a split). Errors go to the status line. A successful
- * correction clears the cut sentence and the selected run, except the review marks for the run (`keepRun`); a refused
- * one changes nothing, so it keeps both. Resolves to whether it succeeded.
+ * correction clears the selected run, except the review marks for the run (`keepRun`), and keeps the cut sentence
+ * only while it is still the first or last of its side in a bead; a refused one changes nothing, so it keeps both.
+ * Resolves to whether it succeeded.
  */
 async function correct(request: (id: string) => Promise<Book>, selectIndex?: number, keepRun = false): Promise<boolean> {
   if (busy.value || !book.value) return false
@@ -218,13 +220,13 @@ async function correct(request: (id: string) => Promise<Book>, selectIndex?: num
   try {
     const next = await request(old.id)
     if (!keepRun) clearRun()
-    cut.value = null
     // The selection is read now, not before the request: the translator may have moved meanwhile.
     const oldIndex = currentBeadId.value === null ? 0 : (beadIndex.value.get(currentBeadId.value) ?? 0)
     const side = currentSide.value
     const segmentId = currentSegmentId.value
     book.value = reconcile(old, next)
     const beads = book.value.beads
+    keepCut(beads)
     if (!beads.length) {
       currentBeadId.value = null
       return true
@@ -349,6 +351,19 @@ function joinNext() {
   if (segmentId !== null) correct((id) => booksApi.joinNext(id, segmentId))
 }
 
+/** After a correction the cut follows its sentence, if that is still at an edge of its bead; else it is dropped. */
+function keepCut(beads: BookBead[]) {
+  const c = cut.value
+  if (!c) return
+  const bead = beads.find((b) => b[c.side].some((s) => s.segment_id === c.segmentId))
+  const segments = bead?.[c.side] ?? []
+  if (!bead || (segments[0]!.segment_id !== c.segmentId && segments[segments.length - 1]!.segment_id !== c.segmentId)) {
+    cut.value = null
+  } else if (bead.id !== c.beadId) {
+    cut.value = { ...c, beadId: bead.id }
+  }
+}
+
 /** Ctrl+C outside the sentence editor: the current sentence goes to the clipboard. */
 async function copySentence() {
   const segment = currentSegment()
@@ -388,7 +403,10 @@ async function pasteSentence() {
   else if (from !== undefined && here === from + 1 && segments[segments.length - 1]?.segment_id === c.segmentId) to = 'next'
   if (!to) return say('A sentence can only move to the edge of the neighbouring bead: the text order never changes')
   const direction = to
-  if (await correct((id) => booksApi.move(id, c.beadId, c.side, direction))) say('Sentence moved (Ctrl+Z to undo)')
+  if (await correct((id) => booksApi.move(id, c.beadId, c.side, direction))) {
+    cut.value = null  // the moved sentence is at an edge of its new bead: `keepCut` alone would keep it
+    say('Sentence moved (Ctrl+Z to undo)')
+  }
 }
 
 function isTextEntry(target: HTMLElement | null): boolean {
@@ -466,6 +484,9 @@ function onKey(event: KeyboardEvent) {
     return
   }
   if (event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey && (key === 'c' || key === 'x' || key === 'v')) {
+    // Text selected outside the bead list (e.g. in the import log) is copied by the browser, as usual.
+    const selected = document.getSelection()
+    if (key !== 'v' && selected && !selected.isCollapsed && !list.value?.contains(selected.anchorNode)) return
     event.preventDefault()
     if (key === 'c') copySentence()
     else if (key === 'x') cutSentence()
@@ -695,7 +716,7 @@ onBeforeUnmount(() => {
 
       <!-- The bead list is the only scrolling element. -->
       <!-- A scroll closes the original popover, which is placed once and would float away (a write, not a read). -->
-      <div class="flex-1 min-h-0 overflow-auto bg-list" @scroll="showOriginal = false">
+      <div ref="list" class="flex-1 min-h-0 overflow-auto bg-list" @scroll="showOriginal = false">
         <div class="max-w-[1560px] mx-auto">
           <div class="sticky top-0 z-10 h-7 grid grid-cols-[40px_minmax(0,1fr)_minmax(0,1fr)_96px] items-center bg-list border-b border-bar-rule text-[10.5px] uppercase tracking-wider text-faint">
             <span />
