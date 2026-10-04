@@ -33,7 +33,7 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
   undo/redo, problem navigation (`p`/`P`), selected runs (Shift+↑/↓, Shift+click) marked with `r`, and `R` "up to
   here", range exclude/include in the "More" menu, edited sentences marked with their original on `o` and
   "Restore original", re-align of the selection (More menu), cut/copy/paste of whole sentences (Ctrl+X/C/V).
-  Restyled to design variant A; two cut/copy fixes and the 5,000-bead check to come (Stage 4).
+  Restyled to design variant A; the 5,000-bead check closes Stage 4.
 - **Re-planned with the user (2026-10-04), SPEC changed accordingly:** review is one mode, problem-first: jump to
   the next likely problem, correct, mark one bead, a selected run, or everything up to here as reviewed. The
   timed scroll "skim review" is dropped. The Colab aligner is **parked** (SPEC §3.2, §5): it returns only if a
@@ -42,7 +42,7 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
   gold (the current one was made by the user, the developer), and maybe a second book, to score the aligner again.
 - `uv run pytest`: 404 passed, also on a fresh clone (tests read only committed synthetic fixtures; `-m library`
   tests run only where `library/contrefeu.*.pdf` exists, and assert counts only).
-- `npm run type-check` passes; releases build with `npm run build`. `npm run test:e2e` (57 tests) runs on its own
+- `npm run type-check` passes; releases build with `npm run build`. `npm run test:e2e` (60 tests) runs on its own
   backend (:8001, throwaway `.e2e.db`) and Vite (:5174), never the user's database. Setup per machine: `npx
   playwright install chromium` (on Ubuntu 26.04 with `PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=ubuntu24.04-x64`); tests
   use the full Chromium headless (`channel: 'chromium'`).
@@ -707,6 +707,8 @@ Outside it they work on whole sentences …". Frontend only: the paste is the ex
 ### Cut and copy: fixes
 Status: done
 Report: 2026-10-04 — `keepCut` in `correct` (the cut follows its sentence while it is first or last of its side in a bead, else dropped; `pasteSentence` clears it after a move); Ctrl+C/X left to the browser when a text selection lies outside the bead list (`list` ref); 3 e2e tests in `book-corrections.spec.ts`, all failing on the old code; e2e 60 passed, pytest 404 passed, type-check clean.
+Verified (Pauli, 2026-10-04): Done when holds (commit 5028f32; pytest 404, e2e 60 here). `keepCut` scans the
+beads only while a cut is pending: negligible next to the whole-book refetch.
 **Done when:** `npm run type-check` passes; `npm run test:e2e` passes with the new tests below (each failing
 before the change); `uv run pytest` unchanged.
 
@@ -732,7 +734,8 @@ SPEC §3.3: cut, copy and paste "as usual". Frontend only, `BookView.vue` (and t
   equals that selection's `toString()` and the status is not "Sentence copied".
 
 ### Scale check at 5,000 beads
-Status: todo
+Status: done
+Report: 2026-10-04 — new e2e test "a 5,000-bead book: load, corrections and scrolling" in `book-view.spec.ts`, no app change; three runs: load 1515/1541/1535 ms, Alt+↓ 381/391/389, Ctrl+Z 299/305/304, m 191/199/195, Ctrl+Z 191/190/191 ms, scroll 0 long tasks in each (the wheel scrolls ~30,000 px; a 150 ms task injected through `setTimeout` is caught and fails the test, so the check is live); e2e 61 passed, pytest 404 passed, type-check clean.
 **Done when:** the new test below passes three runs in a row (report each run's numbers); `npm run type-check`
 passes; the rest of `npm run test:e2e` and `uv run pytest` unchanged.
 
