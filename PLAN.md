@@ -28,8 +28,9 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
   alignment F1 0.995, exclusion P 1.000 R 0.902.
 - **Book screen** (Stages 2, 4): reading and keyboard navigation, `n` next unreviewed, `r` reviewed, "Show
   excluded", every SPEC §3.3 single-bead correction (keys and header buttons), inline segment editing, persistent
-  undo/redo, problem navigation (`p`/`P`). Being restyled to design variant A: frame, fonts, rows, both bars and the
-  shortcuts panel done; runs, ranges, original text and re-align to come (Stage 4).
+  undo/redo, problem navigation (`p`/`P`), selected runs (Shift+↑/↓, Shift+click) marked with `r`, and `R` "up to
+  here". Restyled to design variant A (frame, fonts, rows, bars, shortcuts panel); ranges, original text and
+  re-align to come (Stage 4).
 - **Re-planned with the user (2026-10-04), SPEC changed accordingly:** review is one mode, problem-first: jump to
   the next likely problem, correct, mark one bead, a selected run, or everything up to here as reviewed. The
   timed scroll "skim review" is dropped. The Colab aligner is **parked** (SPEC §3.2, §5): it returns only if a
@@ -38,7 +39,7 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
   gold (the current one was made by the user, the developer), and maybe a second book, to score the aligner again.
 - `uv run pytest`: 388 passed, also on a fresh clone (tests read only committed synthetic fixtures; `-m library`
   tests run only where `library/contrefeu.*.pdf` exists, and assert counts only).
-- `npm run type-check` passes; releases build with `npm run build`. `npm run test:e2e` (35 tests) runs on its own
+- `npm run type-check` passes; releases build with `npm run build`. `npm run test:e2e` (39 tests) runs on its own
   backend (:8001, throwaway `.e2e.db`) and Vite (:5174), never the user's database. Setup per machine: `npx
   playwright install chromium` (on Ubuntu 26.04 with `PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=ubuntu24.04-x64`); tests
   use the full Chromium headless (`channel: 'chromium'`).
@@ -349,6 +350,9 @@ test:e2e` pass unchanged; `grep -rn skim tradurre frontend/src tests` finds noth
 #### Runs and "up to here" in the book screen
 Status: done
 Report: 2026-10-04 — run state in `BookView` (`runAnchorId`, `inRun` by difference, `runBounds`; `select(…, extend)` and `correct(…, keepRun)` handle clearing), Shift+↑/↓ and Shift+click, `r` on a run, `R` and the "Up to here" button, run style via an always-present gutter border, run summary in `BookStatus`, three Review entries in `SHORTCUTS`; 4 new e2e tests in `review.spec.ts`; e2e 39 passed (no chip fallback needed at 1366), pytest 388 passed, type-check clean; screenshot `scratchpad/run-1366.png`; 20 ArrowDown on 10,000 beads 1.08–1.15 s alone.
+Verified (Pauli, 2026-10-04): Done when holds (commit f435e9b; pytest 388 here; screenshot checked: run tint, 3 px
+bar, bottom-bar summary, ~150 px left free on the second bar at 1366). Three defects found in review, fixed by
+"Run and key fixes" below.
 **Done when:** `npm run type-check` passes; `npm run test:e2e` passes with the new tests in
 `frontend/e2e/review.spec.ts` and `e2e/book-layout.spec.ts` still passing at 1366; `uv run pytest` unchanged; the
 10,000-bead "20 ArrowDown" time not worse than ~1.2–1.3 s alone; the `Report:` names a screenshot at 1366 × 768
@@ -387,6 +391,35 @@ Report: 2026-10-04 — run state in `BookView` (`runAnchorId`, `inRun` by differ
   run with mixed marks → `r` marks all; Shift+click from bead 1 on bead 3 selects 3; a plain ↓ and Esc each clear
   the run; `R` on the second bead marks beads 1–2 and leaves bead 3, and `R` again says "Already reviewed up to
   here".
+
+#### Run and key fixes
+Status: done
+Report: 2026-10-04 — letter keys looked up by Shift, not Caps Lock (`BookView.onKey`); the Reviewed/Unreviewed label follows the run via `runBounds` (`BeadActions`); Shift+mousedown on text cells (not the editor) prevents the native selection (`BeadRow`); 3 new e2e tests in `review.spec.ts`, each failing on the old code (the button test runs Shift+↑ from bead 2 so the current bead is the reviewed one, and the selection test plain-clicks bead 1 first to leave a caret: as worded, both passed on the old code); `press('R')` sends no Shift, no dispatch fallback needed; e2e 42 passed, pytest 388 passed, type-check clean.
+**Done when:** `npm run type-check` passes; `npm run test:e2e` passes with the three new tests below in
+`frontend/e2e/review.spec.ts`, all earlier tests unchanged; `uv run pytest` unchanged.
+
+Found in review of the task above (Pauli, 2026-10-04):
+- **Caps Lock turns `r` into `R`** (a bulk write over the whole book up to here) and `p` into `P`: `onKey` looks
+  up `event.key` (`BookView.vue`, `actions.get(event.key)`), which Caps Lock upper-cases without Shift. Fix: for a
+  one-character letter key, look up `event.shiftKey ? key.toUpperCase() : key.toLowerCase()`; other keys (Enter,
+  Tab, arrows) as now. Shift decides, Caps Lock never does. `SHORTCUTS` doesn't change.
+- **The "Reviewed"/"Unreviewed" button ignores the run:** its label (`BeadActions.vue`) follows the current bead
+  only, while `r` on a run marks all if any is unreviewed. With a run (`selection.runBounds` set), the label is
+  "Reviewed" if any bead of `book.beads.slice(first - 1, last)` is unreviewed, else "Unreviewed". Read
+  `runBounds`, not `inRun` key by key (one dependency, not one per bead).
+- **Shift+click also selects page text** (native selection from the caret to the click). In `BeadRow.vue`, the
+  text cells get a `mousedown` handler that calls `preventDefault()` when `event.shiftKey` and the target is not
+  a `textarea` (the segment editor keeps native Shift+click selection). The `click` still fires, so selection
+  logic doesn't change.
+- Tests (`review.spec.ts`, its 3-bead book): with Caps Lock simulated by `page.keyboard.press('R')` *without*
+  Shift (Playwright sends `key: 'R'`, `shiftKey: false`) on bead 2, only bead 2 becomes reviewed (beads 1 and 3
+  stay `false`); a run of beads 1–2 with bead 1 reviewed shows the button `Reviewed`, and after `r` it shows
+  `Unreviewed`; after a Shift+click from bead 1 on bead 3, `window.getSelection()?.toString()` is `''`.
+  If `press('R')` turns out to send `shiftKey: true` in this Playwright version, dispatch the event instead
+  (`page.dispatchEvent('body', 'keydown', { key: 'R', shiftKey: false })` or the equivalent on `window`), and say
+  so in the Report.
+- Nothing else changes: no new keys, no style changes, the render rules hold (`BookView`'s template reads
+  nothing new).
 
 ### Range exclude/include
 Status: todo

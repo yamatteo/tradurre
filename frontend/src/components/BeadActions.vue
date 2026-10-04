@@ -13,11 +13,17 @@ const emit = defineEmits<{ correct: [action: Correction] }>()
 
 const selection = inject(selectionKey)!
 const bead = computed(() => props.book.beads.find((b) => b.id === selection.currentBeadId.value) ?? null)
+/** Whether `r` marks (true) or clears (false): with a run, it marks if any bead of the run is unreviewed. */
+const marks = computed(() => {
+  const run = selection.runBounds.value
+  if (run) return props.book.beads.slice(run.first - 1, run.last).some((b) => !b.reviewed)
+  return !bead.value?.reviewed
+})
 
 const actions = computed<{ action: Correction; label: string; key: string; testid?: string }[]>(() =>
   props.group === 'review'
     ? [
-        { action: 'reviewed', label: bead.value?.reviewed ? 'Unreviewed' : 'Reviewed', key: 'R' },
+        { action: 'reviewed', label: marks.value ? 'Reviewed' : 'Unreviewed', key: 'R' },
         { action: 'up-to-here', label: 'Up to here', key: 'Shift+R', testid: 'reviewed-up-to-here' },
       ]
     : [

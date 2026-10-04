@@ -390,7 +390,9 @@ function onKey(event: KeyboardEvent) {
     moveBead(event.key === 'ArrowUp' ? -1 : 1, true)
     return
   }
-  const action = actions.get(event.key)
+  // A letter's case comes from Shift alone, never from Caps Lock: with Caps Lock on, `r` must not become `R`.
+  const letter = event.key.length === 1 && event.key.toLowerCase() !== event.key.toUpperCase()
+  const action = actions.get(letter ? (event.shiftKey ? event.key.toUpperCase() : key) : event.key)
   if (!action) return
   event.preventDefault()
   action(event)

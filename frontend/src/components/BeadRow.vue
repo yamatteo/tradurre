@@ -60,6 +60,11 @@ function onEditorKey(event: KeyboardEvent, segmentId: number) {
   }
 }
 
+/** Shift+mousedown would extend the page's text selection to the click: prevent it, except in the segment editor. */
+function onCellMouseDown(event: MouseEvent) {
+  if (event.shiftKey && !(event.target instanceof HTMLTextAreaElement)) event.preventDefault()
+}
+
 function onEditorBlur(event: FocusEvent, segmentId: number) {
   if (finished) return
   finished = true
@@ -108,7 +113,7 @@ const cells = computed(() =>
         cell.side === 'target' ? 'border-l border-row-rule' : '',
         current && currentSide === cell.side ? 'bg-current-side' : '',
       ]"
-      @click="emit('select', bead.id, cell.side, null, $event.shiftKey)">
+      @mousedown="onCellMouseDown" @click="emit('select', bead.id, cell.side, null, $event.shiftKey)">
       <span v-if="cell.blocks.length === 0" class="font-ui text-[12.5px] italic text-absent">Not in this edition</span>
       <div v-for="block in cell.blocks" :key="block.blockId" :data-block-kind="block.kind"
         :class="block.kind === 'heading' ? 'font-semibold' : ''">

@@ -171,3 +171,34 @@ test('R marks everything up to here reviewed', async ({ page, request }) => {
   await expect.poll(() => reviewed(page)).toEqual(['true', 'true', 'true'])
   await expect(page.getByTestId('status')).toHaveText('Reviewed up to here (1 bead)')
 })
+
+test('Caps Lock R is r: it marks only the current bead', async ({ page, request }) => {
+  const { id } = await importBook(request, 'Caps Lock')
+  await open(page, id)
+  await page.keyboard.press('ArrowDown')
+  await page.keyboard.press('R')  // key 'R' without Shift, as with Caps Lock on
+  await expect.poll(() => reviewed(page)).toEqual(['false', 'true', 'false'])
+})
+
+test('the Reviewed button follows the run', async ({ page, request }) => {
+  const { id } = await importBook(request, 'Run button')
+  await open(page, id)
+  await page.keyboard.press('r')
+  await expect.poll(() => reviewed(page)).toEqual(['true', 'false', 'false'])
+  await page.keyboard.press('ArrowDown')
+  await page.keyboard.press('Shift+ArrowUp')  // the run 1–2, the current bead (1) reviewed, bead 2 not
+  const button = page.locator('[data-action="reviewed"]')
+  await expect(button).toHaveText(/^\s*Reviewed\s*R\s*$/)
+  await page.keyboard.press('r')
+  await expect.poll(() => reviewed(page)).toEqual(['true', 'true', 'false'])
+  await expect(button).toHaveText(/^\s*Unreviewed\s*R\s*$/)
+})
+
+test('Shift+click selects no page text', async ({ page, request }) => {
+  const { id, book } = await importBook(request, 'Run text')
+  await open(page, id)
+  await row(page, book.beads[0].id).locator('[data-cell="target"]').click()  // a plain click leaves a caret
+  await row(page, book.beads[2].id).locator('[data-cell="target"]').click({ modifiers: ['Shift'] })
+  await expect.poll(() => inRun(page)).toEqual(['true', 'true', 'true'])
+  expect(await page.evaluate(() => window.getSelection()?.toString() ?? '')).toBe('')
+})
