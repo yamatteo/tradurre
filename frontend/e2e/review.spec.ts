@@ -257,3 +257,44 @@ test('the run summary says R clears them when all are reviewed', async ({ page, 
   await expect.poll(() => reviewed(page)).toEqual(['true', 'true', 'false'])
   await expect(page.getByTestId('status')).toHaveText('2 beads selected (1–2). R clears them all.')
 })
+
+test('Re-align the selection replaces the run with unreviewed beads, in one undo step', async ({ page, request }) => {
+  const { id } = await importBook(request, 'Re-align')
+  await open(page, id)
+  await page.keyboard.press('ArrowDown')
+  await page.keyboard.press('r')
+  await expect.poll(() => reviewed(page)).toEqual(['false', 'true', 'false'])
+  const before = await page.getByTestId('bead-row').evaluateAll((els) => els.map((el) => el.textContent))
+  await page.keyboard.press('Shift+ArrowDown')
+  await page.getByTestId('more').click()
+  await page.getByTestId('realign').click()
+  await expect(page.getByTestId('status')).toHaveText(/^Re-aligned 2 beads into \d+ \(Ctrl\+Z to undo\)$/)
+  await expect.poll(async () => (await reviewed(page)).every((r) => r === 'false')).toBe(true)
+  await expect.poll(() => inRun(page)).not.toContain('true')
+  expect(await (await request.get(`/api/v2/books/${id}/check`)).json()).toEqual([])
+  await page.keyboard.press('Control+z')
+  await expect.poll(() => reviewed(page)).toEqual(['false', 'true', 'false'])
+  await expect.poll(() => page.getByTestId('bead-row').evaluateAll((els) => els.map((el) => el.textContent))).toEqual(before)
+})
+
+test('a scroll of the list closes the original popover', async ({ page, request }) => {
+  const text = Array.from({ length: 60 }, (_, k) => `Phrase ${k + 1}.`).join('\n\n')
+  const res = await request.post('/api/v2/books', {
+    multipart: {
+      source: { name: 'fr.txt', mimeType: 'text/plain', buffer: Buffer.from(text) },
+      target: { name: 'it.txt', mimeType: 'text/plain', buffer: Buffer.from(text.replaceAll('Phrase', 'Frase')) },
+      title: 'Scroll',
+    },
+  })
+  expect(res.status()).toBe(201)
+  const id: string = (await res.json()).id
+  const book = await (await request.get(`/api/v2/books/${id}`)).json()
+  const segment = book.beads[0].source[0].segment_id
+  expect((await request.post(`/api/v2/books/${id}/segments/${segment}/edit`, { data: { text: 'Phrase une.' } })).status()).toBe(200)
+  await open(page, id)
+  await page.keyboard.press('o')
+  await expect(page.getByTestId('original-popover')).toBeVisible()
+  await row(page, book.beads[3].id).hover()
+  await page.mouse.wheel(0, 400)
+  await expect(page.getByTestId('original-popover')).toHaveCount(0)
+})

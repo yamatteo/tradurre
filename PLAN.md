@@ -39,7 +39,7 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
   gold book scores below 0.95. A typical book is 1,000–5,000 sentences a side; performance targets are at 5,000
   beads. Order: Stage 4 → Stage 6 → Stage 7 (v0.2). Then the translator reviews *Contrefeu* in v0.2 for a true
   gold (the current one was made by the user, the developer), and maybe a second book, to score the aligner again.
-- `uv run pytest`: 399 passed, also on a fresh clone (tests read only committed synthetic fixtures; `-m library`
+- `uv run pytest`: 402 passed, also on a fresh clone (tests read only committed synthetic fixtures; `-m library`
   tests run only where `library/contrefeu.*.pdf` exists, and assert counts only).
 - `npm run type-check` passes; releases build with `npm run build`. `npm run test:e2e` (48 tests) runs on its own
   backend (:8001, throwaway `.e2e.db`) and Vite (:5174), never the user's database. Setup per machine: `npx
@@ -573,6 +573,10 @@ it is given, i.e. from the stretch, which is right between two trusted beads).
 #### Re-align: service and API
 Status: done
 Report: 2026-10-04 — new `services/realign.py` (`_run`, `_segments`, `align.align`, `replace_beads(kind="realign")`); `BookRealignRequest`, `POST /beads/realign`, `booksApi.realign`; `tests/test_realign.py` (stretch equals the aligner's output, inside reviewed mark replaced, outside kept, invariants, one undo = exact snapshot; three refusals record nothing) and an API test on `gap`; all fail on the old code (import error / 404); pytest 402 passed, e2e 48 passed, type-check clean.
+Verified (Pauli, 2026-10-04): Done when holds (commit d2ab8a4; pytest 402 here). Open, asked of the user: when the
+aligner returns exactly the stretch's current beads, the operation still replaces them and drops their reviewed
+marks (Braun's note); the proposal is to refuse it instead ("The aligner gives the same beads; nothing changed",
+409, nothing recorded). Until answered, the behaviour stays as the user decided on 2026-10-04.
 **Done when:** `uv run pytest` passes with the new tests below (each failing before the change); `npm run
 type-check` passes; `npm run test:e2e` passes unchanged.
 
@@ -595,7 +599,8 @@ type-check` passes; `npm run test:e2e` passes unchanged.
   and `undo` returns the `gap` layout.
 
 #### Re-align in the book screen
-Status: todo
+Status: done
+Report: 2026-10-04 — More menu moved to `MoreMenu.vue` (injected selection; `BookView`'s template reads no current-bead state now); "Alignment" heading with "Re-align the selection" (run, or the current bead), status `Re-aligned N beads into M (Ctrl+Z to undo)`, run cleared, first new bead current; list `@scroll` closes the original popover; 2 e2e tests in `review.spec.ts`, both failing on the old code; e2e 50 passed, pytest 402 passed, type-check clean; 20 ArrowDown on 10,000 beads 1.15–1.19 s with More closed, 1.10–1.18 s with it open.
 **Done when:** `npm run type-check` passes; `npm run test:e2e` passes with the new tests below (each failing
 before the change) and `e2e/book-layout.spec.ts` still passing at 1366; `uv run pytest` unchanged; 20 ArrowDown
 on 10,000 beads not worse than ~1.2–1.3 s alone, and also measured once with the More menu open (report both).

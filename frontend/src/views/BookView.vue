@@ -6,6 +6,7 @@ import BeadRow from '@/components/BeadRow.vue'
 import BookPosition from '@/components/BookPosition.vue'
 import BookStatus from '@/components/BookStatus.vue'
 import KeysPanel from '@/components/KeysPanel.vue'
+import MoreMenu from '@/components/MoreMenu.vue'
 import OriginalPopover from '@/components/OriginalPopover.vue'
 import { SHORTCUTS, type KeyedId } from '@/keys'
 import { originalKey, selectionKey, statusKey } from '@/selection'
@@ -26,7 +27,7 @@ const showImportLog = ref(false)
 const showKeys = ref(false)
 // The "More" menu of the second bar (A1): the rare bulk commands. Changes on clicks only (render rule 1 allows it).
 const showMore = ref(false)
-const moreMenu = ref<HTMLElement | null>(null)
+const moreMenu = ref<InstanceType<typeof MoreMenu> | null>(null)
 const importLog = ref<HTMLElement | null>(null)
 // The original-sentence popover (key `o`): read by OriginalPopover.vue only, never by this template (render rule 1).
 const showOriginal = ref(false)
@@ -430,13 +431,6 @@ function include(blockId: number) {
   correct((id) => booksApi.includeBlock(id, blockId))
 }
 
-const BULK = [
-  { action: 'exclude', to: 'start', label: 'Exclude from the start up to here', testid: 'exclude-to-start' },
-  { action: 'include', to: 'start', label: 'Include from the start up to here', testid: 'include-to-start' },
-  { action: 'exclude', to: 'end', label: 'Exclude from here to the end', testid: 'exclude-to-end' },
-  { action: 'include', to: 'end', label: 'Include from here to the end', testid: 'include-to-end' },
-] as const
-
 /** A "More" item (SPEC §3.3): exclude or include every block of the current side up to here or from here on. */
 async function bulk(action: 'exclude' | 'include', to: 'start' | 'end') {
   showMore.value = false
@@ -475,9 +469,6 @@ function toggleOriginal() {
   showMore.value = showImportLog.value = false
 }
 
-/** Whether the current sentence has an original to restore (edited, and its original not empty). */
-const canRestore = computed(() => !!currentSegment()?.original)
-
 async function restoreOriginal() {
   showOriginal.value = showMore.value = false
   const segment = currentSegment()
@@ -485,9 +476,26 @@ async function restoreOriginal() {
   if (await correct((id) => booksApi.restoreOriginal(id, segment.segment_id))) say('Original restored (Ctrl+Z to undo)')
 }
 
+/** "Re-align the selection" (SPEC §3.3): the selected run, or the current bead without one; the new beads start
+ * unreviewed, the run is cleared and the first new bead becomes current. */
+async function realign() {
+  showMore.value = false
+  const bead = currentBead.value
+  if (!bead || !book.value) return
+  const run = runBeads()
+  const stretch = run.length ? run : [bead]
+  const n = stretch.length
+  const before = book.value.beads.length
+  const first = beadIndex.value.get(stretch[0]!.id)!
+  if (await correct((id) => booksApi.realign(id, stretch[0]!.id, stretch[n - 1]!.id), first)) {
+    const m = n + book.value.beads.length - before
+    say(`Re-aligned ${n} bead${n === 1 ? '' : 's'} into ${m} (Ctrl+Z to undo)`)
+  }
+}
+
 /** A click outside the "More" menu or the import log closes it. */
 function onWindowMouseDown(event: MouseEvent) {
-  if (showMore.value && !moreMenu.value?.contains(event.target as Node)) showMore.value = false
+  if (showMore.value && !(moreMenu.value?.$el as HTMLElement | undefined)?.contains(event.target as Node)) showMore.value = false
   if (showImportLog.value && !importLog.value?.contains(event.target as Node)) showImportLog.value = false
 }
 
@@ -605,30 +613,8 @@ onBeforeUnmount(() => {
         <BeadActions class="shrink-0" group="review" :book="book" :disabled="busy || editingSegmentId !== null" @correct="runCorrection" />
         <span class="shrink-0 w-px h-5 bg-bar-rule" />
         <BeadActions class="shrink-0" group="corrections" :book="book" :disabled="busy || editingSegmentId !== null" @correct="runCorrection" />
-        <div ref="moreMenu" class="shrink-0 relative">
-          <button type="button" data-testid="more" :aria-expanded="showMore" title="More commands"
-            :disabled="busy || editingSegmentId !== null" @click="toggleMore"
-            class="h-7 px-2 flex items-center gap-1 rounded text-ink hover:bg-hover disabled:opacity-40 disabled:hover:bg-transparent disabled:cursor-not-allowed"
-            :class="showMore ? 'bg-hover' : ''">
-            More
-            <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 3.5L5 6.5 8 3.5" /></svg>
-          </button>
-          <div v-if="showMore" data-testid="more-menu" role="menu"
-            class="absolute left-0 top-full mt-1.5 z-30 w-[310px] py-1.5 bg-white border border-bar-rule rounded-md shadow-lg">
-            <p class="px-3 pb-1 text-[10.5px] uppercase tracking-wider text-faint">Exclude or include in bulk</p>
-            <button v-for="item in BULK" :key="item.testid" type="button" role="menuitem" :data-testid="item.testid"
-              :disabled="!currentBead" @click="bulk(item.action, item.to)"
-              class="w-full h-[30px] px-3 flex items-center text-left text-ink hover:bg-hover disabled:opacity-40">
-              {{ item.label }}
-            </button>
-            <p class="px-3 pt-2 pb-1 text-[10.5px] uppercase tracking-wider text-faint">Text</p>
-            <button type="button" role="menuitem" data-testid="restore-original-more" :disabled="!canRestore"
-              @click="restoreOriginal"
-              class="w-full h-[30px] px-3 flex items-center text-left text-ink hover:bg-hover disabled:opacity-40">
-              Restore the original sentence
-            </button>
-          </div>
-        </div>
+        <MoreMenu ref="moreMenu" :open="showMore" :disabled="busy || editingSegmentId !== null" @toggle="toggleMore"
+          @bulk="bulk" @restore="restoreOriginal" @realign="realign" />
         <span class="flex-1" />
         <button type="button" data-testid="undo" aria-label="Undo" title="Undo (Ctrl+Z)" :disabled="!book.can_undo || busy || editingSegmentId !== null" @click="undo"
           class="shrink-0 w-7 h-7 flex items-center justify-center rounded text-ink hover:bg-hover disabled:opacity-40 disabled:hover:bg-transparent disabled:cursor-not-allowed">
@@ -641,7 +627,8 @@ onBeforeUnmount(() => {
       </div>
 
       <!-- The bead list is the only scrolling element. -->
-      <div class="flex-1 min-h-0 overflow-auto bg-list">
+      <!-- A scroll closes the original popover, which is placed once and would float away (a write, not a read). -->
+      <div class="flex-1 min-h-0 overflow-auto bg-list" @scroll="showOriginal = false">
         <div class="max-w-[1560px] mx-auto">
           <div class="sticky top-0 z-10 h-7 grid grid-cols-[40px_minmax(0,1fr)_minmax(0,1fr)_96px] items-center bg-list border-b border-bar-rule text-[10.5px] uppercase tracking-wider text-faint">
             <span />
