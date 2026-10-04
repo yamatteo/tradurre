@@ -153,6 +153,8 @@ The corpus is searchable across all projects, from a global search page and from
   words in sequence.
 - Each result is a **bead** (the matched source and target text, with the match highlighted), plus the book
   title and the position in the book.
+- Results are grouped by book, books in library order (most recently worked on first), with each book's number of
+  matches; inside a book, in reading order.
 - **Context on demand:** expanding a result shows the surrounding beads; one click opens the project at that
   bead.
 - Excluded blocks are not searched. Beads not yet reviewed are searchable but marked as such.
@@ -169,6 +171,7 @@ The corpus is searchable across all projects, from a global search page and from
 - **Python 3.14** everywhere, including Colab if the parked aligner (§5) is ever built (the notebook installs it
   with uv rather than using Colab's system Python).
 - **Local-first.** The app runs on the translator's laptop with no network access needed. Data lives in a single SQLite file under `~/.tradurre/`; copying that file is a backup.
+  The app also snapshots it at each start into `~/.tradurre/backups/`, keeping the last 10.
 - **Easy install and upgrade on Windows** through the self-installing launcher; upgrades never lose data.
   Schema changes migrate the existing database automatically.
 - **Never lose work.** Every edit is saved immediately (no "save" button) and is transactional: a failed request

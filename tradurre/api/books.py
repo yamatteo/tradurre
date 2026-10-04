@@ -25,7 +25,7 @@ from tradurre.domain.beads import merge_with_next, move_first_to_previous, move_
 from tradurre.domain.blocks import exclude_block, exclude_range, include_block, include_range
 from tradurre.domain.history import transaction
 from tradurre.domain.invariants import check_project
-from tradurre.domain.search import END, START, _bead_text, search_beads
+from tradurre.domain.search import END, START, _bead_text, count_beads, search_beads
 from tradurre.domain.segments import edit_text, join_with_next, restore_original, split_segment
 from tradurre.models import (
     BookEditRequest,
@@ -36,6 +36,7 @@ from tradurre.models import (
     BookResponse,
     BookReviewedRequest,
     BookRun,
+    BookSearchCount,
     BookSearchResult,
     BookSearchSpan,
     BookSplitBeadRequest,
@@ -291,6 +292,22 @@ def search(
             source=_spans(hit["source"]), target=_spans(hit["target"]), reviewed=hit["reviewed"],
         )
         for hit in search_beads(db, q, side, project_id=book, limit=limit, offset=offset)
+    ]
+
+
+@router.get("/search/books", response_model=list[BookSearchCount])
+def search_counts(
+    q: str = "",
+    side: Literal["source", "target", "either"] = "either",
+    book: str | None = None,
+    db: sqlite3.Connection = Depends(get_db),
+):
+    """The number of beads matching `q` per book, in the order `/search` returns the books."""
+    if book is not None:
+        _book_row(db, book)
+    return [
+        BookSearchCount(book_id=hit["project_id"], title=hit["title"], count=hit["count"])
+        for hit in count_beads(db, q, side, project_id=book)
     ]
 
 

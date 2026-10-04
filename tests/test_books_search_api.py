@@ -94,3 +94,17 @@ def test_context_errors(client, books):
     assert client.get(f"/api/v2/books/{one}/beads/{c}/context").status_code == 404
     assert client.get(f"/api/v2/books/nope/beads/{c}/context").status_code == 404
     assert client.get(f"/api/v2/books/{two}/beads/{c}/context", params={"around": 11}).status_code == 422
+
+
+def test_counts_per_book(client, books):
+    one, two = books
+    counts = client.get("/api/v2/search/books", params={"q": "désœuvr"}).json()
+    # Library order: "Saisons" was imported last, so it was worked on most recently.
+    assert counts == [{"book_id": two, "title": "Saisons", "count": 1}, {"book_id": one, "title": "Contre", "count": 1}]
+    assert [h["book_id"] for h in client.get("/api/v2/search", params={"q": "désœuvr"}).json()] == [two, one]
+    assert client.get("/api/v2/search/books", params={"q": "u", "book": one}).json() == [
+        {"book_id": one, "title": "Contre", "count": 2},
+    ]
+    assert client.get("/api/v2/search/books", params={"q": "ozio", "side": "source"}).json() == []
+    assert client.get("/api/v2/search/books", params={"q": ""}).json() == []
+    assert client.get("/api/v2/search/books", params={"q": "mot", "book": "nope"}).status_code == 404

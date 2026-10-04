@@ -88,23 +88,51 @@ def _bead_text(conn: sqlite3.Connection, bead_id: int) -> dict[str, str]:
     return {side: " ".join(texts) for side, texts in parts.items()}
 
 
-def search_beads(
-    conn: sqlite3.Connection, text: str, side: str = "either", project_id: str | None = None, limit: int = 50,
-    offset: int = 0,
-) -> list[dict]:
-    """Beads matching the query, best first, with the matches marked by START/END in their real text."""
+# Library order, as `GET /books` lists the books.
+_BOOK_ORDER = "p.updated_at DESC, p.title"
+
+
+def count_beads(conn: sqlite3.Connection, text: str, side: str = "either", project_id: str | None = None) -> list[dict]:
+    """The number of matching beads per book with a match, in the order `search_beads` returns the books."""
     query = fts_query(text, side)
     if query is None:
         return []
     sql = (
-        f"SELECT rowid, project_id, highlight(bead_index, 0, '{START}', '{END}'), "
-        f"highlight(bead_index, 1, '{START}', '{END}') FROM bead_index WHERE bead_index MATCH ?"
+        "SELECT b.project_id, p.title, COUNT(*) FROM bead_index "
+        "JOIN beads b ON b.id = bead_index.rowid JOIN projects p ON p.id = b.project_id "
+        "WHERE bead_index MATCH ?"
     )
     params: list = [query]
     if project_id is not None:
-        sql += " AND project_id = ?"
+        sql += " AND bead_index.project_id = ?"
         params.append(project_id)
-    sql += " ORDER BY bm25(bead_index) LIMIT ? OFFSET ?"
+    sql += f" GROUP BY b.project_id ORDER BY {_BOOK_ORDER}"
+    return [{"project_id": pid, "title": title, "count": count} for pid, title, count in conn.execute(sql, params)]
+
+
+def search_beads(
+    conn: sqlite3.Connection, text: str, side: str = "either", project_id: str | None = None, limit: int = 50,
+    offset: int = 0,
+) -> list[dict]:
+    """Beads matching the query, with the matches marked by START/END in their real text.
+
+    Grouped by book, books in library order (most recently updated first, then by title, as `GET /books` lists
+    them), beads in reading order inside each book (SPEC §3.4).
+    """
+    query = fts_query(text, side)
+    if query is None:
+        return []
+    sql = (
+        f"SELECT bead_index.rowid, bead_index.project_id, highlight(bead_index, 0, '{START}', '{END}'), "
+        f"highlight(bead_index, 1, '{START}', '{END}') FROM bead_index "
+        "JOIN beads b ON b.id = bead_index.rowid JOIN projects p ON p.id = b.project_id "
+        "WHERE bead_index MATCH ?"
+    )
+    params: list = [query]
+    if project_id is not None:
+        sql += " AND bead_index.project_id = ?"
+        params.append(project_id)
+    sql += f" ORDER BY {_BOOK_ORDER}, b.ord LIMIT ? OFFSET ?"
     params += [limit, offset]
 
     results = []

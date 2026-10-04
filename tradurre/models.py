@@ -292,6 +292,12 @@ class BookSearchSpan(BaseModel):
     match: bool
 
 
+class BookSearchCount(BaseModel):
+    book_id: str
+    title: str
+    count: int
+
+
 class BookSearchResult(BaseModel):
     bead_id: int
     book_id: str

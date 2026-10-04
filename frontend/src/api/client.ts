@@ -289,6 +289,13 @@ export interface BookSearchSpan {
   match: boolean
 }
 
+/** How many beads in one book match a search. */
+export interface BookSearchCount {
+  book_id: string
+  title: string
+  count: number
+}
+
 export interface BookSearchResult {
   bead_id: number
   book_id: string
@@ -370,6 +377,13 @@ export const booksApi = {
     const params = new URLSearchParams({ q, side, offset: String(offset) })
     if (book) params.set('book', book)
     return booksRequest<BookSearchResult[]>(`/search?${params}`)
+  },
+
+  /** The number of matching beads per book, books in the order `search` returns them. */
+  searchCounts: (q: string, side: SearchSide = 'either', book?: string) => {
+    const params = new URLSearchParams({ q, side })
+    if (book) params.set('book', book)
+    return booksRequest<BookSearchCount[]>(`/search/books?${params}`)
   },
 
   /** The edition export's URL, for a download link: one side's text as reviewed (the server names the file). */

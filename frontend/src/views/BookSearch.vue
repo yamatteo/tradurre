@@ -3,7 +3,7 @@
 // so Back from a book opens the same results again.
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { booksApi, type BookSearchResult, type BookSummary, type ContextBead, type SearchSide } from '@/api/client'
+import { booksApi, type BookSearchCount, type BookSearchResult, type BookSummary, type ContextBead, type SearchSide } from '@/api/client'
 
 const PAGE = 50
 const SIDES: { value: SearchSide; label: string }[] = [
@@ -22,6 +22,14 @@ const books = ref<BookSummary[]>([])
 const bookTitle = computed(() => books.value.find((b) => b.id === bookId.value)?.title ?? '…')
 
 const results = ref<BookSearchResult[] | null>(null)
+// Matches per book, for the summary and the group headers.
+const counts = ref<BookSearchCount[]>([])
+const countOf = computed(() => new Map(counts.value.map((c) => [c.book_id, c.count])))
+const summary = computed(() => {
+  const n = counts.value.reduce((sum, c) => sum + c.count, 0)
+  const m = counts.value.length
+  return `${n} ${n === 1 ? 'result' : 'results'} in ${m} ${m === 1 ? 'book' : 'books'}`
+})
 // Whether the last page was full, so there may be more.
 const more = ref(false)
 const loading = ref(false)
@@ -44,13 +52,19 @@ async function run(offset = 0) {
   if (!offset) contexts.clear()
   if (!q) {
     results.value = null
+    counts.value = []
     more.value = false
     return
   }
   loading.value = true
   try {
-    const page = await booksApi.search(q, side.value, bookId.value ?? undefined, offset)
+    const book = bookId.value ?? undefined
+    const [page, found] = await Promise.all([
+      booksApi.search(q, side.value, book, offset),
+      offset ? null : booksApi.searchCounts(q, side.value, book),
+    ])
     if (mine !== generation) return
+    if (found) counts.value = found
     results.value = offset ? [...(results.value ?? []), ...page] : page
     more.value = page.length === PAGE
   } catch (e) {
@@ -135,11 +149,17 @@ onMounted(async () => {
       <p v-if="error" class="mt-4 text-problem">{{ error }}</p>
       <p v-if="results && !results.length" data-testid="search-empty" class="mt-6 text-muted">No results</p>
 
-      <ul v-if="results?.length" class="mt-4 space-y-3">
-        <li v-for="r in results" :key="r.bead_id" data-testid="search-result" :data-bead-id="r.bead_id"
+      <p v-if="results?.length" data-testid="search-summary" class="mt-4 text-muted">{{ summary }}</p>
+
+      <ul v-if="results?.length" class="mt-2 space-y-3">
+        <template v-for="(r, i) in results" :key="r.bead_id">
+        <li v-if="i === 0 || results[i - 1]!.book_id !== r.book_id" data-testid="result-group" :data-book-id="r.book_id"
+          class="pt-3 first:pt-0 flex items-baseline gap-2">
+          <span class="font-semibold text-[14px] truncate">{{ r.title }}</span> <span class="text-faint">· {{ countOf.get(r.book_id) ?? '…' }} {{ countOf.get(r.book_id) === 1 ? 'result' : 'results' }}</span>
+        </li>
+        <li data-testid="search-result" :data-bead-id="r.bead_id"
           class="bg-list border border-bar-rule rounded-md">
           <div class="flex items-center gap-2 px-3 h-9 border-b border-row-rule text-[12.5px]">
-            <span class="font-semibold truncate" data-testid="result-title">{{ r.title }}</span>
             <span class="text-faint">bead {{ r.position }}</span>
             <span v-if="!r.reviewed" data-testid="result-unreviewed"
               class="px-1.5 rounded-full bg-pill text-pill-ink text-[11px] font-medium">Not reviewed</span>
@@ -167,6 +187,7 @@ onMounted(async () => {
             </div>
           </div>
         </li>
+        </template>
       </ul>
 
       <button v-if="results?.length && more" type="button" data-testid="search-more" :disabled="loading"

@@ -5,7 +5,7 @@ import pytest
 from tradurre.db import get_connection, init_db
 from tradurre.domain.history import transaction
 from tradurre.domain.layer import NewBead, NewBlock, append_beads, create_document
-from tradurre.domain.search import END, START, _unfold_highlight, fts_query, search_beads
+from tradurre.domain.search import END, START, _unfold_highlight, count_beads, fts_query, search_beads
 
 
 def _add_project(conn, project_id, title):
@@ -173,3 +173,45 @@ def test_offset(db):
     both = [h["bead_id"] for h in search_beads(conn, "u", project_id="p1")]
     assert len(both) == 2
     assert [h["bead_id"] for h in search_beads(conn, "u", project_id="p1", offset=1)] == both[1:]
+
+
+def _book(conn, project_id, title, updated_at, texts):
+    """A book whose beads pair `texts[k]` with itself, updated at `updated_at`; return its bead ids."""
+    with transaction(conn):
+        _add_project(conn, project_id, title)
+        (sources,) = create_document(conn, project_id, "source", "fr.txt", "txt", [NewBlock("paragraph", texts)])
+        (targets,) = create_document(conn, project_id, "target", "it.txt", "txt", [NewBlock("paragraph", texts)])
+        beads = append_beads(conn, project_id, [NewBead([s], [t], 0.9, "anchor") for s, t in zip(sources, targets)])
+        conn.execute("UPDATE projects SET updated_at = ? WHERE id = ?", (updated_at, project_id))
+    return beads
+
+
+@pytest.fixture()
+def grouped(tmp_path):
+    """"Aube" (updated first): beads with "mot" at 1 and 3; "Brume" (updated later): "mot" at 2."""
+    conn = get_connection(tmp_path / "test.db")
+    init_db(conn)
+    a = _book(conn, "pa", "Aube", "2026-10-01", ["Un mot.", "Rien.", "Le dernier mot."])
+    b = _book(conn, "pb", "Brume", "2026-10-02", ["Rien.", "Mot à mot."])
+    yield conn, a, b
+    conn.close()
+
+
+def test_results_grouped_by_book_in_reading_order(grouped):
+    conn, a, b = grouped
+    hits = search_beads(conn, "mot")
+    assert [(h["project_id"], h["position"], h["bead_id"]) for h in hits] == [
+        ("pb", 2, b[1]), ("pa", 1, a[0]), ("pa", 3, a[2]),
+    ]
+    assert [h["bead_id"] for h in search_beads(conn, "mot", offset=1, limit=1)] == [a[0]]
+
+
+def test_count_beads(grouped):
+    conn, _, _ = grouped
+    assert count_beads(conn, "mot") == [
+        {"project_id": "pb", "title": "Brume", "count": 1}, {"project_id": "pa", "title": "Aube", "count": 2},
+    ]
+    assert count_beads(conn, "mot", project_id="pa") == [{"project_id": "pa", "title": "Aube", "count": 2}]
+    assert count_beads(conn, "mot", side="target", project_id="pb") == [{"project_id": "pb", "title": "Brume", "count": 1}]
+    assert count_beads(conn, "zanzibar") == []
+    assert count_beads(conn, "") == []

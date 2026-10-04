@@ -33,9 +33,10 @@ test('a word beginning finds beads in every book; Target narrows; words split ac
     await page.getByTestId('search-input').fill(`${t}aa`)
     await page.keyboard.press('Enter')
     await expect(results).toHaveCount(2)
-    await expect(results.filter({ hasText: `First ${t}` })).toHaveCount(1)
-    await expect(results.filter({ hasText: `Second ${t}` })).toHaveCount(1)
-    const second = results.filter({ hasText: `Second ${t}` })
+    // Grouped by book, the book worked on last first.
+    const groups = page.getByTestId('result-group')
+    await expect(groups).toHaveText([`Second ${t} · 1 result`, `First ${t} · 1 result`])
+    const second = results.nth(0)
     // The whole word is marked, not just what was typed.
     await expect(second.getByTestId('result-source').locator('mark')).toHaveText(`${t}aab`)
     await expect(second.getByTestId('result-target').locator('mark')).toHaveCount(0)
@@ -44,7 +45,7 @@ test('a word beginning finds beads in every book; Target narrows; words split ac
     await page.getByTestId('search-side').selectOption('target')
     await page.getByTestId('search-submit').click()
     await expect(results).toHaveCount(1)
-    await expect(results.getByTestId('result-title')).toHaveText(`First ${t}`)
+    await expect(groups).toHaveText([`First ${t} · 1 result`])
     await expect(page).toHaveURL(new RegExp(`side=target`))
 
     await page.getByTestId('search-side').selectOption('either')
@@ -67,12 +68,31 @@ test('the book screen searches in its book; the chip scopes and its × widens', 
   await page.getByTestId('search-input').fill(t)
   await page.keyboard.press('Enter')
   await expect(results).toHaveCount(1)
-  await expect(results.getByTestId('result-title')).toHaveText(`Scoped ${t}`)
+  await expect(page.getByTestId('result-group')).toHaveText([`Scoped ${t} · 1 result`])
 
   await page.getByTestId('search-book-clear').click()
   await expect(page.getByTestId('search-book-chip')).toHaveCount(0)
   await expect(results).toHaveCount(2)
   await expect(page).toHaveURL(new RegExp(`/search\\?q=${t}$`))
+})
+
+test('results come grouped by book with their counts, in reading order inside a book', async ({ page, request }) => {
+  const t = tag()
+  const one = await importBook(request, `Early ${t}`, [`Un ${t}.`, 'Deux.', `Trois ${t}.`], [`Uno ${t}.`, 'Due.', `Tre ${t}.`])
+  const two = await importBook(request, `Late ${t}`, ['Rien.', `Quatre ${t}.`], ['Niente.', `Quattro ${t}.`])
+
+  await page.goto(`/search?q=${t}`)
+  await expect(page.getByTestId('search-summary')).toHaveText('3 results in 2 books')
+  const groups = page.getByTestId('result-group')
+  await expect(groups).toHaveText([`Late ${t} · 1 result`, `Early ${t} · 2 results`])
+  await expect(groups.nth(0)).toHaveAttribute('data-book-id', two.id)
+  await expect(groups.nth(1)).toHaveAttribute('data-book-id', one.id)
+  const results = page.getByTestId('search-result')
+  await expect(results).toHaveCount(3)
+  for (const [k, text] of ['bead 2', 'bead 1', 'bead 3'].entries()) await expect(results.nth(k)).toContainText(text)
+
+  await page.goto(`/search?q=${t}&book=${two.id}`)
+  await expect(page.getByTestId('search-summary')).toHaveText('1 result in 1 book')
 })
 
 test('Context shows the neighbours; Open lands on the bead and Back returns to the results', async ({ page, request }) => {

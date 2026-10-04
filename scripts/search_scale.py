@@ -2,8 +2,8 @@
 
     uv run python scripts/search_scale.py
 
-Builds 40 books × 2,500 beads of pseudo-words in a temporary database, then times `search_beads` on the queries
-most likely to be slow (short word beginnings rank and highlight many matches). SPEC §5: under a second. Output
+Builds 40 books × 2,500 beads of pseudo-words in a temporary database, then times `search_beads` and `count_beads` on
+the queries most likely to be slow (short word beginnings sort, highlight and count many matches). SPEC §5: under a second. Output
 goes to the terminal only; nothing is stored.
 """
 
@@ -18,7 +18,7 @@ from pathlib import Path
 from tradurre.db import get_connection, init_db
 from tradurre.domain.history import transaction
 from tradurre.domain.layer import NewBead, NewBlock, append_beads, create_document
-from tradurre.domain.search import search_beads
+from tradurre.domain.search import count_beads, search_beads
 
 SYLLABLES = ["de", "la", "re", "mi", "to", "pa", "an", "ou", "in", "ch", "es", "ri", "ve", "so", "lu", "ne", "ta",
              "co", "pi", "ma", "ga", "bo", "fe", "su", "di", "on", "ar", "el", "ui", "te"]
@@ -61,13 +61,13 @@ def _build(conn, books: int, beads: int, rng: random.Random, vocabulary: list[st
     return first
 
 
-def _time(conn, runs: int, query: str, **kwargs) -> tuple[float, float, int]:
-    """Median and max milliseconds over `runs` runs, and the number of results."""
+def _time(conn, runs: int, query: str, function=search_beads, **kwargs) -> tuple[float, float, int]:
+    """Median and max milliseconds over `runs` runs, and the number of results (of books, for `count_beads`)."""
     times = []
     hits = 0
     for _ in range(runs):
         start = time.perf_counter()
-        hits = len(search_beads(conn, query, **kwargs))
+        hits = len(function(conn, query, **kwargs))
         times.append((time.perf_counter() - start) * 1000)
     return statistics.median(times), max(times), hits
 
@@ -104,6 +104,8 @@ def main(argv: list[str] | None = None) -> int:
                 ("one-letter prefix, source", "d", {"side": "source"}),
                 ("one-letter prefix, offset 200", "d", {"offset": 200}),
                 ("full word, one book", word, {"project_id": "book0"}),
+                ("counts, one-letter prefix", "d", {"function": count_beads}),
+                ("counts, full word", word, {"function": count_beads}),
             ]
             worst = 0.0
             for label, query, kwargs in queries:
