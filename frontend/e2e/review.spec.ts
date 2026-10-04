@@ -103,3 +103,71 @@ test('Highlight multi-segment counts beads with more than one segment on a side'
   await expect(merged).toHaveAttribute('data-problem', 'true')
   await expect(merged.getByTestId('problem-badge')).toHaveText(/^\s*2:2 · 1\.00\s*$/)
 })
+
+function reviewed(page: Page) {
+  return page.getByTestId('bead-row').evaluateAll((els) => els.map((el) => el.getAttribute('data-reviewed')))
+}
+
+function inRun(page: Page) {
+  return page.getByTestId('bead-row').evaluateAll((els) => els.map((el) => el.getAttribute('data-in-run')))
+}
+
+test('Shift+↓ selects a run, r marks it in one undo step', async ({ page, request }) => {
+  const { id } = await importBook(request, 'Run')
+  await open(page, id)
+  await page.keyboard.press('Shift+ArrowDown')
+  await page.keyboard.press('Shift+ArrowDown')
+  await expect.poll(() => inRun(page)).toEqual(['true', 'true', 'true'])
+  await expect(page.getByTestId('status')).toHaveText('3 beads selected (1–3). R marks them all reviewed.')
+  await page.keyboard.press('r')
+  await expect.poll(() => reviewed(page)).toEqual(['true', 'true', 'true'])
+  await expect.poll(() => inRun(page)).toEqual(['true', 'true', 'true'])
+  await page.keyboard.press('Control+z')
+  await expect.poll(() => reviewed(page)).toEqual(['false', 'false', 'false'])
+  await expect.poll(() => inRun(page)).toEqual(['false', 'false', 'false'])
+})
+
+test('r on a run with mixed marks marks them all', async ({ page, request }) => {
+  const { id } = await importBook(request, 'Run mixed')
+  await open(page, id)
+  await page.keyboard.press('ArrowDown')
+  await page.keyboard.press('r')
+  await expect.poll(() => reviewed(page)).toEqual(['false', 'true', 'false'])
+  await page.keyboard.press('ArrowUp')
+  await page.keyboard.press('Shift+ArrowDown')
+  await page.keyboard.press('Shift+ArrowDown')
+  await page.keyboard.press('r')
+  await expect.poll(() => reviewed(page)).toEqual(['true', 'true', 'true'])
+  await page.keyboard.press('r')
+  await expect.poll(() => reviewed(page)).toEqual(['false', 'false', 'false'])
+})
+
+test('Shift+click selects up to a bead; a plain ↓ and Esc clear the run', async ({ page, request }) => {
+  const { id, book } = await importBook(request, 'Run clear')
+  await open(page, id)
+  await row(page, book.beads[2].id).locator('[data-cell="target"]').click({ modifiers: ['Shift'] })
+  await expect.poll(() => inRun(page)).toEqual(['true', 'true', 'true'])
+  await expect(current(page)).toHaveAttribute('data-bead-id', String(book.beads[2].id))
+  await page.keyboard.press('ArrowUp')
+  await expect.poll(() => inRun(page)).toEqual(['false', 'false', 'false'])
+  await page.keyboard.press('Shift+ArrowDown')
+  await expect.poll(() => inRun(page)).toEqual(['false', 'true', 'true'])
+  await page.keyboard.press('Escape')
+  await expect.poll(() => inRun(page)).toEqual(['false', 'false', 'false'])
+  await expect(current(page)).toHaveAttribute('data-bead-id', String(book.beads[2].id))
+})
+
+test('R marks everything up to here reviewed', async ({ page, request }) => {
+  const { id } = await importBook(request, 'Up to here')
+  await open(page, id)
+  await page.keyboard.press('ArrowDown')
+  await page.keyboard.press('Shift+R')
+  await expect.poll(() => reviewed(page)).toEqual(['true', 'true', 'false'])
+  await expect(page.getByTestId('status')).toHaveText('Reviewed up to here (2 beads)')
+  await page.keyboard.press('Shift+R')
+  await expect(page.getByTestId('status')).toHaveText('Already reviewed up to here')
+  await page.keyboard.press('ArrowDown')
+  await page.getByTestId('reviewed-up-to-here').click()
+  await expect.poll(() => reviewed(page)).toEqual(['true', 'true', 'true'])
+  await expect(page.getByTestId('status')).toHaveText('Reviewed up to here (1 bead)')
+})

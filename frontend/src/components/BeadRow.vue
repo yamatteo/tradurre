@@ -15,9 +15,10 @@ const currentSide = computed<Side | null>(() => (current.value ? selection.curre
 const currentSegmentId = computed(() => (current.value ? selection.currentSegmentId.value : null))
 const editingSegmentId = computed(() => (current.value ? selection.editingSegmentId.value : null))
 const problem = computed(() => isProblem(props.bead, props.multi))
+const inRun = computed(() => selection.inRun[props.bead.id] === true)
 
 const emit = defineEmits<{
-  select: [beadId: number, side: Side, segmentId: number | null]
+  select: [beadId: number, side: Side, segmentId: number | null, extend: boolean]
   edit: [segmentId: number]
   save: [segmentId: number, text: string]
   cancel: []
@@ -90,10 +91,11 @@ const cells = computed(() =>
 <template>
   <!-- A1's grid: gutter mark | source | target | meta. Every state changes colours only, never the row's height. -->
   <div :data-bead-id="bead.id" :data-current="current" :data-side="current ? currentSide : undefined"
-    :data-reviewed="bead.reviewed" :data-problem="problem" data-testid="bead-row"
+    :data-reviewed="bead.reviewed" :data-problem="problem" :data-in-run="inRun" data-testid="bead-row"
     class="relative grid grid-cols-[40px_minmax(0,1fr)_minmax(0,1fr)_96px] border-b border-row-rule scroll-mt-7"
-    :class="current ? 'outline-[1.5px] outline-accent -outline-offset-[1.5px]' : ''">
-    <div class="flex justify-center pt-[11px]">
+    :class="[current ? 'outline-[1.5px] outline-accent -outline-offset-[1.5px]' : '', inRun ? 'bg-run' : '']">
+    <!-- The 3 px left border is always there, only recoloured for a run: paint-only (render rule 2). -->
+    <div class="flex justify-center pt-[11px] border-l-[3px]" :class="inRun ? 'border-accent' : 'border-transparent'">
       <svg v-if="bead.reviewed" aria-label="Reviewed" role="img" width="14" height="14" viewBox="0 0 14 14"
         class="text-reviewed" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
         stroke-linejoin="round"><path d="M2.5 7.5l3 3 6-7" /></svg>
@@ -106,7 +108,7 @@ const cells = computed(() =>
         cell.side === 'target' ? 'border-l border-row-rule' : '',
         current && currentSide === cell.side ? 'bg-current-side' : '',
       ]"
-      @click="emit('select', bead.id, cell.side, null)">
+      @click="emit('select', bead.id, cell.side, null, $event.shiftKey)">
       <span v-if="cell.blocks.length === 0" class="font-ui text-[12.5px] italic text-absent">Not in this edition</span>
       <div v-for="block in cell.blocks" :key="block.blockId" :data-block-kind="block.kind"
         :class="block.kind === 'heading' ? 'font-semibold' : ''">
@@ -122,7 +124,7 @@ const cells = computed(() =>
           <span v-else :data-segment-id="seg.segment_id" :data-current-segment="currentSegmentId === seg.segment_id"
             class="border-b-2"
             :class="currentSegmentId === seg.segment_id ? 'bg-current-segment border-accent' : 'border-transparent'"
-            @click.stop="emit('select', bead.id, cell.side, seg.segment_id)"
+            @click.stop="emit('select', bead.id, cell.side, seg.segment_id, $event.shiftKey)"
             @dblclick.stop="emit('edit', seg.segment_id)">{{ seg.text }}</span>
         </template>
       </div>

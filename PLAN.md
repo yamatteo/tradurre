@@ -36,7 +36,7 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
   gold book scores below 0.95. A typical book is 1,000–5,000 sentences a side; performance targets are at 5,000
   beads. Order: Stage 4 → Stage 6 → Stage 7 (v0.2). Then the translator reviews *Contrefeu* in v0.2 for a true
   gold (the current one was made by the user, the developer), and maybe a second book, to score the aligner again.
-- `uv run pytest`: 391 passed, also on a fresh clone (tests read only committed synthetic fixtures; `-m library`
+- `uv run pytest`: 388 passed, also on a fresh clone (tests read only committed synthetic fixtures; `-m library`
   tests run only where `library/contrefeu.*.pdf` exists, and assert counts only).
 - `npm run type-check` passes; releases build with `npm run build`. `npm run test:e2e` (35 tests) runs on its own
   backend (:8001, throwaway `.e2e.db`) and Vite (:5174), never the user's database. Setup per machine: `npx
@@ -326,6 +326,9 @@ the top of the book to the current one. The skim review is gone from SPEC, so it
 #### Remove skim
 Status: done
 Report: 2026-10-04 — `skim` gone from `set_reviewed`, `BookReviewedRequest`, the API and `client.ts`; deleted the four named skim tests plus `test_review_mark_stops_coalescing` (skim-only too), the roundtrip's skim draw; history test kind renamed `"skim"` → `"streak"`; new `test_reviewed_run_is_one_undo`, `test_reviewed_ignores_an_old_skim_field`; pytest 388 passed (391 − 5 + 2), e2e 35 passed, type-check and build clean; `grep skim` matches only that compatibility test, which must send the field.
+Verified (Pauli, 2026-10-04): holds (commit dd4a9a8; pytest 388 passed here). The Done when's grep contradicted
+the required compatibility test and the "leave `test_domain_history.py`" instruction: my wording, not Braun's
+error; the rename to `"streak"` and the extra skim-only test deletion are accepted.
 **Done when:** `uv run pytest` passes (skim tests removed, new ones below); `npm run type-check` and `npm run
 test:e2e` pass unchanged; `grep -rn skim tradurre frontend/src tests` finds nothing.
 
@@ -344,7 +347,8 @@ test:e2e` pass unchanged; `grep -rn skim tradurre frontend/src tests` finds noth
 - Stored `skim_review` operations: none exist outside tests (no user data, see "Current state"); no migration.
 
 #### Runs and "up to here" in the book screen
-Status: todo
+Status: done
+Report: 2026-10-04 — run state in `BookView` (`runAnchorId`, `inRun` by difference, `runBounds`; `select(…, extend)` and `correct(…, keepRun)` handle clearing), Shift+↑/↓ and Shift+click, `r` on a run, `R` and the "Up to here" button, run style via an always-present gutter border, run summary in `BookStatus`, three Review entries in `SHORTCUTS`; 4 new e2e tests in `review.spec.ts`; e2e 39 passed (no chip fallback needed at 1366), pytest 388 passed, type-check clean; screenshot `scratchpad/run-1366.png`; 20 ArrowDown on 10,000 beads 1.08–1.15 s alone.
 **Done when:** `npm run type-check` passes; `npm run test:e2e` passes with the new tests in
 `frontend/e2e/review.spec.ts` and `e2e/book-layout.spec.ts` still passing at 1366; `uv run pytest` unchanged; the
 10,000-bead "20 ArrowDown" time not worse than ~1.2–1.3 s alone; the `Report:` names a screenshot at 1366 × 768
@@ -413,16 +417,20 @@ end". Agreed (user, 2026-10-04): one operation, one undo; range *include* skips 
   uppercase faint), four items "Exclude from the start up to here", "Include from the start up to here", "Exclude
   from here to the end", "Include from here to the end" (`data-testid="exclude-to-start"`, `include-to-start`,
   `exclude-to-end`, `include-to-end`), 30 px rows; closed by Esc, a click outside or choosing an item. No keys.
+  Esc precedence in `onKey`: shortcuts panel, import log, More menu, selected run. Opening "More" closes the
+  import log and vice versa. Its open state is a `BookView` ref like `showImportLog` (it changes on clicks only, so
+  the render rule allows it in the template).
   `e2e/book-layout.spec.ts` must still pass at 1366; if "More" makes the second bar overflow, apply the chip
   fallback of "Reviewed runs" (if not applied yet), and nothing else.
   They act on the current bead and side; after
   success `say('Excluded N blocks (Ctrl+Z to undo)')` / `Included N blocks`, N = the difference in the book's
   excluded-block count.
 - Tests (`tests/test_domain_blocks.py`, `tests/test_books_corrections_api.py`):
-  exclude to start / to end take the right blocks and leave invariants I1–I5 holding (use the existing checker);
+  exclude to start / to end take the right blocks and leave invariants I1–I5 holding (`tradurre.domain.invariants.check_project` returns no errors);
   one undo restores everything; a straddling block goes whole; include to start skips a `page_number` block and
-  restores a `front_matter` one; the error cases. `review.spec.ts`: "Exclude to start" on the second bead hides
-  the first bead's source text, "Show excluded" reveals it, Ctrl+Z brings it back.
+  restores a `front_matter` one; the error cases. `review.spec.ts`: "Exclude from the start up to here" on the second bead, source side,
+  excludes the current bead's own block too ("up to here" is inclusive): the source texts of beads 1 and 2 leave
+  the list, "Show excluded" shows them as two excluded rows, Ctrl+Z brings both back in one step.
 - Don't change the single-block exclude/include behaviour or keys.
 
 ### Original text and revert

@@ -34,7 +34,6 @@ watch(currentBeadId, (id, old) => {
   if (old !== null && old !== undefined) delete currentRow[old]
   if (id !== null) currentRow[id] = true
 }, { flush: 'sync' })
-provide(selectionKey, { currentRow, currentBeadId, currentSide, currentSegmentId, editingSegmentId })
 provide(statusKey, status)
 
 const reviewedCount = computed(() => book.value?.beads.filter((b) => b.reviewed).length ?? 0)
@@ -44,6 +43,38 @@ const currentBead = computed<BookBead | null>(() => {
   const i = currentBeadId.value === null ? undefined : beadIndex.value.get(currentBeadId.value)
   return i === undefined ? null : book.value!.beads[i]!
 })
+
+// The selected run (SPEC §3.3 "Reviewed marks"): the beads from the anchor to the current bead, both included. A run
+// exists when the anchor is set and differs from the current bead. `inRun` is updated by difference, like
+// `currentRow`, so a Shift+arrow wakes only the rows whose membership changed (Stage 2 scale rule).
+const runAnchorId = ref<number | null>(null)
+const inRun = shallowReactive<Record<number, true>>({})
+const runRange = computed<[number, number] | null>(() => {
+  if (runAnchorId.value === null || currentBeadId.value === null || runAnchorId.value === currentBeadId.value) return null
+  const a = beadIndex.value.get(runAnchorId.value)
+  const c = beadIndex.value.get(currentBeadId.value)
+  if (a === undefined || c === undefined) return null
+  return [Math.min(a, c), Math.max(a, c)]
+})
+const runBounds = computed(() => {
+  const range = runRange.value
+  return range && { first: range[0] + 1, last: range[1] + 1, size: range[1] - range[0] + 1 }
+})
+watch(runRange, (range) => {
+  const ids = new Set(range ? book.value!.beads.slice(range[0], range[1] + 1).map((b) => b.id) : [])
+  for (const key of Object.keys(inRun)) if (!ids.has(Number(key))) delete inRun[Number(key)]
+  for (const id of ids) if (!inRun[id]) inRun[id] = true
+}, { flush: 'sync' })
+provide(selectionKey, { currentRow, currentBeadId, currentSide, currentSegmentId, editingSegmentId, inRun, runBounds })
+
+function runBeads(): BookBead[] {
+  const range = runRange.value
+  return range ? book.value!.beads.slice(range[0], range[1] + 1) : []
+}
+
+function clearRun() {
+  runAnchorId.value = null
+}
 
 type Item = { type: 'bead'; bead: BookBead } | { type: 'excluded'; block: BookExcludedBlock }
 
@@ -79,7 +110,13 @@ function firstSegment(bead: BookBead, side: Side): number | null {
   return bead[side][0]?.segment_id ?? null
 }
 
-function select(beadId: number, side: Side, segmentId: number | null) {
+/** Select a bead, side and segment. `extend` (Shift) grows the run from its anchor; any other change of bead clears it. */
+function select(beadId: number, side: Side, segmentId: number | null, extend = false) {
+  if (extend) {
+    if (runAnchorId.value === null) runAnchorId.value = currentBeadId.value
+  } else if (beadId !== currentBeadId.value) {
+    clearRun()
+  }
   currentBeadId.value = beadId
   currentSide.value = side
   const bead = book.value!.beads[beadIndex.value.get(beadId)!]!
@@ -89,12 +126,12 @@ function select(beadId: number, side: Side, segmentId: number | null) {
   })
 }
 
-function moveBead(delta: number) {
+function moveBead(delta: number, extend = false) {
   const beads = book.value?.beads
   if (!beads?.length) return
   const i = currentBeadId.value === null ? -1 : beadIndex.value.get(currentBeadId.value)!
   const next = Math.min(Math.max(i + delta, 0), beads.length - 1)
-  select(beads[next]!.id, currentSide.value, null)
+  select(beads[next]!.id, currentSide.value, null, extend)
 }
 
 function moveSegment(delta: number) {
@@ -149,10 +186,12 @@ function reconcile(old: Book, next: Book): Book {
 
 /**
  * Send one correction and show its result. The current bead stays if it still exists, else the bead now at its
- * old index (clamped); `selectIndex` overrides that (after a split). Errors go to the status line.
+ * old index (clamped); `selectIndex` overrides that (after a split). Errors go to the status line. Every correction
+ * clears the selected run except the review marks (`keepRun`). Resolves to whether it succeeded.
  */
-async function correct(request: (id: string) => Promise<Book>, selectIndex?: number) {
-  if (busy.value || !book.value) return
+async function correct(request: (id: string) => Promise<Book>, selectIndex?: number, keepRun = false): Promise<boolean> {
+  if (busy.value || !book.value) return false
+  if (!keepRun) clearRun()
   busy.value = true
   const old = book.value
   try {
@@ -165,15 +204,17 @@ async function correct(request: (id: string) => Promise<Book>, selectIndex?: num
     const beads = book.value.beads
     if (!beads.length) {
       currentBeadId.value = null
-      return
+      return true
     }
     let i = selectIndex ?? beadIndex.value.get(currentBeadId.value ?? -1) ?? oldIndex
     i = Math.min(Math.max(i, 0), beads.length - 1)
     const bead = beads[i]!
     const keep = bead[side].some((s) => s.segment_id === segmentId)
     select(bead.id, side, keep ? segmentId : null)
+    return true
   } catch (e) {
     say((e as Error).message)
+    return false
   } finally {
     busy.value = false
   }
@@ -206,13 +247,31 @@ function runCorrection(action: Correction) {
       return startEditing()
     case 'join':
       return joinNext()
-    case 'reviewed':
-      return correct((id) => booksApi.setReviewed(id, [bead.id], !bead.reviewed))
+    case 'reviewed': {
+      const run = runBeads()
+      if (!run.length) return correct((id) => booksApi.setReviewed(id, [bead.id], !bead.reviewed))
+      // A run: mark all if any is unreviewed, else clear all; one request, one undo.
+      const flag = run.some((b) => !b.reviewed)
+      return correct((id) => booksApi.setReviewed(id, run.map((b) => b.id), flag), undefined, true)
+    }
+    case 'up-to-here':
+      return reviewUpToHere()
     case 'exclude': {
       const segment = currentSegment()
       if (!segment) return say(`The bead has no ${side} segment`)
       return correct((id) => booksApi.excludeBlock(id, segment.block_id))
     }
+  }
+}
+
+/** `R`: mark every bead from the first to the current one reviewed; the run, if any, is kept. */
+async function reviewUpToHere() {
+  const bead = currentBead.value
+  if (!bead) return
+  const ids = book.value!.beads.slice(0, beadIndex.value.get(bead.id)! + 1).filter((b) => !b.reviewed).map((b) => b.id)
+  if (!ids.length) return say('Already reviewed up to here')
+  if (await correct((id) => booksApi.setReviewed(id, ids, true), undefined, true)) {
+    say(`Reviewed up to here (${ids.length} bead${ids.length === 1 ? '' : 's'})`)
   }
 }
 
@@ -285,6 +344,7 @@ const handlers: Record<KeyedId, (event: KeyboardEvent) => void> = {
   'next-unreviewed': nextUnreviewed,
   'show-keys': () => (showKeys.value = true),
   reviewed: () => runCorrection('reviewed'),
+  'reviewed-up-to-here': () => runCorrection('up-to-here'),
   merge: () => runCorrection('merge'),
   split: () => runCorrection('split'),
   exclude: () => runCorrection('exclude'),
@@ -307,6 +367,11 @@ function onKey(event: KeyboardEvent) {
     showImportLog.value = false
     return
   }
+  if (event.key === 'Escape' && runRange.value) {
+    event.preventDefault()
+    clearRun()
+    return
+  }
   const key = event.key.toLowerCase()
   if (event.altKey && !event.ctrlKey && !event.metaKey && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
     event.preventDefault()
@@ -320,6 +385,11 @@ function onKey(event: KeyboardEvent) {
     return
   }
   if (event.ctrlKey || event.metaKey || event.altKey) return
+  if (event.shiftKey && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
+    event.preventDefault()
+    moveBead(event.key === 'ArrowUp' ? -1 : 1, true)
+    return
+  }
   const action = actions.get(event.key)
   if (!action) return
   event.preventDefault()

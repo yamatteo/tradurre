@@ -9,6 +9,10 @@ export interface Selection {
   currentSide: Readonly<Ref<Side>>
   currentSegmentId: Readonly<Ref<number | null>>
   editingSegmentId: Readonly<Ref<number | null>>
+  /** `{[beadId]: true}` for the beads of the selected run, reactive per key like `currentRow`. */
+  inRun: Readonly<Record<number, true>>
+  /** The selected run's 1-based bead numbers, or null without a run: for the bottom bar. */
+  runBounds: Readonly<Ref<{ first: number; last: number; size: number } | null>>
 }
 
 export const selectionKey: InjectionKey<Selection> = Symbol('selection')
