@@ -198,28 +198,6 @@ test('selecting a row moves no other row', async ({ page, request }) => {
   expect((await below.boundingBox())!.y).toBe(before)
 })
 
-test('r on a 10,000-bead book is fast', async ({ page, request }) => {
-  test.setTimeout(120_000)
-  const n = 10_000
-  const source = Array.from({ length: n }, (_, k) => `Phrase numéro ${k}.`).join('\n\n')
-  const target = Array.from({ length: n }, (_, k) => `Frase numero ${k}.`).join('\n\n')
-  const { id, book } = await importBook(request, 'Big', source, target)
-  await page.goto(`/book/${id}`)
-  await expect(page.locator(`[data-bead-id="${book.beads[n - 1].id}"]`)).toBeAttached({ timeout: 60_000 })
-  for (let k = 1; k <= 20; k++) await page.keyboard.press('ArrowDown')
-  const row = page.locator(`[data-bead-id="${book.beads[20].id}"]`)
-  await expect(row).toHaveAttribute('data-current', 'true')
-
-  const start = Date.now()
-  await page.keyboard.press('r')
-  await expect(row).toHaveAttribute('data-reviewed', 'true')
-  const elapsed = Date.now() - start
-
-  console.log(`10,000-bead book: r to reviewed border ${elapsed} ms`)
-  test.info().annotations.push({ type: 'timing', description: `r to reviewed border ${elapsed} ms` })
-  expect(elapsed).toBeLessThan(1_500)
-})
-
 function edited(page: Page) {
   return page.locator('[data-edited="true"]')
 }

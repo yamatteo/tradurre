@@ -33,7 +33,8 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
   undo/redo, problem navigation (`p`/`P`), selected runs (Shift+↑/↓, Shift+click) marked with `r`, and `R` "up to
   here", range exclude/include in the "More" menu, edited sentences marked with their original on `o` and
   "Restore original", re-align of the selection (More menu), cut/copy/paste of whole sentences (Ctrl+X/C/V).
-  Restyled to design variant A; the 5,000-bead check closes Stage 4.
+  Restyled to design variant A. The 5,000-bead check passes alone (load ~1.5 s, a correction 0.2–0.4 s, smooth
+  scrolling); isolating the timing tests closes Stage 4.
 - **Re-planned with the user (2026-10-04), SPEC changed accordingly:** review is one mode, problem-first: jump to
   the next likely problem, correct, mark one bead, a selected run, or everything up to here as reviewed. The
   timed scroll "skim review" is dropped. The Colab aligner is **parked** (SPEC §3.2, §5): it returns only if a
@@ -42,7 +43,8 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
   gold (the current one was made by the user, the developer), and maybe a second book, to score the aligner again.
 - `uv run pytest`: 404 passed, also on a fresh clone (tests read only committed synthetic fixtures; `-m library`
   tests run only where `library/contrefeu.*.pdf` exists, and assert counts only).
-- `npm run type-check` passes; releases build with `npm run build`. `npm run test:e2e` (60 tests) runs on its own
+- `npm run type-check` passes; releases build with `npm run build`. `npm run test:e2e` (61 tests; red at HEAD under parallel workers until the
+  timing tests run alone, next task) runs on its own
   backend (:8001, throwaway `.e2e.db`) and Vite (:5174), never the user's database. Setup per machine: `npx
   playwright install chromium` (on Ubuntu 26.04 with `PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=ubuntu24.04-x64`); tests
   use the full Chromium headless (`channel: 'chromium'`).
@@ -734,8 +736,13 @@ SPEC §3.3: cut, copy and paste "as usual". Frontend only, `BookView.vue` (and t
   equals that selection's `toString()` and the status is not "Sentence copied".
 
 ### Scale check at 5,000 beads
-Status: blocked
+Status: done
 Report: 2026-10-04 — new e2e test "a 5,000-bead book: load, corrections and scrolling" in `book-view.spec.ts`, no app change. Alone (three runs): load 1515/1541/1535 ms, Alt+↓ 381/391/389, Ctrl+Z 299/305/304, m 191/199/195, Ctrl+Z 191/190/191 ms, scroll 0 long tasks (the wheel scrolls ~30,000 px; a 150 ms task injected through `setTimeout` is caught and fails the test, so the check is live). Blocked: in the full `npm run test:e2e` (default parallel workers, one shared backend) it fails in 3 of 3 runs: Alt+↓ 1466/1338/1375 ms, the first Ctrl+Z 466/580 ms, while the 10,000-bead tests import on the same server; with `--workers=1` all 61 pass (Alt+↓ 419 ms). Commit 80b097a first recorded this task as done with e2e 61 passed: wrong, corrected here. Decision needed: how to isolate the timing test (e.g. serial, its own project, or measured apart from the suite).
+Resolved (Pauli, 2026-10-04): the measurement holds: alone, every number is well inside its bound (commit
+80b097a; the scroll check was shown live by an injected 150 ms task). The failure is the test environment, not the
+app: in the parallel suite the move waits behind other workers' 10,000-bead imports on the same backend (one
+SQLite writer), and `--workers=1` passes all 61. The default `npm run test:e2e` is red at HEAD until "Timing tests
+run last, alone" below, which is the next task.
 **Done when:** the new test below passes three runs in a row (report each run's numbers); `npm run type-check`
 passes; the rest of `npm run test:e2e` and `uv run pytest` unchanged.
 
@@ -754,6 +761,31 @@ measures: **if a bound fails, don't optimize and don't loosen it**: stop (`block
     pushed to a `window` array), hover the list, 20 × `page.mouse.wheel(0, 1500)` with 50 ms between, then 200 ms
     more; the longest long task < 100 ms (none at all is fine).
 - No change to app code.
+
+### Timing tests run last, alone
+Status: done
+Report: 2026-10-04 — the three timing tests moved unchanged to `e2e/scale.spec.ts` (serial), project `scale` depends on `e2e` in `playwright.config.ts`, CLAUDE.md line; the 5,000-bead test also times a second Alt+↓/Ctrl+Z. Default `npm run test:e2e` 61 passed three runs in a row; 5,000-bead lines: load 1425/1392/1502 ms, Alt+↓ 404/420/420, Ctrl+Z 329/337/317, m 201/201/215, Ctrl+Z 215/201/202, Alt+↓ again 344/327/310, Ctrl+Z again 394/418/326 ms, scroll 0 long tasks; `--project=e2e` lists 58; pytest 404 passed, type-check clean.
+**Done when:** the default `npm run test:e2e` (no `--workers` flag) passes three runs in a row, 61 tests, with the
+three timing tests in project `scale` (report each run's 5,000-bead line); `npm run type-check` passes; `uv run
+pytest` unchanged.
+
+Decided (Pauli, 2026-10-04): the timing tests measure the app, so nothing else may run against the shared e2e
+backend while they do. Playwright projects with a dependency, not a global `workers: 1` (which would make the
+whole suite ~2× slower for three tests).
+- New `frontend/e2e/scale.spec.ts`: **move** (cut, not copy) the three timing tests there, bodies and bounds
+  unchanged: "a 10,000-bead book loads and navigates within the limits" and "a 5,000-bead book: load, corrections
+  and scrolling" from `book-view.spec.ts`, "r on a 10,000-bead book is fast" from `book-corrections.spec.ts`. Copy
+  the helpers they use (`importBook` without the `gap` restore, which they never need; `current`). At the top:
+  `test.describe.configure({ mode: 'serial' })`, so they run one after another in one worker.
+- In the 5,000-bead test, after the first Ctrl+Z, time a **second** Alt+↓ and its Ctrl+Z the same way (same
+  bound, < 500 ms each) and log them as `Alt+↓ again` / `Ctrl+Z again`: alone the first move costs ~385 ms against
+  ~195 ms for `m`, and the second tells whether that is the move or a first-correction warm-up.
+- `frontend/playwright.config.ts`: `projects: [{ name: 'e2e', testIgnore: /scale\.spec\.ts/ }, { name: 'scale',
+  testMatch: /scale\.spec\.ts/, dependencies: ['e2e'] }]`; `use`, `webServer` and the rest stay top-level. So
+  `npm run test:e2e` runs everything, the timing tests only after every other test has finished (and not at all
+  if one failed: the run is red anyway); `npx playwright test --project=e2e` skips them.
+- `CLAUDE.md`, the `npm run test:e2e` line: add "the timing tests (`e2e/scale.spec.ts`) run last, alone".
+- No app code changes.
 
 ---
 

@@ -16,6 +16,11 @@ export default defineConfig({
     // The full Chromium in headless mode: the separate headless-shell build is not needed.
     channel: 'chromium',
   },
+  // The timing tests (e2e/scale.spec.ts) run last, alone: after every other test, so nothing shares the backend.
+  projects: [
+    { name: 'e2e', testIgnore: /scale\.spec\.ts/ },
+    { name: 'scale', testMatch: /scale\.spec\.ts/, dependencies: ['e2e'] },
+  ],
   webServer: [
     {
       command: 'rm -f ../.e2e.db ../.e2e.db-wal ../.e2e.db-shm && uv run uvicorn tradurre.app:app --port 8001',
