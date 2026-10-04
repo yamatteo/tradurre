@@ -18,7 +18,7 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
   `/pauli` refines them.
 - Completed stages move to `PLAN.<yymmdd>.Stage<n>.md`, leaving a pointer and a short summary here.
 
-## Current state, in brief (2026-10-04)
+## Current state, in brief (2026-10-05)
 
 - **One model since Stage 7.** The v0.1 code is gone (migration 6 drops `pairs`, `translation_memory` and the
   v0.1 projects; no `/api/v1`, no TipTap, no old Colab aligner). Books (migrations 2–5: documents, blocks, segments,
@@ -38,7 +38,8 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
   Stage 7: search grouped by book, the library order, database snapshots (local-time names) and the v1
   retirement (code and docs) done; next the release (fixtures, smoke script, local restore dates, the Windows checklist
   done; rc1 run on Windows: PDF runtime and uv upgrade problems): a clear PDF message, the launcher's
-  VC++ runtime and upgrade retry, rc2, a second Windows run, then v0.2.0. On the reference book the problem flags catch
+  VC++ runtime and upgrade retry, rc2, and its Windows run (all steps pass) done; next the version bump to
+  0.2.0, the developer's tag, and one run of the published launcher. On the reference book the problem flags catch
   none of the 15 real errors: review is reading-first; better signals come after v0.2.
 - **Re-planned with the user (2026-10-04), SPEC changed accordingly:** review is one mode, problem-first: jump to
   the next likely problem, correct, mark one bead, a selected run, or everything up to here as reviewed. The
@@ -46,7 +47,7 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
   gold book scores below 0.95. A typical book is 1,000–5,000 sentences a side; performance targets are at 5,000
   beads. Order: Stage 6 → Stage 7 (v0.2), confirmed 2026-10-04. Then the translator reviews *Contrefeu* in v0.2 for a true
   gold (the current one was made by the user, the developer), and maybe a second book, to score the aligner again.
-- `uv run pytest`: 384 passed (65 fewer: the v1 tests went), also on a fresh clone (tests read only committed synthetic fixtures; `-m library`
+- `uv run pytest`: 387 passed, also on a fresh clone (tests read only committed synthetic fixtures; `-m library`
   tests run only where `library/contrefeu.*.pdf` exists, and assert counts only).
 - `npm run type-check` passes; releases build with `npm run build`. `npm run test:e2e` (71 tests; the three timing tests run last, alone, in project `scale`) runs on its own
   backend (:8001, throwaway `.e2e.db`) and Vite (:5174), never the user's database. Setup per machine: `npx
@@ -690,10 +691,67 @@ the built SPA reads "Tradurre"; `uv run pytest` passes.
 
 Report: 2026-10-05 — tab title "Tradurre"; checklist: Windows 10 or 11, runtime check in step 1, 2 executables, `Retrying` grep, venv fallback for playwright, new step 6 (PDF import via API) and step 7 (launcher failure paths), uninstall fallback in step 8, the manual keys now step 9; 0.2.0rc2 built and assembled (launcher CRLF 175/175); the folder's wheel in scratch tool folders answers `tradurre 0.2.0rc2`, serves `<title>Tradurre</title>`, the folder's smoke.py passes 11/11; pytest 387 passed.
 
-#### Second Windows run, then v0.2.0
-Not ready. The developer runs the rc2 folder's checklist (now on Windows 10, the machine without the runtime: the
-real test of the launcher's install and retry), including step 7 by hand; its results come back here. Then
-`version = "0.2.0"`, tag `v0.2.0` (pushed by the developer), and the published launcher is tried once.
+#### Second Windows run (0.2.0rc2)
+Status: done
+**Done when:** the developer brings back the rc2 folder's `RESULTS.md` (steps 1–8 by the Windows agent, step 9
+by hand on the Italian layout) and `/pauli` records it here, as for the first run (counts and messages only).
+
+- Copy `dist/tradurre-rc.zip` (rc2: `tradurre-0.2.0rc2-py3-none-any.whl`) and unzip it into `C:\`, replacing the
+  rc1 folder; move the old `RESULTS.md` out of `C:\tradurre-rc\` first.
+- Windows 10, the machine without the VC++ runtime: **be at the machine for step 3** to click Windows' permission
+  prompt (the agent asks first). Step 3 is the real test of the runtime install and of uv's retry; step 7 of the
+  two failure paths.
+- What counts as a pass for v0.2.0: steps 1–8 PASS (a `Retrying` line in step 3 is fine; the `pw` venv fallback in
+  step 4 is fine), step 9 all OK. Any FAIL comes back here as a fix task and an rc3.
+
+Report: 2026-10-05 (Pauli, from the developer's `RESULTS.md`, not committed) — run 2026-10-04 on Windows 10 Pro
+19045, the machine without the runtime, nothing installed and no data before. **Passes the bar: steps 1–8 PASS,
+step 9 all OK.** Step 3: v0.1.0 → rc2 upgrade; uv's os error 32 hit again and the launcher's retry fixed it; the
+VC++ runtime was installed (the developer clicked "Yes"; `msvcp140.dll` False → True). Step 4: `uv run --with
+playwright` hit os error 32 again (greenlet in uv's build cache), so the `pw` venv fallback; Edge and Chrome 11/11.
+Steps 5–6: 28 beads both pairs, PDF through the API fine. Step 7: (a) and (b) as expected. Step 8: `uv tool
+uninstall` hit os error 32; the checklist's fallback worked. Small findings, none blocking (see "After v0.2"):
+- the upgrade from v0.1.0 by delete-and-retry leaves v0.1's `tradurre-align.exe` in `.local\bin` (the deleted
+  folder took uv's record of it); harmless, it only fails if someone types it;
+- after the runtime installs, the launcher prints nothing to say it worked;
+- the checklist's `Wait-Tradurre` counts passes, not seconds: on Windows a refused localhost connection takes ~2 s,
+  so `120` waited ~6 minutes.
+Not covered by either run: a **first install** on a machine with no Tradurre, through an `https://` wheel URL;
+the post-release check below covers it.
+#### Release 0.2.0
+Status: done
+**Done when:** `pyproject.toml` says `version = "0.2.0"` and `uv.lock` matches (`uv lock --check` exits 0); `git
+diff 8362681 -- . ':!PLAN.md'` shows only those two files' version lines (what ships is the code rc2 tested);
+`npm --prefix frontend run build` and `uv build --wheel` give `dist/tradurre-0.2.0-py3-none-any.whl`, which,
+installed into scratch tool folders (`UV_TOOL_DIR`/`UV_TOOL_BIN_DIR` in the scratchpad), answers `tradurre
+0.2.0`; `uv run pytest` passes; committed.
+
+- Ship rc2 as tested: **no other change**, not to the launcher, not to the checklist; the findings of the second
+  run wait (see "After v0.2"). Don't run `make_rc.py`.
+- Don't merge, tag or push: in the chat report, give the developer these commands, to run from the repo root
+  (Pauli's recommendation to the user, 2026-10-05: fast-forward `main`, then tag; `main` is an ancestor of `toward-v0.2`, so no
+  merge commit and the tag is on exactly the commit Braun made):
+
+  ```sh
+  git checkout main
+  git merge --ff-only toward-v0.2
+  git push origin main
+  git tag v0.2.0
+  git push origin v0.2.0
+  ```
+
+Report: 2026-10-05 — `version = "0.2.0"`, `uv lock` (`--check` exits 0); since 8362681 only the two version lines changed; `dist/tradurre-0.2.0-py3-none-any.whl` in scratch tool folders answers `tradurre 0.2.0`; pytest 387 passed; committed, and `main` fast-forwarded to it locally at the user's request (not pushed, not tagged).
+
+#### After the tag: the published launcher
+Status: todo — **the developer's**, after the `Release` workflow has published v0.2.0: Braun skips it.
+**Done when:** the developer reports back, and `/pauli` records it here.
+
+On the Windows machine, which now has no Tradurre and no data (as the second run left it): download
+`start-tradurre.bat` from the release page with the browser and double-click it. Expected: SmartScreen's "More
+info → Run anyway" (README), uv already there, `Tradurre 0.2.0 is installed.`, no runtime prompt (installed in the
+second run), the browser opens on the library; import `easy.source.docx` + `easy.target.pdf` (the rc folder's
+`fixtures\`) → 28 beads; close the window; double-click again → it starts without updating. This is the first
+install from nothing over `https://`, which neither run covered.
 
 ---
 
@@ -708,6 +766,10 @@ Agreed (user, 2026-10-04), postponed until after v0.2:
   dialogue dashes) that differ across sides; a bead's length ratio out of line with its neighbours.
 - **Reading optimization** of the review screen (comfort and speed of a top-to-bottom read).
 - The translator's own review of *Contrefeu* (in v0.2) becomes the gold these are scored against.
+- **Launcher and checklist touch-ups** from the second Windows run (2026-10-04): after uv's delete-and-retry,
+  delete old commands the deleted folder no longer accounts for (v0.1's `tradurre-align.exe` in uv's bin folder);
+  echo a line when the VC++ runtime installed; `Wait-Tradurre` waits until a deadline (`(Get-Date).AddSeconds`)
+  instead of counting passes. With the next release candidate, not before.
 - Small cleanup: `glyph_resolver.py`'s LLM paths (`generate`, `_check_substitution_plausible`,
   `llm_resolve_remaining_markers`) had their only caller in the removed Colab pipeline; `extract.py` never passes
   `generate`. Remove them, or keep them for an unparked aligner.

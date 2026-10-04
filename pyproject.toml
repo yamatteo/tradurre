@@ -1,6 +1,6 @@
 [project]
 name = "tradurre"
-version = "0.2.0rc2"
+version = "0.2.0"
 description = "Literary translation workbench"
 readme = "README.md"
 license = "AGPL-3.0-only"
