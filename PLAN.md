@@ -36,7 +36,7 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
   Restyled to design variant A; smooth at 5,000 beads. Stages 4 and 6 done (search at `/search` and from the
   book; More → Export: edition .txt/.docx and the project bundle; "Restore a bundle" on the library page).
   Stage 7: search grouped by book, the library order, database snapshots (local-time names) and the v1
-  retirement (code and docs) done; next the release (fixtures and smoke script done): restored-book dates, a Windows
+  retirement (code and docs) done; next the release (fixtures, smoke script, local restore dates done): a Windows
   checklist, a candidate wheel, then v0.2.0. On the reference book the problem flags catch
   none of the 15 real errors: review is reading-first; better signals come after v0.2.
 - **Re-planned with the user (2026-10-04), SPEC changed accordingly:** review is one mode, problem-first: jump to
@@ -478,7 +478,8 @@ the title is for the same person, so it follows.
   UTC" comment.
 
 #### Windows checklist
-Status: todo
+Status: done
+Report: 2026-10-04 — `packaging/WINDOWS-CHECKLIST.md` (preamble with `Wait-Tradurre`/`Stop-Tradurre` by PID, steps 1–7, `PYTHONUTF8=1` for the smoke output); Linux rehearsal in a scratch `HOME`: v0.1.0 from its release wheel took "Checklist v0.1" (201), the current code then showed `/api/v2/books` `[]` and one snapshot holding it; step 5 against the current code: import 201 (28 beads), reviewed 200, after a restart undo 200 and the bead unreviewed, 2 snapshots, edition .txt BOM + "parola", .docx has it, delete 204; PowerShell, the launcher and Edge/Chrome not run (Linux); no Contrefeu text; pytest 386 passed.
 **Done when:** `packaging/WINDOWS-CHECKLIST.md` exists, `grep -ri contrefeu` on it finds nothing, and the
 **Linux rehearsal** below passed and is in the report (commands and outputs, shortened).
 
