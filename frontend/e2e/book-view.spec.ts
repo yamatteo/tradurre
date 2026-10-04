@@ -139,3 +139,17 @@ test('show excluded reveals an excluded block in place', async ({ page, request 
   const previous = row.locator('xpath=preceding-sibling::*[1]')
   await expect(previous).toHaveAttribute('data-bead-id', String(ids[1]))
 })
+
+test('?bead= opens the book at that bead; a bead gone since is reported', async ({ page, request }) => {
+  const { id, book } = await importBook(request, 'Open at bead')
+  const fourth = book.beads[3].id
+  await page.goto(`/book/${id}?bead=${fourth}`)
+  await expect(current(page)).toHaveAttribute('data-bead-id', String(fourth))
+
+  // Merging the third bead with the next deletes the fourth.
+  const merged = await request.post(`/api/v2/books/${id}/beads/${book.beads[2].id}/merge-next`)
+  expect(merged.status()).toBe(200)
+  await page.goto(`/book/${id}?bead=${fourth}`)
+  await expect(current(page)).toHaveAttribute('data-bead-id', String(book.beads[0].id))
+  await expect(page.getByTestId('status')).toHaveText('That bead no longer exists: the book changed since the search')
+})

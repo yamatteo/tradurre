@@ -301,6 +301,15 @@ export interface BookSearchResult {
 
 export type SearchSide = Side | 'either'
 
+/** A bead around a search result, as plain text per side. */
+export interface ContextBead {
+  bead_id: number
+  position: number
+  source: string
+  target: string
+  reviewed: boolean
+}
+
 export const booksApi = {
   importBook: (source: File, target: File, title: string, sourceLang: string, targetLang: string) => {
     const form = new FormData()
@@ -362,6 +371,10 @@ export const booksApi = {
     if (book) params.set('book', book)
     return booksRequest<BookSearchResult[]>(`/search?${params}`)
   },
+
+  /** The bead and up to `around` beads on each side of it. */
+  context: (id: string, beadId: number, around = 2) =>
+    booksRequest<ContextBead[]>(`/books/${id}/beads/${beadId}/context?around=${around}`),
 
   undo: (id: string) => booksPost(`/books/${id}/undo`),
 

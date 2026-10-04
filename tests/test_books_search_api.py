@@ -59,3 +59,38 @@ def test_unknown_book_and_empty_query(client, books):
     assert client.get("/api/v2/search", params={"q": "mot", "book": "nope"}).status_code == 404
     assert client.get("/api/v2/search", params={"q": ""}).json() == []
     assert client.get("/api/v2/search", params={"q": "mot", "side": "both"}).status_code == 422
+
+
+def _beads(client, book):
+    return [b["id"] for b in client.get(f"/api/v2/books/{book}").json()["beads"]]
+
+
+def test_context(client, books):
+    one, two = books
+    a, b = _beads(client, one)
+    ctx = client.get(f"/api/v2/books/{one}/beads/{b}/context", params={"around": 1}).json()
+    assert [(c["bead_id"], c["position"]) for c in ctx] == [(a, 1), (b, 2)]
+    assert ctx[0]["source"] == "Le désœuvrement de l’homme."
+    assert ctx[1]["target"] == "Partì senza una parola."
+    assert ctx[1]["reviewed"] is False
+
+
+def test_context_window(client):
+    text = "\n\n".join(f"Phrase {k}." for k in range(5))
+    book = _import(client, "Five", text, text.replace("Phrase", "Frase"))
+    ids = _beads(client, book)
+    assert len(ids) == 5
+    second = client.get(f"/api/v2/books/{book}/beads/{ids[1]}/context", params={"around": 1}).json()
+    assert [c["bead_id"] for c in second] == ids[0:3]
+    first = client.get(f"/api/v2/books/{book}/beads/{ids[0]}/context", params={"around": 1}).json()
+    assert [c["bead_id"] for c in first] == ids[0:2]
+    default = client.get(f"/api/v2/books/{book}/beads/{ids[2]}/context").json()
+    assert [(c["bead_id"], c["position"]) for c in default] == [(i, k + 1) for k, i in enumerate(ids)]
+
+
+def test_context_errors(client, books):
+    one, two = books
+    (c,) = _beads(client, two)
+    assert client.get(f"/api/v2/books/{one}/beads/{c}/context").status_code == 404
+    assert client.get(f"/api/v2/books/nope/beads/{c}/context").status_code == 404
+    assert client.get(f"/api/v2/books/{two}/beads/{c}/context", params={"around": 11}).status_code == 422

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, provide, ref, shallowReactive, shallowRef, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { booksApi, type Book, type BookBead, type BookExcludedBlock, type BookRun, type Side } from '@/api/client'
 import BeadActions, { type Correction } from '@/components/BeadActions.vue'
 import BeadRow from '@/components/BeadRow.vue'
@@ -13,6 +14,7 @@ import { originalKey, selectionKey, statusKey } from '@/selection'
 import { isProblem } from '@/review'
 
 const props = defineProps<{ id: string }>()
+const route = useRoute()
 
 // shallowRef: the book is replaced whole, never mutated (PLAN.md, "Reading and navigation", Scale).
 const book = shallowRef<Book | null>(null)
@@ -592,8 +594,18 @@ onMounted(async () => {
   window.addEventListener('mousedown', onWindowMouseDown)
   try {
     book.value = await booksApi.getBook(props.id)
-    const first = book.value.beads[0]
+    // `?bead=<id>` (from a search result) opens the book at that bead, centred.
+    const wanted = route.query.bead === undefined ? undefined : Number(route.query.bead)
+    const found = wanted === undefined ? undefined : beadIndex.value.get(wanted)
+    const first = book.value.beads[found ?? 0]
     if (first) select(first.id, 'source', null)
+    if (found !== undefined) {
+      nextTick(() => {
+        document.querySelector(`[data-testid="bead-row"][data-bead-id="${wanted}"]`)?.scrollIntoView({ block: 'center' })
+      })
+    } else if (wanted !== undefined) {
+      say('That bead no longer exists: the book changed since the search')
+    }
   } catch (e) {
     error.value = (e as Error).message
     return

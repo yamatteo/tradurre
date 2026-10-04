@@ -210,6 +210,9 @@ with the whole tokens highlighted, and `source : (B) OR target : (B)` keeps the 
 #### Search at library scale
 Status: done
 Report: 2026-10-04 — new `scripts/search_scale.py`, no app change. Build 21.1 s, 40 books, 100,000 beads, 101.8 MB. Medians (5 runs): `d` 139.2 ms, `de` 85.2, a full word 11.7, a two-word phrase 1.5, `d` source only 84.4, `d` offset 200 144.1, a full word in one book 1.1 ms; worst 144.1 ms < 1,000 (`d` matches ~80% of beads: 2 of the 30 syllables start with d); pytest 411 passed.
+Verified (Pauli, 2026-10-04): Done when holds (commit 199b5db; rerun here: worst median 143.1 ms). Real French
+makes `d` match nearly every bead (`de`, `des`, `du`, `dans`) against ~80% here: same order of magnitude, so the
+margin (7×) stands. No `prefix=` index needed.
 **Done when:** `uv run python scripts/search_scale.py` runs and every query's median is < 1,000 ms (report the
 build time and every number); `uv run pytest` unchanged.
 
@@ -227,7 +230,7 @@ risk. This task only measures: **if a query is over 1 s, don't optimize**: stop 
 - No change to the app code.
 
 #### Search context and opening a book at a bead
-Status: todo
+Status: done
 **Done when:** `uv run pytest` passes with the new tests; `npm run type-check` passes; `npm run test:e2e` passes
 with the new test (failing before the change).
 
@@ -242,7 +245,12 @@ SPEC §3.4: "expanding a result shows the surrounding beads; one click opens the
   changed since the search')`. Without `bead` nothing changes.
 - Tests: `tests/test_books_search_api.py`: context of the second bead with `around=1` is 3 beads, of the first
   is 2, a bead of another book 404. e2e (`book-view.spec.ts`): open `/book/<id>?bead=<fourth bead>` → that row
-  is current; with a deleted bead id (merge it away through the API first) → the first bead and the message.
+  is current; with a deleted bead id (`POST beads/{third}/merge-next` deletes the fourth bead: `_merge` keeps
+  the first id) → the first bead is current and the status shows the message.
+Report: 2026-10-04 — `GET …/beads/{bead_id}/context` (`ContextBead`), `booksApi.context`, BookView `?bead=` (current,
+centred; missing bead → first bead and the message); 3 API tests and 1 e2e test, all failing on the old code; pytest
+414 passed, type-check clean, e2e 62 passed (one earlier full run failed the 5,000-bead timing test once; two reruns
+and five runs of it alone passed, Ctrl+Z after the second move 384–457 ms against 500).
 
 #### Search page
 Status: todo

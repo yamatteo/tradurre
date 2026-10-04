@@ -23,7 +23,7 @@ from tradurre.domain.beads import merge_with_next, move_first_to_previous, move_
 from tradurre.domain.blocks import exclude_block, exclude_range, include_block, include_range
 from tradurre.domain.history import transaction
 from tradurre.domain.invariants import check_project
-from tradurre.domain.search import END, START, search_beads
+from tradurre.domain.search import END, START, _bead_text, search_beads
 from tradurre.domain.segments import edit_text, join_with_next, restore_original, split_segment
 from tradurre.models import (
     BookEditRequest,
@@ -39,6 +39,7 @@ from tradurre.models import (
     BookSplitBeadRequest,
     BookSplitSegmentRequest,
     BookSummary,
+    ContextBead,
 )
 from tradurre.services.build import PreparedBook, prepare_book, write_book
 from tradurre.services.extract import EXCLUDED_KINDS, Extraction, extract
@@ -287,6 +288,36 @@ def search(
         )
         for hit in search_beads(db, q, side, project_id=book, limit=limit, offset=offset)
     ]
+
+
+@router.get("/books/{book_id}/beads/{bead_id}/context", response_model=list[ContextBead])
+def bead_context(
+    book_id: str, bead_id: int, around: int = Query(2, ge=1, le=10), db: sqlite3.Connection = Depends(get_db)
+):
+    """The bead and up to `around` beads on each side of it, in order (SPEC §3.4, context on demand)."""
+    _book_row(db, book_id)
+    row = db.execute("SELECT ord FROM beads WHERE id = ? AND project_id = ?", (bead_id, book_id)).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Bead not found")
+    ord_ = row["ord"]
+    before = db.execute(
+        "SELECT id, ord, reviewed FROM beads WHERE project_id = ? AND ord < ? ORDER BY ord DESC LIMIT ?",
+        (book_id, ord_, around),
+    ).fetchall()[::-1]
+    rest = db.execute(
+        "SELECT id, ord, reviewed FROM beads WHERE project_id = ? AND ord >= ? ORDER BY ord LIMIT ?",
+        (book_id, ord_, around + 1),
+    ).fetchall()
+    beads = before + rest
+    first = db.execute(
+        "SELECT COUNT(*) FROM beads WHERE project_id = ? AND ord <= ?", (book_id, beads[0]["ord"])
+    ).fetchone()[0]
+    out = []
+    for k, bead in enumerate(beads):
+        texts = _bead_text(db, bead["id"])
+        out.append(ContextBead(bead_id=bead["id"], position=first + k, source=texts["source"],
+                               target=texts["target"], reviewed=bool(bead["reviewed"])))
+    return out
 
 
 @router.get("/books/{book_id}/check", response_model=list[str])

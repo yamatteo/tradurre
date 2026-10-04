@@ -300,3 +300,11 @@ class BookSearchResult(BaseModel):
     source: list[BookSearchSpan]
     target: list[BookSearchSpan]
     reviewed: bool
+
+
+class ContextBead(BaseModel):
+    bead_id: int
+    position: int  # 1-based, in the book
+    source: str
+    target: str
+    reviewed: bool
