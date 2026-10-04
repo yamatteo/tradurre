@@ -40,13 +40,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-from tradurre.api import projects, pairs, search, import_, export, books  # noqa: E402, F401
+from tradurre.api import books  # noqa: E402
 
-app.include_router(projects.router, prefix="/api/v1")
-app.include_router(pairs.router, prefix="/api/v1")
-app.include_router(search.router, prefix="/api/v1")
-app.include_router(import_.router, prefix="/api/v1")
-app.include_router(export.router, prefix="/api/v1")
 app.include_router(books.router, prefix="/api/v2")
 
 # Serve frontend static files (production mode)

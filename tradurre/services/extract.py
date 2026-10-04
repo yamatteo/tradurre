@@ -1,7 +1,6 @@
 """Structured extraction: files in, kinded blocks out (SPEC §3.1 step 2; PLAN.md, "Structured extraction").
 
-One block is one paragraph-like unit; splitting into sentences comes later. `doc_adapter` stays the v0.1 import's
-extractor; this module only borrows its cleanup.
+One block is one paragraph-like unit; splitting into sentences comes later.
 """
 
 import re
@@ -10,7 +9,31 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from io import BytesIO
 
-from tradurre.services.doc_adapter import normalize_ocr_artifacts
+_LIGATURES = {
+    "ﬀ": "ff",
+    "ﬁ": "fi",
+    "ﬂ": "fl",
+    "ﬃ": "ffi",
+    "ﬄ": "ffl",
+}
+
+# Control characters other than \n and \t, which OCR/PDF extraction sometimes emits.
+_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+
+def normalize_ocr_artifacts(text: str) -> str:
+    """Conservative cleanup for OCR/PDF-extracted text.
+
+    Only touches whitespace, control characters, and typographic ligatures --
+    never rewords or reflows actual content.
+    """
+    for lig, plain in _LIGATURES.items():
+        text = text.replace(lig, plain)
+    text = _CONTROL_CHARS.sub("", text)
+    # Collapse runs of horizontal whitespace (not newlines) without touching line structure.
+    text = re.sub(r"[ \t]+", " ", text)
+    return text
+
 
 # Block kinds the import excludes by default (SPEC §2: not aligned, not searched, revealable).
 EXCLUDED_KINDS = {"running_head", "page_number", "footnote", "front_matter", "back_matter"}

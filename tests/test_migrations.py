@@ -14,6 +14,11 @@ from tradurre.db import (
     get_connection,
     init_db,
 )
+from tradurre.domain.invariants import check_project
+from tradurre.domain.layer import NewBead, NewBlock, append_beads, create_document
+from tradurre.domain.search import search_beads
+
+_V1 = {"pairs", "translation_memory"}
 
 
 @pytest.fixture()
@@ -38,7 +43,7 @@ def _tables(conn):
 def test_fresh_database(conn):
     init_db(conn)
     assert _user_version(conn) == len(MIGRATIONS)
-    assert {"section", "paragraph"} <= _columns(conn, "pairs")
+    assert not _V1 & _tables(conn)
 
 
 def test_runs_and_warnings_tables(conn):
@@ -75,12 +80,61 @@ def test_legacy_database(conn):
 
     init_db(conn)
 
+    # It opens; its v0.1 project and pairs are gone (migration 6).
     assert _user_version(conn) == len(MIGRATIONS)
-    assert conn.execute("SELECT source_text FROM pairs WHERE id = 'a1'").fetchone()[0] == "Bonjour"
+    assert not _V1 & _tables(conn)
+    assert conn.execute("SELECT COUNT(*) FROM projects").fetchone()[0] == 0
+
+
+def test_m001_alone_keeps_pairs_searchable(conn, monkeypatch):
+    monkeypatch.setattr(dbmod, "MIGRATIONS", [_m001_pairs])
+    init_db(conn)
+    with conn:
+        conn.execute(
+            "INSERT INTO projects (id, title, source_lang, target_lang, created_at, updated_at) "
+            "VALUES ('p1', 'Book', 'fr', 'it', 'now', 'now')"
+        )
+        conn.execute(
+            "INSERT INTO pairs (id, project_id, position, source_html, target_html, source_text, target_text, "
+            "created_at, updated_at) VALUES ('a1', 'p1', 0, '<p>Bonjour</p>', '<p>Ciao</p>', 'Bonjour', 'Ciao', "
+            "'now', 'now')"
+        )
+    assert {"section", "paragraph"} <= _columns(conn, "pairs")
     hits = conn.execute(
         "SELECT pair_id FROM translation_memory WHERE translation_memory MATCH 'Bonjour'"
     ).fetchall()
     assert [h[0] for h in hits] == ["a1"]
+
+
+def test_v5_to_v6_drops_v1_and_keeps_books(conn, monkeypatch):
+    monkeypatch.setattr(dbmod, "MIGRATIONS", MIGRATIONS[:5])
+    init_db(conn)
+    assert _user_version(conn) == 5
+    with conn:
+        conn.execute("BEGIN IMMEDIATE")
+        for pid, title in (("v1", "Old"), ("book", "Livre")):
+            conn.execute(
+                "INSERT INTO projects (id, title, source_lang, target_lang, created_at, updated_at) "
+                "VALUES (?, ?, 'fr', 'it', 'now', 'now')",
+                (pid, title),
+            )
+        conn.execute(
+            "INSERT INTO pairs (id, project_id, position, source_html, target_html, source_text, target_text, "
+            "created_at, updated_at) VALUES ('a1', 'v1', 0, '<p>Bonjour</p>', '<p>Ciao</p>', 'Bonjour', 'Ciao', "
+            "'now', 'now')"
+        )
+        (s1,), = create_document(conn, "book", "source", "fr.txt", "txt", [NewBlock("paragraph", ["Il partit."])])
+        (t1,), = create_document(conn, "book", "target", "it.txt", "txt", [NewBlock("paragraph", ["Partì."])])
+        append_beads(conn, "book", [NewBead([s1], [t1], 0.9, "length")])
+    monkeypatch.setattr(dbmod, "MIGRATIONS", MIGRATIONS)
+
+    init_db(conn)
+
+    assert _user_version(conn) == 6
+    assert not _V1 & _tables(conn)
+    assert [r[0] for r in conn.execute("SELECT id FROM projects")] == ["book"]
+    assert check_project(conn, "book") == []
+    assert [h["project_id"] for h in search_beads(conn, "partit")] == ["book"]
 
 
 def test_failing_migration_rolls_back(conn, monkeypatch):

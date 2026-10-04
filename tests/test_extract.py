@@ -5,7 +5,7 @@ from io import BytesIO
 import pytest
 from docx import Document
 
-from tradurre.services.extract import EXCLUDED_KINDS, ExtractedBlock, extract
+from tradurre.services.extract import EXCLUDED_KINDS, ExtractedBlock, extract, normalize_ocr_artifacts
 
 
 def test_txt_with_blank_lines_joins_wrapped_lines():
@@ -85,3 +85,23 @@ def test_unknown_extension():
 
 def test_excluded_kinds():
     assert EXCLUDED_KINDS == {"running_head", "page_number", "footnote", "front_matter", "back_matter"}
+
+
+# normalize_ocr_artifacts
+
+
+class TestNormalizeOcrArtifacts:
+    def test_fixes_ligatures(self):
+        assert normalize_ocr_artifacts("difﬁcult") == "difficult"
+
+    def test_collapses_horizontal_whitespace_only(self):
+        text = normalize_ocr_artifacts("a  b\tc\nd")
+        assert text == "a b c\nd"
+
+    def test_strips_control_chars(self):
+        text = normalize_ocr_artifacts("a\x00b\x0bc")
+        assert text == "abc"
+
+    def test_does_not_alter_words(self):
+        original = "Marie-Ange went to Pontorgueil."
+        assert normalize_ocr_artifacts(original) == original

@@ -118,8 +118,22 @@ def test_latin1_warning_is_prefixed(client):
     ]
 
 
-def test_list_only_books_with_counts(client):
-    client.post("/api/v1/projects", json={"title": "Old", "source_lang": "fr", "target_lang": "it"})
+def _project_without_documents(db_path):
+    """A projects row with no documents (a v0.1 project before migration 6): not a book."""
+    conn = get_connection(db_path)
+    try:
+        with conn:
+            conn.execute(
+                "INSERT INTO projects (id, title, source_lang, target_lang, created_at, updated_at) "
+                "VALUES ('old', 'Old', 'fr', 'it', 'now', 'now')"
+            )
+    finally:
+        conn.close()
+    return "old"
+
+
+def test_list_only_books_with_counts(client, db_path):
+    _project_without_documents(db_path)
     book_id = _import(client).json()["id"]
     assert client.get("/api/v2/books").json() == [{
         "id": book_id, "title": "contrefeu", "source_lang": "fr", "target_lang": "it",
@@ -217,10 +231,8 @@ def test_unknown_book_is_404(client):
     assert client.get("/api/v2/books/nope/check").status_code == 404
 
 
-def test_old_project_is_not_a_book(client):
-    project_id = client.post(
-        "/api/v1/projects", json={"title": "Old", "source_lang": "fr", "target_lang": "it"}
-    ).json()["id"]
+def test_old_project_is_not_a_book(client, db_path):
+    project_id = _project_without_documents(db_path)
     assert client.get(f"/api/v2/books/{project_id}").status_code == 404
 
 

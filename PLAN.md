@@ -35,7 +35,7 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
   "Restore original", re-align of the selection (More menu), cut/copy/paste of whole sentences (Ctrl+X/C/V).
   Restyled to design variant A; smooth at 5,000 beads. Stages 4 and 6 done (search at `/search` and from the book; More → Export: edition .txt/.docx and the
   project bundle; "Restore a bundle" on the library page). Stage 7: search grouped by book and the library order
-  done, and database snapshots (local-time names); retire v1: library on books done, 3 tasks left; a Windows checklist, then the v0.2 tag. On the reference book the problem flags catch
+  done, and database snapshots (local-time names); retire v1: library on books and the v1 frontend done, 2 tasks left; a Windows checklist, then the v0.2 tag. On the reference book the problem flags catch
   none of the 15 real errors: review is reading-first; better signals come after v0.2.
 - **Re-planned with the user (2026-10-04), SPEC changed accordingly:** review is one mode, problem-first: jump to
   the next likely problem, correct, mark one bead, a selected run, or everything up to here as reviewed. The
@@ -342,7 +342,7 @@ nothing.
 Report: 2026-10-04 — v1 views, routes, `api` client and TipTap (4 packages) removed, `mark` in the A palette, `/` route named `library`, library errors in `library-error` (delete included); also removed `e2e/scroll-sync.spec.ts`, which tested only the deleted v1 editor; grep clean, type-check and build pass, pytest 449, e2e 71 (−1 v1, +1 new).
 
 #### Remove the v1 backend and the old Colab aligner
-Status: todo
+Status: done
 **Done when:** `uv run pytest` passes; `npm run test:e2e` passes; `uv run tradurre --version` works; a migration
 test shows a database at version 5 holding a v1 project with pairs and a book comes out at version 6 with the
 book intact (`check_project` clean, searchable) and no `pairs`, `translation_memory` or v1 project; `grep -rn --exclude-dir=static
@@ -370,6 +370,13 @@ gitignored build, rebuilt by `npm run build`) finds only
   expect it gone; plus the version-5 → 6 test above.
 - `README.md`: remove the Colab/`tradurre-align` note and the `align` extra wherever they appear. CLAUDE.md is the
   next task.
+- Checked complete (Pauli, 2026-10-04, after "Remove the v1 frontend" found an unlisted v1-only e2e spec): a grep
+  for every removed module, model and `/api/v1` outside the files above finds only `app.py`, `models.py`,
+  `extract.py` (the `doc_adapter` import), `test_books_api.py` (the two tests above), `pyproject.toml`/`uv.lock`,
+  `README.md`, `CLAUDE.md` and the archived `PLAN.*.md` (leave those as they are: history). Other hits are the
+  words "pipeline"/"aligner" in prose, not imports. If something else turns up: a file that
+  only exercises removed code goes (report it); anything that mixes kept and removed code, stop and report.
+Report: 2026-10-04 — `_m006_drop_v1`; 5 v1 routers, 11 services (doc_adapter's cleanup moved into extract.py), the v1 models, `tradurre-align` and the `align` extra (`uv lock`: −987 lines) removed; README Colab note gone; grep as allowed; pytest 384 (449 − 71 in the 5 deleted test files + 4 moved + 2 migration tests), e2e 71, `tradurre --version` ok.
 
 #### CLAUDE.md and README describe v0.2
 Status: todo

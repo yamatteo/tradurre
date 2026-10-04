@@ -72,8 +72,6 @@ Notes:
   `winget install UB-Mannheim.TesseractOCR` or the [UB Mannheim installer](https://github.com/UB-Mannheim/tesseract/wiki),
   then add `C:\Program Files\Tesseract-OCR` to your `PATH` (Start → "Edit environment variables for your
   account" → `Path` → *Edit* → *New*) and open a new terminal.
-- The heavy alignment pipeline (`align` extra, `tradurre-align`) needs a GPU. Run it on e.g. Google Colab and
-  import the resulting JSON in your local Tradurre.
 
 ## Backups
 

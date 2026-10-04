@@ -256,6 +256,20 @@ def _m005_runs(conn: sqlite3.Connection) -> None:
     _run_script(conn, _RUNS_SCHEMA)
 
 
+def _m006_drop_v1(conn: sqlite3.Connection) -> None:
+    """Retire the v0.1 model: its pairs, their search index, and its projects (no documents). No data is kept
+    (user, 2026-10-04); a book always has its documents, which import and restore write in one transaction."""
+    _run_script(conn, """
+DROP TRIGGER IF EXISTS pairs_ai;
+DROP TRIGGER IF EXISTS pairs_au;
+DROP TRIGGER IF EXISTS pairs_ad;
+DROP TABLE IF EXISTS translation_memory;
+DROP INDEX IF EXISTS idx_pairs_project;
+DROP TABLE IF EXISTS pairs;
+DELETE FROM projects WHERE NOT EXISTS (SELECT 1 FROM documents d WHERE d.project_id = projects.id);
+""")
+
+
 # Applied in order; migration n sets PRAGMA user_version = n. Never edit an applied one.
 MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
     _m001_pairs,
@@ -263,6 +277,7 @@ MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
     _m003_operations,
     _m004_bead_index,
     _m005_runs,
+    _m006_drop_v1,
 ]
 
 
