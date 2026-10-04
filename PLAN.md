@@ -33,9 +33,11 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
   undo/redo, problem navigation (`p`/`P`), selected runs (Shift+↑/↓, Shift+click) marked with `r`, and `R` "up to
   here", range exclude/include in the "More" menu, edited sentences marked with their original on `o` and
   "Restore original", re-align of the selection (More menu), cut/copy/paste of whole sentences (Ctrl+X/C/V).
-  Restyled to design variant A; smooth at 5,000 beads. Stages 4 and 6 done (search at `/search` and from the book; More → Export: edition .txt/.docx and the
-  project bundle; "Restore a bundle" on the library page). Stage 7: search grouped by book and the library order
-  done, and database snapshots (local-time names); v1 retired (code); next CLAUDE.md/README for v0.2, a Windows checklist, then the v0.2 tag. On the reference book the problem flags catch
+  Restyled to design variant A; smooth at 5,000 beads. Stages 4 and 6 done (search at `/search` and from the
+  book; More → Export: edition .txt/.docx and the project bundle; "Restore a bundle" on the library page).
+  Stage 7: search grouped by book, the library order, database snapshots (local-time names) and the v1
+  retirement (code and docs) done; next the release: checklist fixtures, a browser smoke script, a Windows
+  checklist, a candidate wheel, then v0.2.0. On the reference book the problem flags catch
   none of the 15 real errors: review is reading-first; better signals come after v0.2.
 - **Re-planned with the user (2026-10-04), SPEC changed accordingly:** review is one mode, problem-first: jump to
   the next likely problem, correct, mark one bead, a selected run, or everything up to here as reviewed. The
@@ -397,13 +399,72 @@ wizard or translation memory.
 Report: 2026-10-04 — CLAUDE.md intro, Commands examples and Architecture/Data model/Frontend rewritten for the books model; README intro on books, "projects" → "books"; 127 names checked (files, symbols, tables, columns, routes, commands incl. running both example pytest commands), all present; no forbidden term; pytest 384.
 
 ### Windows checklist and release
-Not ready (written once the old model is gone; the checklist's "upgrade from v0.1" step means: a v0.1
-database opens and loses its v1 projects, as agreed). `packaging/WINDOWS-CHECKLIST.md`, written for the Claude agent
-on the developer's Windows machine: each step a command or browser action and its expected result (fresh install
-through the launcher from the release candidate's wheel, upgrade from v0.1, Edge and Chrome, the Italian-layout
-keys of the book screen, import of a .txt/.docx/.pdf pair, corrections and undo after a restart, search,
-edition export, bundle download and restore, a snapshot in `backups`). No *Contrefeu* text in it. The version in
-`pyproject.toml` is still `0.1.0`: the release candidate is built as `0.2.0`. Then tag v0.2.0.
+Decided (user, 2026-10-04): the Claude agent on the developer's Windows machine is **shell only** (Claude Code):
+it runs commands, and drives browsers only through a Playwright script; the Italian-layout keys are checked **by
+hand** by the developer (Playwright sends keys by name, so it can't test a physical layout). The release candidate
+reaches Windows as a **local wheel**, copied over; the launcher is tested with that wheel's `file:///` URL put in
+by hand, and the download path only at the final tag. Order: fixtures → browser smoke script → the checklist →
+the candidate wheel → the run on Windows → fixes → v0.2.0.
+
+#### Checklist fixtures: a .docx and a .pdf
+Status: done
+Report: 2026-10-04 — `scripts/make_fixtures.py` writes `easy.source.docx` and a 3-page A5 `easy.target.pdf` (byte-identical on rerun: fixed core properties, zip dates and PDF metadata, no new /ID); `tests/test_fixtures_formats.py`: txt pair 28 beads, 0/0 excluded; docx+pdf 28 beads, 0 source / 6 target excluded (3 running heads, 3 page numbers; none in beads), check clean, search hits both; pytest 385 passed.
+**Done when:** `uv run pytest` passes with the new test; `uv run python scripts/make_fixtures.py` rewrites the two
+files byte-for-byte reproducibly or, if a format can't be (docx/pdf timestamps), the script sets fixed metadata
+and the report says which; the files are committed (`!tests/fixtures/**` in `.gitignore` already lets the PDF in).
+
+The checklist needs one book in every format, with no copyrighted text. `tests/fixtures/easy.source.txt` and
+`easy.target.txt` (synthetic, FR/IT, 36 lines) are the text.
+- `scripts/make_fixtures.py` (python-docx and pymupdf, both core dependencies): writes
+  `tests/fixtures/easy.source.docx` (one Word paragraph per blank-line paragraph of `easy.source.txt`) and
+  `tests/fixtures/easy.target.pdf` (A5 pages, ~12 pt, the paragraphs of `easy.target.txt` flowed over at least 3
+  pages, each page with the running head "Facile" at the top and its page number at the bottom).
+- `tests/test_fixtures_formats.py`, through the API (as `tests/test_books_api.py` does): import
+  `easy.source.docx` + `easy.target.pdf` → 201, no error; the bead count is within ±15 % of the
+  `easy.source.txt` + `easy.target.txt` import's; `/check` is clean; searching a word of the last paragraph finds
+  it. Report the counts (beads, excluded blocks per side) for both imports.
+- Nothing else changes; if the PDF's running head or page numbers end up in beads, report it (a finding for the
+  extractor, not to fix here).
+
+#### Browser smoke script
+Status: todo
+**Done when:** the script passes on Linux against `uv run tradurre --no-browser --port 8123` on a scratch
+`TRADURRE_DB`, with `--channel chromium` (Playwright's bundled browser); run twice in a row on the same database
+(it must not depend on an empty library); report its output.
+
+One script the Windows agent runs against the **installed** app, in Edge and in Chrome. Not part of `npm run
+test:e2e` (that runs the dev servers); it reuses its `data-testid`s.
+- `packaging/smoke.py`, Python Playwright, sync API, run with `uv run --with playwright python
+  packaging/smoke.py --url http://127.0.0.1:8000 --channel msedge|chrome|chromium --fixtures <dir>`.
+  It prints one line per step, `PASS <step>` or `FAIL <step>: <reason>`, stops at the first failure, exits 0/1.
+- Steps (each tied to a unique title with a random suffix, so reruns don't collide): library loads; import the
+  .docx + .pdf pair through the form (`/book/import`) and land on the book; `n` moves to an unreviewed bead and
+  `r` marks it (progress text changes); Alt+↓ then Ctrl+Z (the bead's segments change, then come back); reload
+  the page and Ctrl+Y redoes; search a word from the book (`/search`, a result, Open lands on the bead); More →
+  Export: target .txt and .docx and the bundle download (non-empty files, the .txt starts with a UTF-8 BOM);
+  "Restore a bundle" with that bundle opens "<title> (restored …)"; Delete the restored book from the library
+  (accept the dialog), it's gone.
+- No test framework, no new dependency in `pyproject.toml`. `README.md` "Development": one line on how to run it.
+
+#### Windows checklist
+Not ready (written after the smoke script). `packaging/WINDOWS-CHECKLIST.md`, for the shell-only agent, every
+step a command and its expected output; no *Contrefeu* text. First **back up** `%USERPROFILE%\.tradurre` (rename it)
+and restore it at the end, whatever happens. Covers: install v0.1.0 from its release launcher, create a v0.1
+project with `curl` on `/api/v1`; run the candidate's launcher (the `.bat` from `packaging/` with `__VERSION__`
+and `__WHEEL_URL__` replaced by the candidate's version and `file:///` wheel path) → it upgrades, starts, the v0.1
+project is gone and a snapshot in `backups` still holds it; fixtures from the repo; `packaging/smoke.py` with
+`msedge` and with `chrome`; restart and check undo history, snapshots (two starts, two files); edition export
+opens in Word/Notepad as text (by file content, not GUI). A final section **for the developer, by hand**: the
+Italian-layout keys of the book screen (letters, Shift+letters, arrows, Enter, Tab, Esc, Ctrl+Z/Y/X/C/V), each
+with what should happen. The agent writes its results to a file the developer brings back.
+
+#### Release candidate wheel
+Not ready. `version = "0.2.0rc1"`, `npm run build`, `uv build --wheel`, the wheel holds `tradurre/static/index.html`
+and installs (`uv tool install` into a scratch `UV_TOOL_DIR`) with `tradurre --version` → `0.2.0rc1`.
+
+#### Run on Windows, then v0.2.0
+Not ready. The developer runs the checklist; its results come back into this plan as fixes; then
+`version = "0.2.0"`, tag `v0.2.0` (pushed by the developer), and the published launcher is tried once.
 
 ---
 
