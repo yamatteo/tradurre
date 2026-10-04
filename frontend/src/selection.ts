@@ -13,6 +13,8 @@ export interface Selection {
   inRun: Readonly<Record<number, true>>
   /** The selected run's 1-based bead numbers, or null without a run: for the bottom bar. */
   runBounds: Readonly<Ref<{ first: number; last: number; size: number } | null>>
+  /** `{[beadId]: segmentId}` for the sentence cut with Ctrl+X, reactive per key like `currentRow`. */
+  cutRow: Readonly<Record<number, number>>
   /** The book, for children that summarize the run (`BookStatus.vue`); `BookView`'s template never reads it for that. */
   book: Readonly<Ref<Book | null>>
 }

@@ -70,12 +70,23 @@ const runBounds = computed(() => {
   const range = runRange.value
   return range && { first: range[0] + 1, last: range[1] + 1, size: range[1] - range[0] + 1 }
 })
-watch(runRange, (range) => {
+watch(runRange, (range, old) => {
+  // A new run, or a run grown or shrunk, replaces the message with its summary (BookStatus.vue).
+  if (range?.[0] !== old?.[0] || range?.[1] !== old?.[1]) status.value = ''
   const ids = new Set(range ? book.value!.beads.slice(range[0], range[1] + 1).map((b) => b.id) : [])
   for (const key of Object.keys(inRun)) if (!ids.has(Number(key))) delete inRun[Number(key)]
   for (const id of ids) if (!inRun[id]) inRun[id] = true
 }, { flush: 'sync' })
-provide(selectionKey, { currentRow, currentBeadId, currentSide, currentSegmentId, editingSegmentId, inRun, runBounds, book })
+
+// The sentence cut with Ctrl+X (SPEC §3.3), waiting for a Ctrl+V in the neighbouring bead. `cutRow` (bead id →
+// segment id) is updated by difference, like `currentRow`: a cut wakes only its own row.
+const cut = shallowRef<{ beadId: number; side: Side; segmentId: number } | null>(null)
+const cutRow = shallowReactive<Record<number, number>>({})
+watch(cut, (c, old) => {
+  if (old) delete cutRow[old.beadId]
+  if (c) cutRow[c.beadId] = c.segmentId
+}, { flush: 'sync' })
+provide(selectionKey, { currentRow, currentBeadId, currentSide, currentSegmentId, editingSegmentId, inRun, runBounds, cutRow, book })
 
 function runBeads(): BookBead[] {
   const range = runRange.value
@@ -196,16 +207,18 @@ function reconcile(old: Book, next: Book): Book {
 
 /**
  * Send one correction and show its result. The current bead stays if it still exists, else the bead now at its
- * old index (clamped); `selectIndex` overrides that (after a split). Errors go to the status line. Every correction
- * clears the selected run except the review marks (`keepRun`). Resolves to whether it succeeded.
+ * old index (clamped); `selectIndex` overrides that (after a split). Errors go to the status line. A successful
+ * correction clears the cut sentence and the selected run, except the review marks for the run (`keepRun`); a refused
+ * one changes nothing, so it keeps both. Resolves to whether it succeeded.
  */
 async function correct(request: (id: string) => Promise<Book>, selectIndex?: number, keepRun = false): Promise<boolean> {
   if (busy.value || !book.value) return false
-  if (!keepRun) clearRun()
   busy.value = true
   const old = book.value
   try {
     const next = await request(old.id)
+    if (!keepRun) clearRun()
+    cut.value = null
     // The selection is read now, not before the request: the translator may have moved meanwhile.
     const oldIndex = currentBeadId.value === null ? 0 : (beadIndex.value.get(currentBeadId.value) ?? 0)
     const side = currentSide.value
@@ -336,6 +349,48 @@ function joinNext() {
   if (segmentId !== null) correct((id) => booksApi.joinNext(id, segmentId))
 }
 
+/** Ctrl+C outside the sentence editor: the current sentence goes to the clipboard. */
+async function copySentence() {
+  const segment = currentSegment()
+  if (!segment) return
+  try {
+    await navigator.clipboard.writeText(segment.text)
+    say('Sentence copied')
+  } catch (e) {
+    say(`Could not copy: ${(e as Error).message}`)
+  }
+}
+
+/** Ctrl+X: mark the current sentence as cut (nothing changes yet), if it is at an edge of its bead; Ctrl+V moves it. */
+function cutSentence() {
+  const bead = currentBead.value
+  const segment = currentSegment()
+  if (!bead || !segment) return
+  const side = currentSide.value
+  const segments = bead[side]
+  if (segment !== segments[0] && segment !== segments[segments.length - 1]) {
+    return say('Only the first or last sentence of a bead can move to a neighbouring bead')
+  }
+  cut.value = { beadId: bead.id, side, segmentId: segment.segment_id }
+  navigator.clipboard.writeText(segment.text).catch(() => {})  // the cut itself doesn't need the clipboard
+  say('Sentence cut: go to the previous or next bead and press Ctrl+V (Esc cancels)')
+}
+
+/** Ctrl+V: the cut sentence moves to the adjacent edge of the current bead, if that is its neighbour (SPEC §3.3). */
+async function pasteSentence() {
+  const c = cut.value
+  if (!c) return say('Nothing cut')
+  const from = beadIndex.value.get(c.beadId)
+  const here = currentBeadId.value === null ? undefined : beadIndex.value.get(currentBeadId.value)
+  const segments = from === undefined ? [] : book.value!.beads[from]![c.side]
+  let to: 'previous' | 'next' | null = null
+  if (from !== undefined && here === from - 1 && segments[0]?.segment_id === c.segmentId) to = 'previous'
+  else if (from !== undefined && here === from + 1 && segments[segments.length - 1]?.segment_id === c.segmentId) to = 'next'
+  if (!to) return say('A sentence can only move to the edge of the neighbouring bead: the text order never changes')
+  const direction = to
+  if (await correct((id) => booksApi.move(id, c.beadId, c.side, direction))) say('Sentence moved (Ctrl+Z to undo)')
+}
+
 function isTextEntry(target: HTMLElement | null): boolean {
   if (!target) return false
   if (target.isContentEditable || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT') return true
@@ -388,6 +443,11 @@ function onKey(event: KeyboardEvent) {
     showOriginal.value = false
     return
   }
+  if (event.key === 'Escape' && cut.value) {
+    event.preventDefault()
+    cut.value = null
+    return
+  }
   if (event.key === 'Escape' && runRange.value) {
     event.preventDefault()
     clearRun()
@@ -403,6 +463,13 @@ function onKey(event: KeyboardEvent) {
     event.preventDefault()
     if (key === 'z' && !event.shiftKey) undo()
     else redo()
+    return
+  }
+  if (event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey && (key === 'c' || key === 'x' || key === 'v')) {
+    event.preventDefault()
+    if (key === 'c') copySentence()
+    else if (key === 'x') cutSentence()
+    else pasteSentence()
     return
   }
   if (event.ctrlKey || event.metaKey || event.altKey) return

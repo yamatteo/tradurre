@@ -40,9 +40,9 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
   gold book scores below 0.95. A typical book is 1,000–5,000 sentences a side; performance targets are at 5,000
   beads. Order: Stage 4 → Stage 6 → Stage 7 (v0.2). Then the translator reviews *Contrefeu* in v0.2 for a true
   gold (the current one was made by the user, the developer), and maybe a second book, to score the aligner again.
-- `uv run pytest`: 402 passed, also on a fresh clone (tests read only committed synthetic fixtures; `-m library`
+- `uv run pytest`: 404 passed, also on a fresh clone (tests read only committed synthetic fixtures; `-m library`
   tests run only where `library/contrefeu.*.pdf` exists, and assert counts only).
-- `npm run type-check` passes; releases build with `npm run build`. `npm run test:e2e` (50 tests) runs on its own
+- `npm run type-check` passes; releases build with `npm run build`. `npm run test:e2e` (51 tests) runs on its own
   backend (:8001, throwaway `.e2e.db`) and Vite (:5174), never the user's database. Setup per machine: `npx
   playwright install chromium` (on Ubuntu 26.04 with `PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=ubuntu24.04-x64`); tests
   use the full Chromium headless (`channel: 'chromium'`).
@@ -628,6 +628,10 @@ on 10,000 beads not worse than ~1.2–1.3 s alone, and also measured once with t
 #### Re-align: nothing changed
 Status: done
 Report: 2026-10-04 — `realign` compares the aligner's `(source, target)` groups with the stretch's and raises "The aligner gives the same beads; nothing changed" when equal; new domain test (second re-align refused, marks kept, one operation) and API test (409 on the imported book), the existing e2e re-align test first moves "Paul partit." into B2 through the API, new e2e test for the unchanged case; the three new tests fail on the old code (the reworked one passes either way, as intended); pytest 404 passed, e2e 51 passed, type-check clean.
+Verified (Pauli, 2026-10-04): Done when holds (commit e4e8f85; pytest 404 here). Braun's note (a refused
+re-align still clears the run) is general: `correct` clears the run before the request, so every refused
+correction loses the selection although nothing changed. Fixed in "Cut/copy/paste between rows" (clear only on
+success).
 **Done when:** `uv run pytest` passes with the new tests below; `npm run type-check` passes; `npm run test:e2e`
 passes with the reworked and new tests in `review.spec.ts`; each new test fails on the code before the change.
 
@@ -649,7 +653,8 @@ Agreed (user, 2026-10-04): "if realign does not change anything, don't un-review
   beads; nothing changed`, B2 still reviewed, rows unchanged.
 
 ### Cut/copy/paste between rows
-Status: todo
+Status: done
+Report: 2026-10-04 — Ctrl+C/X/V outside the editor in `BookView.vue` (`cut` + `cutRow` in `Selection`, dashed accent border and `data-cut` in `BeadRow.vue`, Esc before the run, cleared by any successful correction); `correct` clears run and cut only after success, so `BookStatus.vue` now shows a message over the run summary and a change of the run clears the message; 3 `SHORTCUTS` entries; 5 e2e tests in `book-corrections.spec.ts`, 1 in `review.spec.ts`, all failing on the old code except the editor test (a guard, passes either way); e2e 57 passed, pytest 404 passed, type-check clean; 20 ArrowDown on 10,000 beads 1.17–1.21 s.
 **Done when:** `npm run type-check` passes; `npm run test:e2e` passes with the new tests below (each failing
 before the change); `uv run pytest` unchanged; 20 ArrowDown on 10,000 beads not worse than ~1.2–1.3 s alone.
 
@@ -677,7 +682,11 @@ Outside it they work on whole sentences …". Frontend only: the paste is the ex
   paste the cut is cleared, the current bead stays the one pasted into, and `say('Sentence moved (Ctrl+Z to
   undo)')`.
 - **The cut is cleared** by Esc (precedence: shortcuts panel, import log, More, original popover, cut, run), by
-  any correction (`correct`), and by undo/redo. Moving around keeps it.
+  any successful correction (`correct`), and by undo/redo. Moving around keeps it.
+- **Refusals keep the selection** (left over from "Re-align: nothing changed"): `correct` in `BookView.vue` clears
+  the run (and now the cut) only after the request succeeds, not before it; a refused correction changes nothing,
+  so it keeps both. Test (`review.spec.ts`): on the untouched 3-bead book, select B2..B3, "Re-align the
+  selection" → the "nothing changed" message and `data-in-run` still on B2 and B3.
 - `SHORTCUTS`, group "Corrections", no `key` (handled in the Ctrl branch): "Copy the sentence" `Ctrl+C`, "Cut the
   sentence" `Ctrl+X`, "Paste it into the neighbouring bead" `Ctrl+V`.
 - Tests (`book-corrections.spec.ts`, its `gap` book): select "Il pleuvait." (C, alone on its source side),

@@ -280,3 +280,84 @@ test('an empty original is shown as such and cannot be restored', async ({ page,
   await page.keyboard.press('Escape')
   await expect(page.getByTestId('original-popover')).toHaveCount(0)
 })
+
+function cutSpans(page: Page) {
+  return page.locator('[data-cut="true"]')
+}
+
+test('Ctrl+X cuts a sentence and Ctrl+V in the previous bead moves it there, in one undo step', async ({ page, request }) => {
+  const { id } = await importBook(request, 'Cut paste')
+  await open(page, id)
+  await page.getByText('Il pleuvait.').click()  // C, alone on its source side
+  await page.keyboard.press('Control+x')
+  await expect(page.getByText('Il pleuvait.')).toHaveAttribute('data-cut', 'true')
+  await expect(page.getByTestId('status')).toHaveText(
+    'Sentence cut: go to the previous or next bead and press Ctrl+V (Esc cancels)')
+  await page.keyboard.press('ArrowUp')  // B
+  await page.keyboard.press('Control+v')
+  await expect.poll(() => rows(page)).toEqual(B_MERGED)
+  await expect(page.getByTestId('status')).toHaveText('Sentence moved (Ctrl+Z to undo)')
+  await expect(cutSpans(page)).toHaveCount(0)
+  await page.keyboard.press('Control+z')
+  await expect.poll(() => rows(page)).toEqual(ORIGINAL)
+})
+
+test('Ctrl+V away from the neighbouring bead is refused and Esc cancels the cut', async ({ page, request }) => {
+  const { id } = await importBook(request, 'Paste refused')
+  await open(page, id)
+  await page.getByText('Il pleuvait.').click()
+  await page.keyboard.press('Control+x')
+  await page.keyboard.press('ArrowUp')
+  await page.keyboard.press('ArrowUp')  // A
+  await page.keyboard.press('Control+v')
+  await expect(page.getByTestId('status')).toHaveText(
+    'A sentence can only move to the edge of the neighbouring bead: the text order never changes')
+  await expect.poll(() => rows(page)).toEqual(ORIGINAL)
+  await expect(page.getByText('Il pleuvait.')).toHaveAttribute('data-cut', 'true')
+  await page.keyboard.press('Escape')
+  await expect(cutSpans(page)).toHaveCount(0)
+})
+
+test('Ctrl+C copies the current sentence', async ({ page, context, request }) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write'])
+  const { id } = await importBook(request, 'Copy')
+  await open(page, id)
+  await page.getByText('Marie arriva.').click()
+  await page.keyboard.press('Control+c')
+  await expect(page.getByTestId('status')).toHaveText('Sentence copied')
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('Marie arriva.')
+  await expect(cutSpans(page)).toHaveCount(0)
+})
+
+test('Ctrl+X refuses a sentence in the middle of its bead', async ({ page, request }) => {
+  const { id } = await importBook(request, 'Cut middle')
+  await open(page, id)  // A
+  await page.keyboard.press('m')
+  await expect(page.getByTestId('bead-row')).toHaveCount(4)
+  await page.keyboard.press('m')
+  await expect(page.getByTestId('bead-row')).toHaveCount(3)
+  await page.getByText('Marie arriva.').click()
+  await page.keyboard.press('Control+x')
+  await expect(page.getByTestId('status')).toHaveText(
+    'Only the first or last sentence of a bead can move to a neighbouring bead')
+  await expect(cutSpans(page)).toHaveCount(0)
+})
+
+test('inside the sentence editor cut and paste work on the text', async ({ page, context, request }) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write'])
+  const { id } = await importBook(request, 'Editor cut')
+  await open(page, id)
+  await page.getByText('Marie arriva.').click()
+  await page.keyboard.press('Enter')
+  const editor = page.getByTestId('segment-editor')
+  await expect(editor).toBeFocused()
+  await page.keyboard.press('Control+a')
+  await page.keyboard.press('Control+x')
+  await expect(editor).toHaveValue('')
+  await page.keyboard.press('Control+v')
+  await expect(editor).toHaveValue('Marie arriva.')
+  await page.keyboard.press('Enter')
+  await expect(editor).toHaveCount(0)
+  await expect.poll(() => rows(page)).toEqual(ORIGINAL)
+  await expect(cutSpans(page)).toHaveCount(0)
+})

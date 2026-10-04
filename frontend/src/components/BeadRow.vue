@@ -16,6 +16,7 @@ const currentSegmentId = computed(() => (current.value ? selection.currentSegmen
 const editingSegmentId = computed(() => (current.value ? selection.editingSegmentId.value : null))
 const problem = computed(() => isProblem(props.bead, props.multi))
 const inRun = computed(() => selection.inRun[props.bead.id] === true)
+const cutSegmentId = computed(() => selection.cutRow[props.bead.id] ?? null)
 
 const emit = defineEmits<{
   select: [beadId: number, side: Side, segmentId: number | null, extend: boolean]
@@ -126,11 +127,15 @@ const cells = computed(() =>
             @keydown="onEditorKey($event, seg.segment_id)" @blur="onEditorBlur($event, seg.segment_id)" />
           <!-- The bottom border is always there, only recoloured: so selecting a segment repaints it without a layout
                (an inline gaining a background or a border is laid out again, and that walks all 10,000 rows). -->
+          <!-- A cut sentence (Ctrl+X) gets the same border, dashed: a change of style and colour only. -->
           <!-- An edited sentence (its original differs) is underlined with dots: text decoration, not a border. -->
           <span v-else :data-segment-id="seg.segment_id" :data-current-segment="currentSegmentId === seg.segment_id"
-            :data-edited="seg.original !== null ? 'true' : undefined" class="border-b-2"
+            :data-edited="seg.original !== null ? 'true' : undefined"
+            :data-cut="cutSegmentId === seg.segment_id ? 'true' : undefined" class="border-b-2"
             :class="[
-              currentSegmentId === seg.segment_id ? 'bg-current-segment border-accent' : 'border-transparent',
+              currentSegmentId === seg.segment_id ? 'bg-current-segment' : '',
+              currentSegmentId === seg.segment_id || cutSegmentId === seg.segment_id ? 'border-accent' : 'border-transparent',
+              cutSegmentId === seg.segment_id ? 'border-dashed' : '',
               seg.original !== null ? 'underline decoration-dotted decoration-muted underline-offset-[3px]' : '',
             ]"
             @click.stop="emit('select', bead.id, cell.side, seg.segment_id, $event.shiftKey)"

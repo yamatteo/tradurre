@@ -316,3 +316,15 @@ test('Re-align of a stretch the aligner would leave as it is changes nothing and
   expect(await reviewed(page)).toEqual(['false', 'true', 'false'])
   expect(await page.getByTestId('bead-row').evaluateAll((els) => els.map((el) => el.textContent))).toEqual(before)
 })
+
+test('a refused correction keeps the selected run', async ({ page, request }) => {
+  const { id } = await importBook(request, 'Refusal keeps run')
+  await open(page, id)
+  await page.keyboard.press('ArrowDown')
+  await page.keyboard.press('Shift+ArrowDown')
+  await expect.poll(() => inRun(page)).toEqual(['false', 'true', 'true'])
+  await page.getByTestId('more').click()
+  await page.getByTestId('realign').click()
+  await expect(page.getByTestId('status')).toHaveText('The aligner gives the same beads; nothing changed')
+  await expect.poll(() => inRun(page)).toEqual(['false', 'true', 'true'])
+})
