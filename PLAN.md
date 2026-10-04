@@ -35,7 +35,7 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
   "Restore original", re-align of the selection (More menu), cut/copy/paste of whole sentences (Ctrl+X/C/V).
   Restyled to design variant A; smooth at 5,000 beads. Stages 4 and 6 done (search at `/search` and from the book; More → Export: edition .txt/.docx and the
   project bundle; "Restore a bundle" on the library page). Stage 7: search grouped by book and the library order
-  done, and database snapshots; next snapshot names in local time, retire v1 (4 tasks), a Windows checklist, then the v0.2 tag. On the reference book the problem flags catch
+  done, and database snapshots (local-time names); next retire v1 (4 tasks), a Windows checklist, then the v0.2 tag. On the reference book the problem flags catch
   none of the 15 real errors: review is reading-first; better signals come after v0.2.
 - **Re-planned with the user (2026-10-04), SPEC changed accordingly:** review is one mode, problem-first: jump to
   the next likely problem, correct, mark one bead, a selected run, or everything up to here as reviewed. The
@@ -43,7 +43,7 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
   gold book scores below 0.95. A typical book is 1,000–5,000 sentences a side; performance targets are at 5,000
   beads. Order: Stage 6 → Stage 7 (v0.2), confirmed 2026-10-04. Then the translator reviews *Contrefeu* in v0.2 for a true
   gold (the current one was made by the user, the developer), and maybe a second book, to score the aligner again.
-- `uv run pytest`: 439 passed, also on a fresh clone (tests read only committed synthetic fixtures; `-m library`
+- `uv run pytest`: 448 passed, also on a fresh clone (tests read only committed synthetic fixtures; `-m library`
   tests run only where `library/contrefeu.*.pdf` exists, and assert counts only).
 - `npm run type-check` passes; releases build with `npm run build`. `npm run test:e2e` (70 tests; the three timing tests run last, alone, in project `scale`) runs on its own
   backend (:8001, throwaway `.e2e.db`) and Vite (:5174), never the user's database. Setup per machine: `npx
@@ -295,7 +295,7 @@ the old code stays in git history. Order: the screens the translator uses move o
 frontend goes, then the backend, then the docs. Each task leaves the app working.
 
 #### Library page on books
-Status: todo
+Status: done
 **Done when:** `uv run pytest` passes with the new tests; `npm run type-check` passes; `npm run test:e2e` passes,
 with the new test.
 
@@ -317,6 +317,7 @@ pair project) and deletes through v1 `api.deleteProject`.
   (read through the app's database file); a second delete → 404. `e2e/books.spec.ts`: `data-project-id` →
   `data-book-id`; new: import a book through the API, open `/`, Delete (accept the dialog with
   `page.once('dialog', d => d.accept())`), the card is gone and `GET /api/v2/books/<id>` is 404.
+Report: 2026-10-04 — `DELETE /api/v2/books/{id}` (204/404) and `booksApi.deleteBook` (204 handled in `booksRequest`); library lists books only ("Library", `FR → IT`, `data-book-id`, Delete with confirm; New Project gone); nav: Library, Search; pytest 449, type-check clean, e2e 71.
 
 #### Remove the v1 frontend
 Status: todo

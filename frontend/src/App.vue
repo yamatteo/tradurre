@@ -9,11 +9,7 @@ import { RouterLink, RouterView } from 'vue-router'
       <RouterLink to="/" class="text-lg font-semibold text-gray-900">Tradurre</RouterLink>
       <RouterLink to="/" class="text-sm text-gray-600 hover:text-gray-900"
         :class="{ 'text-gray-900 font-medium': $route.name === 'projects' }">
-        Projects
-      </RouterLink>
-      <RouterLink to="/import" class="text-sm text-gray-600 hover:text-gray-900"
-        :class="{ 'text-gray-900 font-medium': $route.name === 'import' }">
-        Import
+        Library
       </RouterLink>
       <RouterLink to="/search" class="text-sm text-gray-600 hover:text-gray-900"
         :class="{ 'text-gray-900 font-medium': $route.name === 'search' }">

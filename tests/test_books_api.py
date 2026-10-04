@@ -227,3 +227,28 @@ def test_old_project_is_not_a_book(client):
 def test_check_is_clean(client):
     book_id = _import(client).json()["id"]
     assert client.get(f"/api/v2/books/{book_id}/check").json() == []
+
+
+def test_delete_book(client, db_path):
+    book_id = _import(client).json()["id"]
+    bead = client.get(f"/api/v2/books/{book_id}").json()["beads"][0]["id"]
+    # A correction, so the book has an operation to lose.
+    assert client.post(f"/api/v2/books/{book_id}/reviewed", json={"bead_ids": [bead], "reviewed": True}).status_code == 200
+    conn = get_connection(db_path)
+    try:
+        assert conn.execute("SELECT COUNT(*) FROM operations WHERE project_id = ?", (book_id,)).fetchone()[0] > 0
+    finally:
+        conn.close()
+    assert client.get("/api/v2/search", params={"q": "pleuvait"}).json() != []
+    assert client.delete(f"/api/v2/books/{book_id}").status_code == 204
+    assert client.get(f"/api/v2/books/{book_id}").status_code == 404
+    assert client.get("/api/v2/books").json() == []
+    assert client.get("/api/v2/search", params={"q": "pleuvait"}).json() == []
+    conn = get_connection(db_path)
+    try:
+        for table in ("documents", "beads", "operations", "runs"):
+            assert conn.execute(f"SELECT COUNT(*) FROM {table} WHERE project_id = ?", (book_id,)).fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM bead_index").fetchone()[0] == 0
+    finally:
+        conn.close()
+    assert client.delete(f"/api/v2/books/{book_id}").status_code == 404

@@ -196,6 +196,7 @@ async function booksRequest<T>(path: string, options?: RequestInit): Promise<T> 
     }
     throw new Error(message)
   }
+  if (res.status === 204) return undefined as T
   return res.json()
 }
 
@@ -331,6 +332,9 @@ export const booksApi = {
   listBooks: () => booksRequest<BookSummary[]>('/books'),
 
   getBook: (id: string) => booksRequest<Book>(`/books/${id}`),
+
+  /** Delete the book and everything in it; it can't be undone. */
+  deleteBook: (id: string) => booksRequest<void>(`/books/${id}`, { method: 'DELETE' }),
 
   getRuns: (id: string) => booksRequest<BookRun[]>(`/books/${id}/runs`),
 

@@ -21,7 +21,7 @@ function txt(name: string, text: string) {
   return { name, mimeType: 'text/plain', buffer: Buffer.from(text) }
 }
 
-test('importing through the form opens the book, which the project list then opens', async ({ page }) => {
+test('importing through the form opens the book, which the library then opens', async ({ page }) => {
   await page.goto('/')
   await page.getByRole('button', { name: 'Import a book (txt/docx/pdf)' }).click()
   await expect(page).toHaveURL(/\/book\/import$/)
@@ -42,11 +42,31 @@ test('importing through the form opens the book, which the project list then ope
   await expect(page.getByTestId('book-progress')).toHaveText('Reviewed 0 / 2')
 
   await page.goto('/')
-  const card = page.locator(`[data-project-id="${bookId}"]`)
+  const card = page.locator(`[data-book-id="${bookId}"]`)
   await expect(card).toContainText('2 beads, 0 reviewed')
   await card.click()
   await expect(page).toHaveURL(new RegExp(`/book/${bookId}$`))
   await expect(page.getByTestId('bead-row')).toHaveCount(2)
+})
+
+test('Delete on the library removes the book after confirming', async ({ page, request }) => {
+  const res = await request.post('/api/v2/books', {
+    multipart: {
+      source: { name: 'fr.txt', mimeType: 'text/plain', buffer: Buffer.from(SOURCE) },
+      target: { name: 'it.txt', mimeType: 'text/plain', buffer: Buffer.from(TARGET) },
+      title: 'To delete',
+    },
+  })
+  expect(res.status()).toBe(201)
+  const id: string = (await res.json()).id
+
+  await page.goto('/')
+  const card = page.locator(`[data-book-id="${id}"]`)
+  await expect(card).toContainText('FR → IT')
+  page.once('dialog', (d) => d.accept())
+  await card.getByTestId('delete-book').click()
+  await expect(card).toHaveCount(0)
+  expect((await request.get(`/api/v2/books/${id}`)).status()).toBe(404)
 })
 
 test('importing an unreadable PDF shows the server message', async ({ page }) => {

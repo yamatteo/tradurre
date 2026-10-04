@@ -1,37 +1,19 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { api, booksApi, type BookSummary, type Project } from '@/api/client'
+import { booksApi, type BookSummary } from '@/api/client'
 
 const router = useRouter()
-const projects = ref<Project[]>([])
-const books = ref<Record<string, BookSummary>>({})
-const showCreate = ref(false)
-const newTitle = ref('')
-const newSourceLang = ref('it')
-const newTargetLang = ref('en')
+const books = ref<BookSummary[]>([])
 const restoreError = ref('')
 const bundleInput = ref<HTMLInputElement | null>(null)
 
 async function load() {
-  const [allProjects, allBooks] = await Promise.all([api.listProjects(), booksApi.listBooks()])
-  projects.value = allProjects
-  books.value = Object.fromEntries(allBooks.map((b) => [b.id, b]))
+  books.value = await booksApi.listBooks()
 }
 
-function open(p: Project) {
-  const name = p.id in books.value ? 'book' : 'editor'
-  router.push({ name, params: { id: p.id } })
-}
-
-async function create() {
-  if (!newTitle.value.trim()) return
-  const proj = await api.createProject({
-    title: newTitle.value.trim(),
-    source_lang: newSourceLang.value,
-    target_lang: newTargetLang.value,
-  })
-  router.push({ name: 'editor', params: { id: proj.id } })
+function open(book: BookSummary) {
+  router.push({ name: 'book', params: { id: book.id } })
 }
 
 /** Restore a project bundle (SPEC §3.5) as a new book and open it. */
@@ -49,9 +31,9 @@ async function restoreBundle(event: Event) {
   }
 }
 
-async function remove(id: string) {
-  if (!confirm('Delete this project and all its translations?')) return
-  await api.deleteProject(id)
+async function remove(book: BookSummary) {
+  if (!confirm(`Delete "${book.title}"? This can't be undone.`)) return
+  await booksApi.deleteBook(book.id)
   await load()
 }
 
@@ -61,7 +43,7 @@ onMounted(load)
 <template>
   <div class="max-w-4xl mx-auto p-6">
     <div class="flex items-center justify-between mb-6">
-      <h1 class="text-2xl font-bold text-gray-900">Projects</h1>
+      <h1 class="text-2xl font-bold text-gray-900">Library</h1>
       <div class="flex gap-2">
         <button @click="router.push({ name: 'book-import' })"
           class="px-4 py-2 bg-white border border-blue-600 text-blue-700 rounded-lg hover:bg-blue-50 text-sm">
@@ -73,54 +55,26 @@ onMounted(load)
         </button>
         <input ref="bundleInput" type="file" accept=".zip" data-testid="restore-bundle-file" class="hidden"
           @change="restoreBundle" />
-        <button @click="showCreate = !showCreate"
-          class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm">
-          New Project
-        </button>
       </div>
     </div>
     <p v-if="restoreError" data-testid="restore-error" class="mb-4 text-red-600">{{ restoreError }}</p>
 
-    <div v-if="showCreate" class="bg-white rounded-lg border border-gray-200 p-4 mb-6">
-      <div class="flex gap-3 items-end">
-        <div class="flex-1">
-          <label class="block text-sm text-gray-600 mb-1">Title</label>
-          <input v-model="newTitle" @keyup.enter="create" placeholder="e.g. I Promessi Sposi"
-            class="w-full border border-gray-300 rounded px-3 py-2 text-sm" />
-        </div>
-        <div>
-          <label class="block text-sm text-gray-600 mb-1">Source</label>
-          <input v-model="newSourceLang" class="w-20 border border-gray-300 rounded px-3 py-2 text-sm" />
-        </div>
-        <div>
-          <label class="block text-sm text-gray-600 mb-1">Target</label>
-          <input v-model="newTargetLang" class="w-20 border border-gray-300 rounded px-3 py-2 text-sm" />
-        </div>
-        <button @click="create" class="px-4 py-2 bg-blue-600 text-white rounded text-sm hover:bg-blue-700">
-          Create
-        </button>
-      </div>
-    </div>
-
-    <div v-if="projects.length === 0" class="text-center text-gray-500 py-12">
-      No projects yet. Create one to get started.
+    <div v-if="books.length === 0" class="text-center text-gray-500 py-12">
+      No books yet. Import one to get started.
     </div>
 
     <div v-else class="space-y-3">
-      <div v-for="p in projects" :key="p.id"
+      <div v-for="b in books" :key="b.id"
         class="bg-white rounded-lg border border-gray-200 p-4 flex items-center justify-between hover:border-gray-300 cursor-pointer"
-        :data-project-id="p.id" @click="open(p)">
+        :data-book-id="b.id" @click="open(b)">
         <div>
-          <h2 class="font-medium text-gray-900">{{ p.title }}</h2>
+          <h2 class="font-medium text-gray-900">{{ b.title }}</h2>
           <p class="text-sm text-gray-500">
-            {{ p.source_lang }} &rarr; {{ p.target_lang }} &middot;
-            <template v-if="books[p.id]">
-              {{ books[p.id]!.bead_count }} beads, {{ books[p.id]!.reviewed_count }} reviewed
-            </template>
-            <template v-else>{{ p.pair_count }} paragraphs</template>
+            {{ b.source_lang.toUpperCase() }} &rarr; {{ b.target_lang.toUpperCase() }} &middot;
+            {{ b.bead_count }} beads, {{ b.reviewed_count }} reviewed
           </p>
         </div>
-        <button @click.stop="remove(p.id)" class="text-gray-400 hover:text-red-500 text-sm px-2">
+        <button data-testid="delete-book" @click.stop="remove(b)" class="text-gray-400 hover:text-red-500 text-sm px-2">
           Delete
         </button>
       </div>

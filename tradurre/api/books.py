@@ -393,6 +393,16 @@ async def restore_bundle(bundle: UploadFile, db: sqlite3.Connection = Depends(ge
     return {"id": book_id, "title": book["title"], "bead_count": bead_count, "warnings": []}
 
 
+@router.delete("/books/{book_id}", status_code=204)
+def delete_book(book_id: str, db: sqlite3.Connection = Depends(get_db)):
+    """Delete the book and everything in it; not undoable (its operation log goes with it)."""
+    _book_row(db, book_id)
+    with transaction(db):
+        # The ON DELETE CASCADE foreign keys and the bead_index triggers do the rest.
+        db.execute("DELETE FROM projects WHERE id = ?", (book_id,))
+    return Response(status_code=204)
+
+
 @router.get("/books/{book_id}/check", response_model=list[str])
 def check_book(book_id: str, db: sqlite3.Connection = Depends(get_db)):
     _book_row(db, book_id)
