@@ -33,6 +33,10 @@ test('at 1366 × 768 the two bars fit and have their heights; the import log ope
   await button.click()
   await button.click()
   await expect(page.getByTestId('import-log-panel')).toHaveCount(0)
+  await button.click()
+  await expect(page.getByTestId('import-log-panel')).toBeVisible()
+  await page.getByTestId('bead-row').last().click()  // a click outside closes it
+  await expect(page.getByTestId('import-log-panel')).toHaveCount(0)
 })
 
 test('h and the Keys button open the shortcuts panel; it lists every shortcut, holds the keys, and Esc closes it', async ({ page, request }) => {

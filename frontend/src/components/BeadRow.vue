@@ -126,9 +126,13 @@ const cells = computed(() =>
             @keydown="onEditorKey($event, seg.segment_id)" @blur="onEditorBlur($event, seg.segment_id)" />
           <!-- The bottom border is always there, only recoloured: so selecting a segment repaints it without a layout
                (an inline gaining a background or a border is laid out again, and that walks all 10,000 rows). -->
+          <!-- An edited sentence (its original differs) is underlined with dots: text decoration, not a border. -->
           <span v-else :data-segment-id="seg.segment_id" :data-current-segment="currentSegmentId === seg.segment_id"
-            class="border-b-2"
-            :class="currentSegmentId === seg.segment_id ? 'bg-current-segment border-accent' : 'border-transparent'"
+            :data-edited="seg.original !== null ? 'true' : undefined" class="border-b-2"
+            :class="[
+              currentSegmentId === seg.segment_id ? 'bg-current-segment border-accent' : 'border-transparent',
+              seg.original !== null ? 'underline decoration-dotted decoration-muted underline-offset-[3px]' : '',
+            ]"
             @click.stop="emit('select', bead.id, cell.side, seg.segment_id, $event.shiftKey)"
             @dblclick.stop="emit('edit', seg.segment_id)">{{ seg.text }}</span>
         </template>

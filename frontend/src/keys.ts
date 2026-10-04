@@ -30,6 +30,7 @@ export const SHORTCUTS = [
   { id: 'merge', group: 'Corrections', label: 'Merge with the next bead', display: ['M'], key: 'm' },
   { id: 'split', group: 'Corrections', label: 'Split the bead at the sentence', display: ['S'], key: 's' },
   { id: 'exclude', group: 'Corrections', label: 'Exclude the block', display: ['X'], key: 'x' },
+  { id: 'show-original', group: 'Corrections', label: 'Show the original sentence', display: ['O'], key: 'o' },
   { id: 'edit', group: 'Editing a sentence', label: 'Edit the sentence', display: ['Enter'], key: 'Enter' },
   { id: 'save', group: 'Editing a sentence', label: 'Save the edit', display: ['Enter'] },
   { id: 'cancel', group: 'Editing a sentence', label: 'Cancel the edit', display: ['Esc'] },

@@ -6,8 +6,9 @@ import BeadRow from '@/components/BeadRow.vue'
 import BookPosition from '@/components/BookPosition.vue'
 import BookStatus from '@/components/BookStatus.vue'
 import KeysPanel from '@/components/KeysPanel.vue'
+import OriginalPopover from '@/components/OriginalPopover.vue'
 import { SHORTCUTS, type KeyedId } from '@/keys'
-import { selectionKey, statusKey } from '@/selection'
+import { originalKey, selectionKey, statusKey } from '@/selection'
 import { isProblem } from '@/review'
 
 const props = defineProps<{ id: string }>()
@@ -26,6 +27,10 @@ const showKeys = ref(false)
 // The "More" menu of the second bar (A1): the rare bulk commands. Changes on clicks only (render rule 1 allows it).
 const showMore = ref(false)
 const moreMenu = ref<HTMLElement | null>(null)
+const importLog = ref<HTMLElement | null>(null)
+// The original-sentence popover (key `o`): read by OriginalPopover.vue only, never by this template (render rule 1).
+const showOriginal = ref(false)
+provide(originalKey, showOriginal)
 const busy = ref(false)
 
 const currentBeadId = ref<number | null>(null)
@@ -38,6 +43,7 @@ watch(currentBeadId, (id, old) => {
   if (id !== null) currentRow[id] = true
 }, { flush: 'sync' })
 provide(statusKey, status)
+watch(currentSegmentId, () => (showOriginal.value = false))
 
 const reviewedCount = computed(() => book.value?.beads.filter((b) => b.reviewed).length ?? 0)
 const problemCount = computed(() => book.value?.beads.filter((b) => isProblem(b, showMulti.value)).length ?? 0)
@@ -351,6 +357,7 @@ const handlers: Record<KeyedId, (event: KeyboardEvent) => void> = {
   merge: () => runCorrection('merge'),
   split: () => runCorrection('split'),
   exclude: () => runCorrection('exclude'),
+  'show-original': toggleOriginal,
   edit: () => startEditing(),
   join: joinNext,
 }
@@ -373,6 +380,11 @@ function onKey(event: KeyboardEvent) {
   if (event.key === 'Escape' && showMore.value) {
     event.preventDefault()
     showMore.value = false
+    return
+  }
+  if (event.key === 'Escape' && showOriginal.value) {
+    event.preventDefault()
+    showOriginal.value = false
     return
   }
   if (event.key === 'Escape' && runRange.value) {
@@ -442,17 +454,41 @@ async function bulk(action: 'exclude' | 'include', to: 'start' | 'end') {
 
 function toggleMore() {
   showMore.value = !showMore.value
-  if (showMore.value) showImportLog.value = false
+  if (showMore.value) showImportLog.value = showOriginal.value = false
 }
 
 function toggleImportLog() {
   showImportLog.value = !showImportLog.value
-  if (showImportLog.value) showMore.value = false
+  if (showImportLog.value) showMore.value = showOriginal.value = false
 }
 
-/** A click outside the "More" menu closes it. */
+/** `o`: show or hide the current sentence's original, if it is edited. */
+function toggleOriginal() {
+  if (showOriginal.value) {
+    showOriginal.value = false
+    return
+  }
+  const segment = currentSegment()
+  if (!segment) return
+  if (segment.original === null) return say('This sentence is not edited')
+  showOriginal.value = true
+  showMore.value = showImportLog.value = false
+}
+
+/** Whether the current sentence has an original to restore (edited, and its original not empty). */
+const canRestore = computed(() => !!currentSegment()?.original)
+
+async function restoreOriginal() {
+  showOriginal.value = showMore.value = false
+  const segment = currentSegment()
+  if (!segment?.original) return
+  if (await correct((id) => booksApi.restoreOriginal(id, segment.segment_id))) say('Original restored (Ctrl+Z to undo)')
+}
+
+/** A click outside the "More" menu or the import log closes it. */
 function onWindowMouseDown(event: MouseEvent) {
   if (showMore.value && !moreMenu.value?.contains(event.target as Node)) showMore.value = false
+  if (showImportLog.value && !importLog.value?.contains(event.target as Node)) showImportLog.value = false
 }
 
 onMounted(async () => {
@@ -506,7 +542,7 @@ onBeforeUnmount(() => {
           </span>
         </div>
         <span class="shrink-0 w-px h-4 bg-bar-rule" />
-        <div v-if="importRun" class="shrink-0 relative">
+        <div v-if="importRun" ref="importLog" class="shrink-0 relative">
           <button type="button" data-testid="import-log" :aria-expanded="showImportLog"
             :title="importRun.warnings.length ? `Import log: ${importRun.warnings.length} warning${importRun.warnings.length === 1 ? '' : 's'}` : 'Import log'"
             @click="toggleImportLog"
@@ -585,6 +621,12 @@ onBeforeUnmount(() => {
               class="w-full h-[30px] px-3 flex items-center text-left text-ink hover:bg-hover disabled:opacity-40">
               {{ item.label }}
             </button>
+            <p class="px-3 pt-2 pb-1 text-[10.5px] uppercase tracking-wider text-faint">Text</p>
+            <button type="button" role="menuitem" data-testid="restore-original-more" :disabled="!canRestore"
+              @click="restoreOriginal"
+              class="w-full h-[30px] px-3 flex items-center text-left text-ink hover:bg-hover disabled:opacity-40">
+              Restore the original sentence
+            </button>
           </div>
         </div>
         <span class="flex-1" />
@@ -641,6 +683,7 @@ onBeforeUnmount(() => {
         <BookPosition :book="book" />
       </div>
       <KeysPanel v-if="showKeys" @close="showKeys = false" />
+      <OriginalPopover :book="book" @restore="restoreOriginal" @close="showOriginal = false" />
     </template>
   </div>
 </template>

@@ -39,7 +39,7 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
   gold book scores below 0.95. A typical book is 1,000–5,000 sentences a side; performance targets are at 5,000
   beads. Order: Stage 4 → Stage 6 → Stage 7 (v0.2). Then the translator reviews *Contrefeu* in v0.2 for a true
   gold (the current one was made by the user, the developer), and maybe a second book, to score the aligner again.
-- `uv run pytest`: 396 passed, also on a fresh clone (tests read only committed synthetic fixtures; `-m library`
+- `uv run pytest`: 399 passed, also on a fresh clone (tests read only committed synthetic fixtures; `-m library`
   tests run only where `library/contrefeu.*.pdf` exists, and assert counts only).
 - `npm run type-check` passes; releases build with `npm run build`. `npm run test:e2e` (45 tests) runs on its own
   backend (:8001, throwaway `.e2e.db`) and Vite (:5174), never the user's database. Setup per machine: `npx
@@ -495,6 +495,8 @@ what changed** (user, 2026-10-04: it needs a diff/version history, out of scope)
 #### Original text: API and restore
 Status: done
 Report: 2026-10-04 — `BookSegment.original` (null unless edited) filled by `_read_book`; `segments.restore_original` (kind `restore_original`, the two refusals); `POST /segments/{id}/restore`; `client.ts` `original` and `restoreOriginal`; 2 domain tests (the empty-original case made for real: edit, then a split whose cut maps to the end of the original), 1 API test; pytest 399 passed, e2e 45 passed, type-check clean.
+Verified (Pauli, 2026-10-04): Done when holds (commit 1d0d3fe; pytest 399 here). `reconcile` in `BookView.vue`
+compares beads by JSON, so `original` changes re-render their row with no further work.
 **Done when:** `uv run pytest` passes with the new tests below; `npm run type-check` passes; `npm run test:e2e`
 passes unchanged.
 
@@ -514,7 +516,8 @@ passes unchanged.
   segment is 409.
 
 #### Original text in the book screen
-Status: todo
+Status: done
+Report: 2026-10-04 — dotted underline and `data-edited` on edited spans (`BeadRow`); new `OriginalPopover.vue` (state by `originalKey` injection, fixed, under or above the span, empty-original message, Restore disabled for it); key `o` in `SHORTCUTS`; "Text" heading and "Restore the original sentence" in More; Esc order panel > import log > More > popover > run, the three mutually exclusive; import log closes on a click outside; 3 e2e tests in `book-corrections.spec.ts` + a click-outside step in `book-layout.spec.ts`, all 4 failing on the old code; e2e 48 passed, pytest 399 passed, type-check clean; 20 ArrowDown on 10,000 beads 1.09–1.18 s alone.
 **Done when:** `npm run type-check` passes; `npm run test:e2e` passes with the new tests below in
 `frontend/e2e/book-corrections.spec.ts` (each failing before the change, see Conventions) and
 `e2e/book-layout.spec.ts` still passing at 1366; `uv run pytest` unchanged; 20 ArrowDown on 10,000 beads not
@@ -533,12 +536,15 @@ worse than ~1.2–1.3 s alone.
   "Original" (10.5 px uppercase faint), the original in `font-text` 15 px, then a "Restore original" button
   (`data-testid="restore-original"`) and a close ×. It closes on Esc, on ×, after a restore, and whenever the
   current segment changes (a `watch` on `currentSegmentId` in `BookView`).
-- **Key `o`** (`SHORTCUTS`, group "Corrections", label "Show the original sentence", `display: ['O']`): toggles
+- **Key `o`** (agreed by the user, 2026-10-04; `SHORTCUTS`, group "Corrections", label "Show the original sentence", `display: ['O']`): toggles
   the popover for the current segment; on an unedited one, `say('This sentence is not edited')` and nothing
   opens. **Restore** has no key: the popover's button and a "More" menu item "Restore the original sentence"
   (`data-testid="restore-original-more"`, under a second heading "Text" after the four bulk items, disabled
   unless the current segment is edited). Both call `correct(… restoreOriginal …)` and then `say('Original
   restored (Ctrl+Z to undo)')`.
+- **Empty original** (a split of an edited sentence can map the cut to the end of the original, leaving one part
+  with `original === ''`): the popover shows, in place of the text, "The original of this part is empty: it was
+  split after an edit." (italic, muted), and both restore controls are disabled for it.
 - **Esc precedence** in `onKey`: shortcuts panel, import log, More, original popover, run. The popover, the
   import log and More are mutually exclusive: opening one closes the others.
 - **Import log click-outside** (left over from "Range exclude/include"): a mousedown outside the import log's
@@ -547,7 +553,9 @@ worse than ~1.2–1.3 s alone.
   `data-edited="true"`, other spans don't; `o` opens the popover showing the old text; "Restore original" puts the
   old text back, removes `data-edited`, closes the popover, and Ctrl+Z brings the edit back; `o` on an unedited
   sentence shows "This sentence is not edited" and no popover; with the popover open, ↓ closes it; the More item
-  restores too. `book-layout.spec.ts`: with the import log open, a click on the list closes it.
+  restores too; an empty original, built through the API before opening the page (edit a sentence "S." to "S.
+  Encore.", then `POST segments/{id}/split` with `offset` = `len("S. ")`: the new "Encore." segment's original is
+  `''`, as in `test_restore_refused`), shows the empty message and a disabled "Restore original". `book-layout.spec.ts`: with the import log open, a click on the list closes it.
 - Don't change the editing flow (Enter / Ctrl+Enter / Esc in the editor) or any existing key.
 
 ### Re-align range

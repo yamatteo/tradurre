@@ -219,3 +219,64 @@ test('r on a 10,000-bead book is fast', async ({ page, request }) => {
   test.info().annotations.push({ type: 'timing', description: `r to reviewed border ${elapsed} ms` })
   expect(elapsed).toBeLessThan(1_500)
 })
+
+function edited(page: Page) {
+  return page.locator('[data-edited="true"]')
+}
+
+test('an edited sentence is marked; o shows its original, which Restore puts back in one undo step', async ({ page, request }) => {
+  const { id } = await importBook(request, 'Original')
+  await open(page, id)
+  await page.keyboard.press('ArrowDown')
+  await page.keyboard.press('Enter')
+  await page.keyboard.press('Backspace')
+  await page.keyboard.type(' tard.')
+  await page.keyboard.press('Enter')
+  await expect(edited(page)).toHaveCount(1)
+  await expect(edited(page)).toHaveText('Marie arriva tard.')
+  await page.keyboard.press('o')
+  await expect(page.getByTestId('original-popover')).toBeVisible()
+  await expect(page.getByTestId('original-text')).toHaveText('Marie arriva.')
+  await page.getByTestId('restore-original').click()
+  await expect(page.getByTestId('original-popover')).toHaveCount(0)
+  await expect(edited(page)).toHaveCount(0)
+  await expect.poll(() => rows(page)).toEqual(ORIGINAL)
+  await expect(page.getByTestId('status')).toHaveText('Original restored (Ctrl+Z to undo)')
+  await page.keyboard.press('Control+z')
+  await expect(edited(page)).toHaveText('Marie arriva tard.')
+})
+
+test('o on an unedited sentence says so; a move closes the popover; the More item restores', async ({ page, request }) => {
+  const { id, book } = await importBook(request, 'Original keys')
+  const segment = book.beads[1].source[0].segment_id
+  expect((await request.post(`/api/v2/books/${id}/segments/${segment}/edit`, { data: { text: 'Marie partit.' } })).status()).toBe(200)
+  await open(page, id)
+  await page.keyboard.press('o')
+  await expect(page.getByTestId('status')).toHaveText('This sentence is not edited')
+  await expect(page.getByTestId('original-popover')).toHaveCount(0)
+  await page.keyboard.press('ArrowDown')
+  await page.keyboard.press('o')
+  await expect(page.getByTestId('original-popover')).toBeVisible()
+  await page.keyboard.press('ArrowDown')
+  await expect(page.getByTestId('original-popover')).toHaveCount(0)
+  await page.keyboard.press('ArrowUp')
+  await page.getByTestId('more').click()
+  await page.getByTestId('restore-original-more').click()
+  await expect(edited(page)).toHaveCount(0)
+  await expect.poll(() => rows(page)).toEqual(ORIGINAL)
+})
+
+test('an empty original is shown as such and cannot be restored', async ({ page, request }) => {
+  const { id, book } = await importBook(request, 'Original empty')
+  const segment = book.beads[1].source[0].segment_id
+  const base = `/api/v2/books/${id}/segments/${segment}`
+  expect((await request.post(`${base}/edit`, { data: { text: 'Marie arriva. Encore.' } })).status()).toBe(200)
+  expect((await request.post(`${base}/split`, { data: { offset: 'Marie arriva. '.length } })).status()).toBe(200)
+  await open(page, id)
+  await page.getByText('Encore.').click()
+  await page.keyboard.press('o')
+  await expect(page.getByTestId('original-text')).toHaveText('The original of this part is empty: it was split after an edit.')
+  await expect(page.getByTestId('restore-original')).toBeDisabled()
+  await page.keyboard.press('Escape')
+  await expect(page.getByTestId('original-popover')).toHaveCount(0)
+})
