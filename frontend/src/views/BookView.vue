@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, provide, ref, shallowReactive, shallowRef, watch } from 'vue'
-import { booksApi, type Book, type BookBead, type BookExcludedBlock, type Side } from '@/api/client'
+import { booksApi, type Book, type BookBead, type BookExcludedBlock, type BookRun, type Side } from '@/api/client'
 import BeadActions, { type Correction } from '@/components/BeadActions.vue'
 import BeadRow from '@/components/BeadRow.vue'
 import { selectionKey } from '@/selection'
@@ -12,6 +12,13 @@ const book = shallowRef<Book | null>(null)
 const error = ref('')
 const status = ref('')
 const showExcluded = ref(false)
+// The latest import run (SPEC §3.1.5): fetched once on mount; corrections don't change it.
+const importRun = shallowRef<BookRun | null>(null)
+const showImportLog = ref(false)
+const importLogLabel = computed(() => {
+  const n = importRun.value?.warnings.length ?? 0
+  return n === 0 ? 'Import log' : `Import log (${n} warning${n === 1 ? '' : 's'})`
+})
 const busy = ref(false)
 
 const currentBeadId = ref<number | null>(null)
@@ -296,6 +303,12 @@ onMounted(async () => {
     if (first) select(first.id, 'source', null)
   } catch (e) {
     error.value = (e as Error).message
+    return
+  }
+  try {
+    importRun.value = (await booksApi.getRuns(props.id)).find((run) => run.kind === 'import') ?? null
+  } catch (e) {
+    say(`Import log: ${(e as Error).message}`)
   }
 })
 
@@ -325,6 +338,11 @@ onBeforeUnmount(() => {
               class="px-2 py-1 border border-gray-300 rounded bg-white hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed">
               Redo
             </button>
+            <button v-if="importRun" type="button" data-testid="import-log" @click="showImportLog = !showImportLog"
+              :class="importRun.warnings.length ? 'text-amber-700 border-amber-400' : 'border-gray-300'"
+              class="px-2 py-1 border rounded bg-white hover:bg-gray-100">
+              {{ importLogLabel }}
+            </button>
             <label class="flex items-center gap-1 cursor-pointer">
               <input v-model="showExcluded" type="checkbox" data-testid="show-excluded" />
               Show excluded
@@ -333,6 +351,16 @@ onBeforeUnmount(() => {
           </div>
         </div>
         <p class="text-sm text-amber-700 min-h-[1.25rem]" data-testid="status">{{ status }}</p>
+        <div v-if="showImportLog && importRun" data-testid="import-log-panel"
+          class="mt-1 p-3 bg-white border border-gray-200 rounded text-sm text-gray-700 max-h-80 overflow-auto">
+          <ul v-if="importRun.warnings.length" class="mb-2 list-disc pl-5 text-amber-700">
+            <li v-for="(w, i) in importRun.warnings" :key="i" data-testid="import-warning">
+              {{ w.side ? `${w.side}: ` : '' }}{{ w.message }}
+            </li>
+          </ul>
+          <p class="text-gray-500">Imported {{ importRun.created_at }} with Tradurre {{ importRun.app_version }}</p>
+          <pre data-testid="import-stats" class="mt-1 text-xs">{{ JSON.stringify(importRun.stats, null, 2) }}</pre>
+        </div>
       </div>
 
       <div class="bg-white border border-gray-200 rounded-lg divide-y divide-gray-100">

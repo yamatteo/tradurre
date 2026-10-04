@@ -3,9 +3,12 @@
 Writes go through `transaction` (`tradurre.domain.history`), which defers foreign keys as the domain needs.
 """
 
+import json
 import sqlite3
+import time
 import uuid
 from datetime import datetime, timezone
+from importlib.metadata import version
 from pathlib import PurePath
 
 from collections.abc import Callable
@@ -26,11 +29,12 @@ from tradurre.models import (
     BookMoveRequest,
     BookResponse,
     BookReviewedRequest,
+    BookRun,
     BookSplitBeadRequest,
     BookSplitSegmentRequest,
     BookSummary,
 )
-from tradurre.services.build import build_book
+from tradurre.services.build import PreparedBook, prepare_book, write_book
 from tradurre.services.extract import EXCLUDED_KINDS, Extraction, extract
 
 router = APIRouter(tags=["books"])
@@ -53,6 +57,93 @@ async def _extract(upload: UploadFile, content: bytes) -> tuple[str, str, Extrac
     return filename, PurePath(filename).suffix.lower().lstrip("."), extraction
 
 
+def _import_stats(
+    db: sqlite3.Connection,
+    book_id: str,
+    files: list[tuple[str, str, Extraction]],
+    sizes: list[int],
+    extract_ms: list[int],
+    build_ms: int,
+) -> dict:
+    """Counts and timings of an import, read back from the database after `build_book` (PLAN.md, "Import warnings
+    and run metadata")."""
+    stats: dict = {}
+    for side, (filename, format, _), size, ms in zip(("source", "target"), files, sizes, extract_ms):
+        where = "FROM blocks b JOIN documents d ON d.id = b.document_id WHERE d.project_id = ? AND d.side = ?"
+        stats[side] = {
+            "filename": filename,
+            "format": format,
+            "bytes": size,
+            "extract_ms": ms,
+            "pages": db.execute(f"SELECT MAX(b.page) {where}", (book_id, side)).fetchone()[0],
+            "blocks": dict(db.execute(f"SELECT b.kind, COUNT(*) {where} GROUP BY b.kind ORDER BY b.kind",
+                                      (book_id, side)).fetchall()),
+            "excluded_blocks": db.execute(f"SELECT COUNT(*) {where} AND b.excluded = 1", (book_id, side)).fetchone()[0],
+            "segments": db.execute(
+                "SELECT COUNT(*) FROM segments s JOIN blocks b ON b.id = s.block_id "
+                "JOIN documents d ON d.id = b.document_id WHERE d.project_id = ? AND d.side = ? AND b.excluded = 0",
+                (book_id, side),
+            ).fetchone()[0],
+        }
+    beads = db.execute(
+        """
+        SELECT be.confidence, SUM(d.side = 'source') AS source, SUM(d.side = 'target') AS target
+        FROM beads be
+        JOIN segments s ON s.bead_id = be.id
+        JOIN blocks b ON b.id = s.block_id
+        JOIN documents d ON d.id = b.document_id
+        WHERE be.project_id = ?
+        GROUP BY be.id
+        """,
+        (book_id,),
+    ).fetchall()
+    shapes: dict[str, int] = {}
+    for bead in beads:
+        shape = f"{bead['source']}:{bead['target']}"
+        shapes[shape] = shapes.get(shape, 0) + 1
+    stats.update({
+        "build_ms": build_ms,
+        "beads": len(beads),
+        "one_sided_beads": sum(not bead["source"] or not bead["target"] for bead in beads),
+        "low_confidence_beads": sum(bead["confidence"] < 0.5 for bead in beads),
+        "bead_shapes": shapes,
+    })
+    return stats
+
+
+def _store_book(
+    db: sqlite3.Connection,
+    book_id: str,
+    title: str,
+    source_lang: str,
+    target_lang: str,
+    files: list[tuple[str, str, Extraction]],
+    sizes: list[int],
+    extract_ms: list[int],
+    prepared: PreparedBook,
+    prepare_ms: int,
+) -> None:
+    """Create the project, write the prepared book and record the import run with its warnings, in one transaction:
+    the write lock covers only the writes."""
+    now = _now()
+    with transaction(db):
+        db.execute(
+            "INSERT INTO projects (id, title, source_lang, target_lang, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (book_id, title, source_lang, target_lang, now, now),
+        )
+        start = time.perf_counter()
+        write_book(db, book_id, prepared)
+        build_ms = prepare_ms + round((time.perf_counter() - start) * 1000)
+        stats = _import_stats(db, book_id, files, sizes, extract_ms, build_ms)
+        run_id = db.execute(
+            "INSERT INTO runs (project_id, kind, created_at, app_version, stats) VALUES (?, 'import', ?, ?, ?)",
+            (book_id, now, version("tradurre"), json.dumps(stats)),
+        ).lastrowid
+        for side, (_, _, extraction) in zip(("source", "target"), files):
+            for message in extraction.warnings:
+                db.execute("INSERT INTO warnings (run_id, side, message) VALUES (?, ?, ?)", (run_id, side, message))
+
+
 @router.post("/books", response_model=BookImportResponse, status_code=201)
 async def import_book(
     source: UploadFile,
@@ -62,18 +153,24 @@ async def import_book(
     target_lang: str = Form("it"),
     db: sqlite3.Connection = Depends(get_db),
 ):
-    source_file = await _extract(source, await source.read())
-    target_file = await _extract(target, await target.read())
+    files, sizes, extract_ms = [], [], []
+    for upload in (source, target):
+        content = await upload.read()
+        start = time.perf_counter()
+        files.append(await _extract(upload, content))
+        extract_ms.append(round((time.perf_counter() - start) * 1000))
+        sizes.append(len(content))
+    source_file, target_file = files
     title = title or PurePath(source_file[0]).stem
 
     book_id = str(uuid.uuid4())
-    now = _now()
-    with transaction(db):
-        db.execute(
-            "INSERT INTO projects (id, title, source_lang, target_lang, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (book_id, title, source_lang, target_lang, now, now),
-        )
-        build_book(db, book_id, source_file, target_file)
+    # Seconds of work for a big book (alignment above all): off the event loop, like extraction, and before the
+    # write transaction, so other requests can write meanwhile.
+    start = time.perf_counter()
+    prepared = await run_in_threadpool(prepare_book, files[0], files[1])
+    prepare_ms = round((time.perf_counter() - start) * 1000)
+    await run_in_threadpool(_store_book, db, book_id, title, source_lang, target_lang, files, sizes, extract_ms,
+                            prepared, prepare_ms)
     bead_count = db.execute("SELECT COUNT(*) FROM beads WHERE project_id = ?", (book_id,)).fetchone()[0]
     warnings = [f"{side}: {w}" for side, (_, _, ex) in (("source", source_file), ("target", target_file))
                 for w in ex.warnings]
@@ -154,6 +251,28 @@ def get_book(book_id: str, db: sqlite3.Connection = Depends(get_db)):
 def check_book(book_id: str, db: sqlite3.Connection = Depends(get_db)):
     _book_row(db, book_id)
     return check_project(db, book_id)
+
+
+@router.get("/books/{book_id}/runs", response_model=list[BookRun])
+def get_runs(book_id: str, db: sqlite3.Connection = Depends(get_db)):
+    """The book's import (and alignment) runs, newest first, each with its warnings."""
+    _book_row(db, book_id)
+    runs = [
+        {"id": r["id"], "kind": r["kind"], "created_at": r["created_at"], "app_version": r["app_version"],
+         "stats": json.loads(r["stats"]), "warnings": []}
+        for r in db.execute(
+            "SELECT id, kind, created_at, app_version, stats FROM runs WHERE project_id = ? ORDER BY id DESC",
+            (book_id,),
+        )
+    ]
+    by_id = {run["id"]: run for run in runs}
+    for w in db.execute(
+        "SELECT w.run_id, w.side, w.message FROM warnings w JOIN runs r ON r.id = w.run_id "
+        "WHERE r.project_id = ? ORDER BY w.id",
+        (book_id,),
+    ):
+        by_id[w["run_id"]]["warnings"].append({"side": w["side"], "message": w["message"]})
+    return runs
 
 
 # Corrections (PLAN.md, "Book API: corrections"): the domain does the work and the checking.

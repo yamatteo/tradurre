@@ -131,7 +131,8 @@ The translator skims **the whole book**. The review view is optimized for steady
   one.
 - On request, beads holding more than one segment on either side are highlighted too, so many-to-one beads and
   false sentence splits are easy to spot.
-- **Reviewed marks.** Each bead is reviewed or not, and the mark can be set or cleared on any single bead. Beads
+- **Reviewed marks.** Each bead is reviewed or not, and the mark can be set or cleared on any single bead, and
+  every bead from the top of the book to the current one can be marked reviewed at once. Beads
   produced by an aligner start unreviewed; a bead produced by a correction inherits the mark (a merge is reviewed
   only if all merged beads were). Progress shows the share of beads reviewed, with a shortcut to the next unreviewed
   bead.
@@ -145,7 +146,8 @@ The translator skims **the whole book**. The review view is optimized for steady
   - merge with the next bead; split a bead at a chosen segment;
   - split a segment at the cursor, join with the next segment;
   - edit segment text inline (plain text);
-  - exclude/include the current block.
+  - exclude/include the current block;
+  - exclude/include every block from the start of the edition up to the current bead, or from it to the end.
 - **Re-align range**: select a stretch between two trusted beads and re-run the local aligner on just that
   stretch.
 - Undo/redo with the usual shortcuts.

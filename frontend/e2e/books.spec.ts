@@ -72,3 +72,27 @@ test('import warnings are shown before opening the book', async ({ page }) => {
   await expect(page).toHaveURL(/\/book\/[0-9a-f-]+$/)
   await expect(page.getByTestId('book-title')).toHaveText('ete')
 })
+
+test('the book view keeps the import log with its warnings and stats', async ({ page, request }) => {
+  const res = await request.post('/api/v2/books', {
+    multipart: {
+      source: { name: 'log.txt', mimeType: 'text/plain', buffer: Buffer.from('Marie arriva.\n\nPaul partit.') },
+      target: { name: 'registro.txt', mimeType: 'text/plain', buffer: Buffer.from('Marie arrivò.\n\nPaul partì.', 'latin1') },
+    },
+  })
+  expect(res.status()).toBe(201)
+  const id: string = (await res.json()).id
+  await page.goto(`/book/${id}`)
+
+  const button = page.getByTestId('import-log')
+  await expect(button).toHaveText('Import log (1 warning)')
+  await expect(page.getByTestId('import-log-panel')).toHaveCount(0)
+  await button.click()
+  await expect(page.getByTestId('import-warning')).toHaveText(['target: The text file is not valid UTF-8; it was read as Latin-1.'])
+  await expect(page.getByTestId('import-stats')).toContainText('"beads": 2')
+
+  const rows = page.getByTestId('bead-row')
+  await expect(rows.nth(0)).toHaveAttribute('data-current', 'true')
+  await page.keyboard.press('ArrowDown')
+  await expect(rows.nth(1)).toHaveAttribute('data-current', 'true')
+})

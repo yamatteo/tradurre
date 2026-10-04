@@ -238,6 +238,20 @@ class BookResponse(BaseModel):
     can_redo: bool
 
 
+class BookRunWarning(BaseModel):
+    side: Literal["source", "target"] | None
+    message: str
+
+
+class BookRun(BaseModel):
+    id: int
+    kind: str
+    created_at: str
+    app_version: str
+    stats: dict
+    warnings: list[BookRunWarning]
+
+
 class BookMoveRequest(BaseModel):
     side: Literal["source", "target"]
     to: Literal["previous", "next"]

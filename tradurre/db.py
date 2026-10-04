@@ -111,6 +111,26 @@ CREATE TABLE operations (
 CREATE INDEX idx_operations_project ON operations(project_id, id);
 """
 
+# What each import (and, from Stage 5, each alignment run) did: counts, timings and warnings, kept in the project
+# (SPEC §3.1.5, §4 "Debuggable"). Not operations: never undone.
+_RUNS_SCHEMA = """
+CREATE TABLE runs (
+    id          INTEGER PRIMARY KEY,
+    project_id  TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    kind        TEXT NOT NULL CHECK (kind IN ('import', 'align')),
+    created_at  TEXT NOT NULL,
+    app_version TEXT NOT NULL,
+    stats       TEXT NOT NULL              -- JSON object
+);
+CREATE INDEX idx_runs_project ON runs(project_id, id);
+CREATE TABLE warnings (
+    id      INTEGER PRIMARY KEY,
+    run_id  INTEGER NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+    side    TEXT CHECK (side IN ('source', 'target')),   -- NULL: the whole run
+    message TEXT NOT NULL
+);
+"""
+
 
 # Bead search index (PLAN.md, "Search index"): one FTS5 row per bead, rowid = bead id, kept in sync by triggers
 # (which also fire for undo/redo, the layer builder and cascading deletes). The text is folded like
@@ -170,7 +190,8 @@ def get_db_path() -> Path:
 def get_connection(db_path: Path | None = None) -> sqlite3.Connection:
     if db_path is None:
         db_path = get_db_path()
-    conn = sqlite3.connect(str(db_path), check_same_thread=False)
+    # timeout: a writer waits this long for the write lock (e.g. behind a big import's writes) before failing.
+    conn = sqlite3.connect(str(db_path), check_same_thread=False, timeout=15)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
@@ -230,12 +251,18 @@ def _m004_bead_index(conn: sqlite3.Connection) -> None:
     _run_script(conn, _BEAD_INDEX_SCHEMA)
 
 
+def _m005_runs(conn: sqlite3.Connection) -> None:
+    """Import/alignment runs and their warnings (PLAN.md, "Import warnings and run metadata")."""
+    _run_script(conn, _RUNS_SCHEMA)
+
+
 # Applied in order; migration n sets PRAGMA user_version = n. Never edit an applied one.
 MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
     _m001_pairs,
     _m002_text_alignment,
     _m003_operations,
     _m004_bead_index,
+    _m005_runs,
 ]
 
 

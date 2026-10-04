@@ -5,6 +5,7 @@ Segmentation is `segment.split_sentences` (French/Italian conventions); alignmen
 """
 
 import sqlite3
+from dataclasses import dataclass
 
 from tradurre.domain.layer import NewBead, NewBlock, append_beads, create_document
 from tradurre.services import align, segment
@@ -33,27 +34,47 @@ def _included(blocks: list[NewBlock], segment_ids: list[list[int]]) -> list[tupl
     ]
 
 
+@dataclass
+class PreparedBook:
+    """Both editions segmented and aligned, ready to write: everything that needs no database."""
+    source: tuple[str, str, list[NewBlock]]  # (filename, format, blocks)
+    target: tuple[str, str, list[NewBlock]]
+    beads: list[align.Bead]  # indices into each side's included segments, in document order
+
+
+def prepare_book(source: tuple[str, str, Extraction], target: tuple[str, str, Extraction]) -> PreparedBook:
+    """Segment and align two extractions, `(filename, format, extraction)` each. Seconds for a big book, so the
+    import runs it before taking the database's write lock."""
+    sides = [(filename, format, _blocks(extraction)) for filename, format, extraction in (source, target)]
+    texts = [[text for block in blocks if not block.excluded for text in block.segments] for _, _, blocks in sides]
+    return PreparedBook(sides[0], sides[1], align.align(texts[0], texts[1]))
+
+
+def write_book(conn: sqlite3.Connection, project_id: str, prepared: PreparedBook) -> None:
+    """Create both documents and the baseline beads of an existing project, inside the caller's transaction.
+
+    Not recorded in the operation history.
+    """
+    sides = []
+    for side, (filename, format, blocks) in (("source", prepared.source), ("target", prepared.target)):
+        segment_ids = create_document(conn, project_id, side, filename, format, blocks)
+        sides.append(_included(blocks, segment_ids))
+    source_segments, target_segments = sides
+    append_beads(conn, project_id, [
+        NewBead([source_segments[k][0] for k in bead.source], [target_segments[k][0] for k in bead.target],
+                bead.confidence, "length")
+        for bead in prepared.beads
+    ])
+
+
 def build_book(
     conn: sqlite3.Connection,
     project_id: str,
     source: tuple[str, str, Extraction],
     target: tuple[str, str, Extraction],
 ) -> None:
-    """Create both documents and the baseline beads of an existing project, inside the caller's transaction.
+    """`prepare_book` then `write_book`, inside the caller's transaction.
 
     `source` and `target` are (filename, format, extraction). Not recorded in the operation history.
     """
-    sides = []
-    for side, (filename, format, extraction) in (("source", source), ("target", target)):
-        blocks = _blocks(extraction)
-        segment_ids = create_document(conn, project_id, side, filename, format, blocks)
-        sides.append(_included(blocks, segment_ids))
-    source_segments, target_segments = sides
-
-    source_texts = [text for _, text in source_segments]
-    target_texts = [text for _, text in target_segments]
-    append_beads(conn, project_id, [
-        NewBead([source_segments[k][0] for k in bead.source], [target_segments[k][0] for k in bead.target],
-                bead.confidence, "length")
-        for bead in align.align(source_texts, target_texts)
-    ])
+    write_book(conn, project_id, prepare_book(source, target))

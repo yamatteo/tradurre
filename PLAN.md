@@ -39,7 +39,9 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
   `/api/v2/books` (`tradurre/api/books.py`). The book screen (`BookView.vue`, `/book/:id`) imports, reads and
   navigates a book and makes every SPEC §3.3 correction (keys and header buttons, inline segment editing,
   undo/redo). **Stage 2 is complete** (2026-10-03). Since Stage 3's "PDF import in the app" the reference PDFs
-  import through the form too (4.3 s, 1354 beads, 185 one-sided).
+  import through the form too. Since "Length aligner on import" (2026-10-04) the import aligns with
+  `services/align.py` (method `length`): reference PDFs 4.8 s, 1256 beads, 12 one-sided; gold alignment F1 0.994.
+  The v0.1 `aligner.py` now serves only the old `pairs` API (Stage 7 removes both).
 - Licensed AGPL-3.0-only (`LICENSE`).
 - Python 3.14 only (`.python-version`, `requires-python`, launcher). Stage 0 is complete.
 - `uv run pytest`: 375 passed (PyMuPDF is a core dependency), also on a fresh clone (tests read only committed
@@ -227,19 +229,27 @@ import in the app"; test PDFs embed the font to keep U+00AD.
   assertions or messages (the book is copyrighted). Report the actual numbers.
 
 #### Front and back matter
-Not ready: after "Baseline local aligner" (the rule reads the alignment), scored by the exclusion F1 of "Gold v2".
-Decided (user, 2026-10-04, replacing the 2026-10-03 "no automatic rule"): exclusion is part of the pipeline and is
-scored with it. Order: **align first, then exclude** by a decision rule the runs of one-sided beads that "don't
-look like part of the text" (title pages, colophon, table of contents, back-cover blurbs). A one-sided preface or
-dedication that *is* text stays (SPEC §2). The rule marks blocks `front_matter`/`back_matter` (kinds the schema
-already has) and excludes them, so `x`/Include still override it. What the user excluded by hand in the
-reference book (measured 2026-10-04: source 28 paragraphs + 1 heading, target 17 + 1) is the target the rule is
-scored against.
-**Measured by Pauli after "Length aligner" (2026-10-04, counts only):** of the 29 source segments the gold
-excludes but the import includes, the length aligner leaves only **6** in one-sided beads; 15 sit in 2:1 beads and 8
-in 1:1 beads (front matter paired with the other edition's front matter). So the rule cannot be "runs of one-sided
-beads" alone: it must also read low confidence, block kind/length and position (before the first heading, after
-the last paragraph). Plan it with that.
+Not ready: after "Import warnings and run metadata"; scored by the exclusion F1 of "Gold v2" (baseline 0.592: P
+1.000, R 0.421).
+Decided (user, 2026-10-04, replacing the same day's "align first, then exclude"): **exclude first, then align.**
+Reason (Pauli's measurement, counts only): alignment is weak evidence. Of the 29 source segments the gold excludes
+but the import includes, the length aligner leaves only 6 one-sided; 15 sit in 2:1 beads and 8 are paired 1:1
+with the other edition's front matter. And front/back matter is ~1% of the reference book, so it hardly moves
+alignment (F1 0.994 with it in).
+Design to plan from:
+- Per edition, in `build_book` before alignment (or in extraction, if the features live there): a
+  **conservative** rule, no learned classifier (one gold book would only be memorized). It considers only runs at
+  the very start (before the first chapter heading/number) and the very end (after the last body paragraph) of an
+  edition, and marks a block there `front_matter`/`back_matter` (kinds the schema already has, excluded) when it is
+  short or carries publishing markers (ISBN, ©, "Achevé d'imprimer", "Finito di stampare", "Traduit de",
+  "Titolo originale", "Table", "Indice", …). The thresholds come from the reference book's measured blocks.
+- Bias: leave junk in rather than hide text. A stray title page is obvious at the top of the review; a wrongly
+  excluded epigraph, dedication or preface is hidden (SPEC §2: a one-sided preface that *is* text stays). The
+  rule's precision matters more than its recall; the `Report:` gives both.
+- `x`/Include still override it; nothing is deleted.
+- docx/txt editions have no pages: the rule must work from block order and kind alone there, or leave them
+  untouched (decide when planning, with a docx test).
+Its manual complement, agreed (user, 2026-10-04) and in SPEC §3.3: range exclude/include, planned in Stage 4.
 Earlier measurements (after "PDF blocks", counts only): FR ~25 short blocks on logical pages 3–6 before chapter 1
 and ~6 on the last page; IT ~9 on pages 3–5 and ~7 on the last page.
 
@@ -620,14 +630,14 @@ alignment numbers as the "Length aligner" report.
 Report: 2026-10-04 — `build_book` always uses `align.align` (method `length`), anchor path and `--aligner` removed; reference PDFs through `POST /api/v2/books`: 4.8 s, 1256 beads, all `length`, 12 one-sided; gold P 0.991 R 0.998 F1 0.994. Tests changed: `test_build.py` 3 (method `length`, confidence ranges; extra sentence now joins its neighbour's 2:1 bead, renamed); `test_books_api.py` import read-back and list counts (new 3-bead layout); `test_books_corrections_api.py` new `gap` fixture (move + split restore the one-sided layout) for move, merge/split, reviewed, skim, edit/split/join, join-across, undo/redo row on the plain import; memory test 500² with `_BAND` 10 (under 1.1 s; was 12 s). e2e: `restoreGap` (same two corrections via the API) in the book-view, book-corrections and segment-editing helpers; undo/redo and Escape tests on the plain import with its own rows; books.spec form import 2 beads. pytest 375 passed; type-check passes; e2e 28 passed.
 
 ### Import warnings and run metadata
-Status: todo
+Status: done
 **Done when:** `uv run pytest` passes (new migration and API tests); `npm run type-check` passes; `npm run
-test:e2e` passes with the new test; the `Report:` quotes the stored stats JSON of a reference-book import (counts
+test:e2e` passes with the new test **three full runs in a row** (default workers); the `Report:` quotes the stored stats JSON of a reference-book import (counts
 and timings only, no text), taken from `test_import_through_the_api` run with `-s`.
 
 SPEC §3.1.5 (warnings attached to the project, shown in the review view) and §4 "Debuggable" (runs record counts,
 timings, warnings in the project). Today the import's warnings are only in the `POST` response
-(`api/books.py:77-80`), shown once by `BookImport.vue`, then lost; nothing records counts or timings.
+(`api/books.py:78-80`), shown once by `BookImport.vue`, then lost; nothing records counts or timings.
 
 - `tradurre/db.py`: migration 5 `_m005_runs` (append to `MIGRATIONS`, `_run_script`):
   ```sql
@@ -655,10 +665,13 @@ timings, warnings in the project). Today the import's warnings are only in the `
   ```json
   {"source": {"filename": "…", "format": "pdf", "bytes": 0, "extract_ms": 0, "pages": 0,
               "blocks": {"paragraph": 0, "page_number": 0, …}, "excluded_blocks": 0, "segments": 0},
-   "target": {…}, "build_ms": 0, "beads": 0, "one_sided_beads": 0}
+   "target": {…}, "build_ms": 0, "beads": 0, "one_sided_beads": 0, "low_confidence_beads": 0,
+   "bead_shapes": {"1:1": 0, "2:1": 0, …}}
   ```
   `pages` = the highest block `page`, or `null` (txt/docx); `blocks` counts every kind present; `segments` counts
-  the side's included segments; ms are integers. Counts come from the database after `build_book` (one query
+  the side's included segments; `low_confidence_beads` counts beads with confidence < 0.5 (the threshold Stage 4
+  will highlight); `bead_shapes` counts beads by "source segments:target segments", only shapes present; ms are
+  integers. Counts come from the database after `build_book` (one query
   each), not from re-running segmentation.
 - `tradurre/models.py` + new endpoint `GET /api/v2/books/{id}/runs` → `list[BookRun]`, newest first: `id`,
   `kind`, `created_at`, `app_version`, `stats` (`dict`), `warnings: list[{side: str | None, message: str}]`;
@@ -672,7 +685,9 @@ timings, warnings in the project). Today the import's warnings are only in the `
   navigation keeps working while it is open (the button is not a text entry).
 - Tests:
   - `tests/test_books_api.py`: a txt import stores one run whose `stats` has the counts of the known fixture
-    (`beads` 4, `one_sided_beads` 1, `source.blocks == {"paragraph": 3}`, `pages` null, `extract_ms` ≥ 0) and no
+    (the length aligner's layout, see `test_import_txt_and_read_back`: `beads` 3, `one_sided_beads` 0,
+    `low_confidence_beads` 1, `bead_shapes == {"1:1": 2, "2:1": 1}`, `source.blocks == {"paragraph": 3}`, `pages`
+    null, `extract_ms` ≥ 0) and no
     warnings; the Latin-1 import stores one warning with side `target` and the unprefixed message; the PDF pair
     test also checks `pages` 3 and `blocks.page_number` 3 per side; unknown book → 404; a refused import (empty
     txt) writes no run.
@@ -682,7 +697,27 @@ timings, warnings in the project). Today the import's warnings are only in the `
     assert only that it has one run.
   - `frontend/e2e/books.spec.ts`: after a Latin-1 target import through the API, the book view's button reads
     "Import log (1 warning)", opening it shows the warning and the stats, and ↓ still moves the current bead.
+- **Unblocked (Pauli, 2026-10-04, second time):** resume from the uncommitted working tree (all of the above,
+  plus `_store_book` run with `run_in_threadpool`, which stays). The worker thread freed the event loop but the
+  build held the write lock ~10 s, so other writers hit `database is locked` (Braun's second report). Pauli measured
+  a 10,000-sentence `build_book`: 9.8 s, of which alignment ~8.1 s and segmentation + writes ~1.7 s. So:
+  - `tradurre/services/build.py`: split `build_book` in two. `prepare_book(source, target) -> PreparedBook` does
+    everything that needs no database: `_blocks` per side, the included segment texts, and `align.align` on them
+    (a dataclass holding both sides' `NewBlock` lists and the `align.Bead` list). `write_book(conn, project_id,
+    prepared)` creates the documents and appends the beads, mapping bead indices to segment ids exactly as today.
+    `build_book(conn, project_id, source, target)` stays, as `write_book(conn, project_id, prepare_book(source,
+    target))`, so `scripts/gold_score.py` and `tests/test_build.py` don't change.
+  - `tradurre/api/books.py`: `import_book` runs `prepare_book` in the threadpool **before** `_store_book`, which
+    now takes the prepared book and calls `write_book` inside its transaction; the write lock then covers only the
+    writes. `build_ms` = prepare + write (the stats shape doesn't change).
+  - `tradurre/db.py` `get_connection`: `sqlite3.connect(..., timeout=15)` (was the default 5 s), so a writer
+    queued behind a big import's ~2 s of writes waits instead of failing. One line; every connection gets it.
+  - No new test: the e2e suite is the check ("three runs in a row" above). If it still fails, stop with the
+    server log's errors.
 - Don't change the aligner, the segmenter, the extractor or any correction endpoint.
+Report: 2026-10-04 — blocked: everything is implemented (migration 5, run + warnings written by the import, `GET …/runs`, Import log button/panel, tests) and pytest (378) and type-check pass, but `npm run test:e2e` fails 1–2 tests per run (different ones, all timing out on page load). Cause, pre-existing since "Length aligner on import": `import_book` runs `build_book` on the event loop, and the two e2e tests that import 10,000 beads take ~10 s each, freezing every other request of the shared e2e backend meanwhile; with those two tests deselected the suite passes twice in a row (27/27). Needs a decision: run the build in a worker thread (likely fix) or not.
+Report: 2026-10-04 — blocked again: the build now runs in a worker thread (`_store_book` via `run_in_threadpool`; pytest 378, type-check pass), and e2e got worse: 4–6 failures per run (3 runs), each a `500` from `sqlite3.OperationalError: database is locked` in the server log. The event loop is free now, but the 10,000-bead imports hold the write lock ~10 s and the other tests' imports and corrections give up after sqlite3's 5 s timeout: the "known and accepted" limit is what breaks the suite. Needs a decision.
+Report: 2026-10-04 — done: migration 5 (`runs`, `warnings`); the import stores one run (stats as specified, plus `low_confidence_beads`, `bead_shapes`) and its unprefixed warnings; `GET /api/v2/books/{id}/runs`; Import log button/panel in `BookView.vue`; `build.py` split into `prepare_book` (segment + align, no database) and `write_book`, both run in the threadpool, the write transaction only around the writes; `get_connection` timeout 15 s. pytest 378 passed; type-check passes; e2e 29 passed three runs in a row. Reference import stats: source pdf 624690 bytes, extract 1678 ms, 128 pages, blocks footnote 3 / heading 27 / page_number 120 / paragraph 208, 123 excluded, 1260 segments; target pdf 675518 bytes, extract 1781 ms, 184 pages, footnote 2 / heading 27 / page_number 157 / paragraph 197, 159 excluded, 1266 segments; build 1468 ms; 1256 beads, 12 one-sided, 25 low-confidence; shapes 1:1 1218, 1:2 16, 2:1 10, 1:0 6, 0:1 6. Gold score unchanged (F1 0.994).
 
 ---
 
@@ -707,6 +742,16 @@ Note (Pauli, 2026-10-04): the length aligner seldom emits 1:0/0:1 (6 + 6 on the 
 with no counterpart usually lands in a 2:1/1:2 bead of confidence ~0.4–0.45, against ≥ 0.78 for an ordinary 1:1.
 The low-confidence highlight and "next problem" must therefore catch those (threshold at least 0.5), and the
 multi-segment toggle shows them too.
+
+Range commands (user, 2026-10-04), to plan with this stage:
+- **Range exclude/include** (SPEC §3.3, agreed): every block of the current side's edition from its start up to
+  the current bead, or from the current bead to its end; one operation, so one undo. Range *include* skips the
+  layout kinds the extractor excludes (`running_head`, `page_number`, `footnote`), so undoing an over-eager
+  front-matter rule doesn't bring page numbers back into the text (agreed, user, 2026-10-04); a single block of
+  those kinds is still included with Include.
+- **Reviewed up to here** (requested by the user): mark every bead from the first one to the current bead
+  reviewed, one operation (the `reviewed` endpoint already takes a list of bead ids). In SPEC §3.3 "Reviewed
+  marks" (agreed, 2026-10-04).
 
 Decided (user, 2026-10-03): `reviewed` and `confidence` stay separate signals. A correction sets the touched
 beads to `manual`/1.0 but leaves their reviewed mark as SPEC §3.3 says; "done with the book" = every bead

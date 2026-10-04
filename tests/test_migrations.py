@@ -41,6 +41,13 @@ def test_fresh_database(conn):
     assert {"section", "paragraph"} <= _columns(conn, "pairs")
 
 
+def test_runs_and_warnings_tables(conn):
+    init_db(conn)
+    assert {"runs", "warnings"} <= _tables(conn)
+    assert _columns(conn, "runs") == {"id", "project_id", "kind", "created_at", "app_version", "stats"}
+    assert _columns(conn, "warnings") == {"id", "run_id", "side", "message"}
+
+
 def test_init_db_twice(conn):
     init_db(conn)
     init_db(conn)

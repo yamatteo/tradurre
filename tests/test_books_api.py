@@ -70,6 +70,27 @@ def test_import_txt_and_read_back(client):
     assert book["excluded"] == []
 
 
+def test_import_records_a_run(client):
+    book_id = _import(client).json()["id"]
+    runs = client.get(f"/api/v2/books/{book_id}/runs").json()
+    assert [(r["kind"], r["warnings"]) for r in runs] == [("import", [])]
+    stats = runs[0]["stats"]
+    assert {k: stats[k] for k in ("beads", "one_sided_beads", "low_confidence_beads", "bead_shapes")} == {
+        "beads": 3, "one_sided_beads": 0, "low_confidence_beads": 1, "bead_shapes": {"1:1": 2, "2:1": 1},
+    }
+    source = stats["source"]
+    assert (source["filename"], source["format"], source["bytes"]) == ("contrefeu.txt", "txt", len(SOURCE.encode()))
+    assert (source["blocks"], source["excluded_blocks"], source["segments"], source["pages"]) == (
+        {"paragraph": 3}, 0, 4, None)
+    assert stats["target"]["segments"] == 3
+    assert source["extract_ms"] >= 0 and stats["build_ms"] >= 0
+    assert runs[0]["app_version"]
+
+
+def test_runs_of_unknown_book_is_404(client):
+    assert client.get("/api/v2/books/nope/runs").status_code == 404
+
+
 def test_import_docx_with_heading(client):
     resp = _import(
         client,
@@ -91,6 +112,10 @@ def test_title_defaults_to_source_stem(client):
 def test_latin1_warning_is_prefixed(client):
     resp = _import(client, target=("sacro.txt", "Marie arrivò.".encode("latin-1")))
     assert resp.json()["warnings"] == ["target: The text file is not valid UTF-8; it was read as Latin-1."]
+    runs = client.get(f"/api/v2/books/{resp.json()['id']}/runs").json()
+    assert runs[0]["warnings"] == [
+        {"side": "target", "message": "The text file is not valid UTF-8; it was read as Latin-1."}
+    ]
 
 
 def test_list_only_books_with_counts(client):
@@ -159,6 +184,9 @@ def test_import_pdf_excludes_page_numbers(client):
     assert sorted((b["side"], b["kind"], b["page"], b["segments"][0]["text"]) for b in book["excluded"]) == sorted(
         (side, "page_number", k, str(k)) for side in ("source", "target") for k in (1, 2, 3)
     )
+    stats = client.get(f"/api/v2/books/{resp.json()['id']}/runs").json()[0]["stats"]
+    for side in ("source", "target"):
+        assert (stats[side]["pages"], stats[side]["blocks"]["page_number"]) == (3, 3)
 
 
 def test_unreadable_pdf_is_refused_and_writes_nothing(client):
@@ -168,11 +196,16 @@ def test_unreadable_pdf_is_refused_and_writes_nothing(client):
     assert client.get("/api/v2/books").json() == []
 
 
-def test_empty_txt_is_refused_and_writes_nothing(client):
+def test_empty_txt_is_refused_and_writes_nothing(client, db_path):
     resp = _import(client, target=("vide.txt", b"  \n\n"))
     assert resp.status_code == 400
     assert resp.json()["detail"] == "no text found in vide.txt"
     assert client.get("/api/v2/books").json() == []
+    conn = get_connection(db_path)
+    try:
+        assert conn.execute("SELECT COUNT(*) FROM runs").fetchone()[0] == 0
+    finally:
+        conn.close()
 
 
 def test_unknown_extension_is_refused(client):

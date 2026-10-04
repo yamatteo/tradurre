@@ -4,6 +4,7 @@
 never text (not in assertions, not in messages).
 """
 
+import json
 import re
 import time
 from pathlib import Path
@@ -76,6 +77,9 @@ def test_import_through_the_api(tmp_path, monkeypatch):
         elapsed = time.perf_counter() - start
         assert resp.status_code == 201, resp.status_code
         book = client.get(f"/api/v2/books/{resp.json()['id']}").json()
+        runs = client.get(f"/api/v2/books/{resp.json()['id']}/runs").json()
+    assert len(runs) == 1
+    print(f"\nimport run stats: {json.dumps(runs[0]['stats'])}")
     beads = book["beads"]
     one_sided = sum(not b["source"] or not b["target"] for b in beads)
     print(f"\nimport: {elapsed:.1f} s, {len(beads)} beads, {one_sided} one-sided")

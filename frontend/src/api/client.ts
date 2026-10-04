@@ -266,6 +266,21 @@ export interface Book {
   can_redo: boolean
 }
 
+export interface BookRunWarning {
+  side: Side | null
+  message: string
+}
+
+/** What an import (or, later, an alignment run) did: counts and timings in `stats`, and its warnings. */
+export interface BookRun {
+  id: number
+  kind: string
+  created_at: string
+  app_version: string
+  stats: Record<string, unknown>
+  warnings: BookRunWarning[]
+}
+
 export const booksApi = {
   importBook: (source: File, target: File, title: string, sourceLang: string, targetLang: string) => {
     const form = new FormData()
@@ -280,6 +295,8 @@ export const booksApi = {
   listBooks: () => booksRequest<BookSummary[]>('/books'),
 
   getBook: (id: string) => booksRequest<Book>(`/books/${id}`),
+
+  getRuns: (id: string) => booksRequest<BookRun[]>(`/books/${id}/runs`),
 
   move: (id: string, beadId: number, side: Side, to: 'previous' | 'next') =>
     booksPost(`/books/${id}/beads/${beadId}/move`, { side, to }),
