@@ -136,5 +136,5 @@ test('More → Project bundle downloads a backup; Restore a bundle opens it as a
   chooser = page.waitForEvent('filechooser')
   await page.getByTestId('restore-bundle').click()
   await (await chooser).setFiles({ name: 'x.zip', mimeType: 'application/zip', buffer: Buffer.from('garbage') })
-  await expect(page.getByTestId('restore-error')).toHaveText('Not a Tradurre bundle')
+  await expect(page.getByTestId('library-error')).toHaveText('Not a Tradurre bundle')
 })

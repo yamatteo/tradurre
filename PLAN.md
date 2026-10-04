@@ -35,7 +35,7 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
   "Restore original", re-align of the selection (More menu), cut/copy/paste of whole sentences (Ctrl+X/C/V).
   Restyled to design variant A; smooth at 5,000 beads. Stages 4 and 6 done (search at `/search` and from the book; More → Export: edition .txt/.docx and the
   project bundle; "Restore a bundle" on the library page). Stage 7: search grouped by book and the library order
-  done, and database snapshots (local-time names); next retire v1 (4 tasks), a Windows checklist, then the v0.2 tag. On the reference book the problem flags catch
+  done, and database snapshots (local-time names); retire v1: library on books done, 3 tasks left; a Windows checklist, then the v0.2 tag. On the reference book the problem flags catch
   none of the 15 real errors: review is reading-first; better signals come after v0.2.
 - **Re-planned with the user (2026-10-04), SPEC changed accordingly:** review is one mode, problem-first: jump to
   the next likely problem, correct, mark one bead, a selected run, or everything up to here as reviewed. The
@@ -43,9 +43,9 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
   gold book scores below 0.95. A typical book is 1,000–5,000 sentences a side; performance targets are at 5,000
   beads. Order: Stage 6 → Stage 7 (v0.2), confirmed 2026-10-04. Then the translator reviews *Contrefeu* in v0.2 for a true
   gold (the current one was made by the user, the developer), and maybe a second book, to score the aligner again.
-- `uv run pytest`: 448 passed, also on a fresh clone (tests read only committed synthetic fixtures; `-m library`
+- `uv run pytest`: 449 passed, also on a fresh clone (tests read only committed synthetic fixtures; `-m library`
   tests run only where `library/contrefeu.*.pdf` exists, and assert counts only).
-- `npm run type-check` passes; releases build with `npm run build`. `npm run test:e2e` (70 tests; the three timing tests run last, alone, in project `scale`) runs on its own
+- `npm run type-check` passes; releases build with `npm run build`. `npm run test:e2e` (71 tests; the three timing tests run last, alone, in project `scale`) runs on its own
   backend (:8001, throwaway `.e2e.db`) and Vite (:5174), never the user's database. Setup per machine: `npx
   playwright install chromium` (on Ubuntu 26.04 with `PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=ubuntu24.04-x64`); tests
   use the full Chromium headless (`channel: 'chromium'`).
@@ -320,8 +320,8 @@ pair project) and deletes through v1 `api.deleteProject`.
 Report: 2026-10-04 — `DELETE /api/v2/books/{id}` (204/404) and `booksApi.deleteBook` (204 handled in `booksRequest`); library lists books only ("Library", `FR → IT`, `data-book-id`, Delete with confirm; New Project gone); nav: Library, Search; pytest 449, type-check clean, e2e 71.
 
 #### Remove the v1 frontend
-Status: todo
-**Done when:** `npm run type-check` and `npm run build` pass; `npm run test:e2e` passes; `grep -rn
+Status: done
+**Done when:** `npm run type-check` and `npm run build` pass; `npm run test:e2e` passes, with the new test; `grep -rn
 "tiptap\|/api/v1\|ProjectEditor\|ImportWizard\|SearchView" frontend/src frontend/e2e frontend/package.json` finds
 nothing.
 - Delete `views/ProjectEditor.vue`, `views/ImportWizard.vue`, `views/SearchView.vue` (unrouted since Stage 6) and
@@ -332,7 +332,14 @@ nothing.
 - `assets/main.css`: remove the "TipTap editor styles" block; the global `mark` rule becomes `background-color:
   var(--color-current-segment); color: inherit; padding: 0 1px; border-radius: 2px;` (search highlights in the
   A palette instead of v1 yellow).
+- `router/index.ts`: the `/` route's name `projects` → `library` (and `App.vue`'s active-link check).
+- Review of "Library page on books": `ProjectList.vue` `remove()` has no `catch`, so a failed delete fails
+  silently. Rename the `restoreError` ref to `error` and its `data-testid` `restore-error` → `library-error`
+  (update `e2e/book-layout.spec.ts`); `remove()` puts a failure's message there, as `restoreBundle()` does. New e2e
+  in `books.spec.ts`: `page.route` answers the book's `DELETE` with 500 `{"detail": "Disk full"}` → the card
+  stays and `library-error` reads "Disk full".
 - The backend is not touched (the v1 API stays until the next task).
+Report: 2026-10-04 — v1 views, routes, `api` client and TipTap (4 packages) removed, `mark` in the A palette, `/` route named `library`, library errors in `library-error` (delete included); also removed `e2e/scroll-sync.spec.ts`, which tested only the deleted v1 editor; grep clean, type-check and build pass, pytest 449, e2e 71 (−1 v1, +1 new).
 
 #### Remove the v1 backend and the old Colab aligner
 Status: todo

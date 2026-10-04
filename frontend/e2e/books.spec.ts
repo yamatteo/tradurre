@@ -69,6 +69,30 @@ test('Delete on the library removes the book after confirming', async ({ page, r
   expect((await request.get(`/api/v2/books/${id}`)).status()).toBe(404)
 })
 
+test('a failed delete keeps the book and shows the server message', async ({ page, request }) => {
+  const res = await request.post('/api/v2/books', {
+    multipart: {
+      source: { name: 'fr.txt', mimeType: 'text/plain', buffer: Buffer.from(SOURCE) },
+      target: { name: 'it.txt', mimeType: 'text/plain', buffer: Buffer.from(TARGET) },
+      title: 'Kept',
+    },
+  })
+  expect(res.status()).toBe(201)
+  const id: string = (await res.json()).id
+  await page.route(`**/api/v2/books/${id}`, (route) =>
+    route.request().method() === 'DELETE'
+      ? route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ detail: 'Disk full' }) })
+      : route.continue())
+
+  await page.goto('/')
+  const card = page.locator(`[data-book-id="${id}"]`)
+  page.once('dialog', (d) => d.accept())
+  await card.getByTestId('delete-book').click()
+  await expect(page.getByTestId('library-error')).toHaveText('Disk full')
+  await expect(card).toHaveCount(1)
+  expect((await request.get(`/api/v2/books/${id}`)).status()).toBe(200)
+})
+
 test('importing an unreadable PDF shows the server message', async ({ page }) => {
   await page.goto('/book/import')
   await page.getByLabel('Original (French)').setInputFiles({

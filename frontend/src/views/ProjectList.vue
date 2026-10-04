@@ -5,7 +5,7 @@ import { booksApi, type BookSummary } from '@/api/client'
 
 const router = useRouter()
 const books = ref<BookSummary[]>([])
-const restoreError = ref('')
+const error = ref('')
 const bundleInput = ref<HTMLInputElement | null>(null)
 
 async function load() {
@@ -22,18 +22,24 @@ async function restoreBundle(event: Event) {
   const file = input.files?.[0]
   input.value = ''  // the same file can be chosen again after an error
   if (!file) return
-  restoreError.value = ''
+  error.value = ''
   try {
     const book = await booksApi.importBundle(file)
     router.push({ name: 'book', params: { id: book.id } })
   } catch (e) {
-    restoreError.value = (e as Error).message
+    error.value = (e as Error).message
   }
 }
 
 async function remove(book: BookSummary) {
   if (!confirm(`Delete "${book.title}"? This can't be undone.`)) return
-  await booksApi.deleteBook(book.id)
+  error.value = ''
+  try {
+    await booksApi.deleteBook(book.id)
+  } catch (e) {
+    error.value = (e as Error).message
+    return
+  }
   await load()
 }
 
@@ -57,7 +63,7 @@ onMounted(load)
           @change="restoreBundle" />
       </div>
     </div>
-    <p v-if="restoreError" data-testid="restore-error" class="mb-4 text-red-600">{{ restoreError }}</p>
+    <p v-if="error" data-testid="library-error" class="mb-4 text-red-600">{{ error }}</p>
 
     <div v-if="books.length === 0" class="text-center text-gray-500 py-12">
       No books yet. Import one to get started.

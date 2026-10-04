@@ -45,27 +45,10 @@ kbd {
   background: #fff;
 }
 
-/* TipTap editor styles */
-.tiptap {
-  outline: none;
-  min-height: 2rem;
-}
-
-.tiptap p {
-  margin: 0.25em 0;
-}
-
-.tiptap p.is-editor-empty:first-child::before {
-  color: #adb5bd;
-  content: attr(data-placeholder);
-  float: left;
-  height: 0;
-  pointer-events: none;
-}
-
 /* Search highlight */
 mark {
-  background-color: #fef08a;
-  padding: 0 2px;
+  background-color: var(--color-current-segment);
+  color: inherit;
+  padding: 0 1px;
   border-radius: 2px;
 }

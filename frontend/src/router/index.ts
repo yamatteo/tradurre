@@ -5,14 +5,8 @@ const router = createRouter({
   routes: [
     {
       path: '/',
-      name: 'projects',
+      name: 'library',
       component: () => import('@/views/ProjectList.vue'),
-    },
-    {
-      path: '/project/:id',
-      name: 'editor',
-      component: () => import('@/views/ProjectEditor.vue'),
-      props: true,
     },
     {
       path: '/book/import',
@@ -24,11 +18,6 @@ const router = createRouter({
       name: 'book',
       component: () => import('@/views/BookView.vue'),
       props: true,
-    },
-    {
-      path: '/import',
-      name: 'import',
-      component: () => import('@/views/ImportWizard.vue'),
     },
     {
       path: '/search',
