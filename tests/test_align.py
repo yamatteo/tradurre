@@ -129,13 +129,13 @@ def test_narrow_band_falls_back_to_the_wide_one(monkeypatch):
     assert beads == align(source, target)
 
 
-def test_memory_stays_within_the_band():
-    source = _book(2000, seed=13)
-    target = _book(2000, seed=13)
+def test_memory_stays_within_the_band(monkeypatch):
+    monkeypatch.setattr(align_module, "_BAND", 10)  # memory grows with the band, not with the whole grid
+    source = _book(500, seed=13)
     tracemalloc.start()
     try:
-        align(source, target)
+        align(source, list(source))
         _, peak = tracemalloc.get_traced_memory()
     finally:
         tracemalloc.stop()
-    assert peak < 25 * 2**20
+    assert peak < 2 * 2**20

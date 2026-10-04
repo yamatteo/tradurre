@@ -25,8 +25,8 @@ from tradurre.services.gold import SIDES, Layer, layer_from_json, read_layer, sc
 LIBRARY = Path(__file__).resolve().parent.parent / "library"
 
 
-def _build(source: Path, target: Path, aligner: str = "anchor") -> tuple[Layer, float, float]:
-    """The text layer of the pair, imported as `POST /api/v2/books` does with the given aligner, and the seconds
+def _build(source: Path, target: Path) -> tuple[Layer, float, float]:
+    """The text layer of the pair, imported as `POST /api/v2/books` does, and the seconds
     spent extracting and building (segmentation, alignment, database writes)."""
     start = time.perf_counter()
     files = []
@@ -44,7 +44,7 @@ def _build(source: Path, target: Path, aligner: str = "anchor") -> tuple[Layer, 
                     "VALUES (?, ?, ?, ?, ?, ?)",
                     ("gold", source.stem, "fr", "it", now, now),
                 )
-                build_book(conn, "gold", files[0], files[1], aligner=aligner)
+                build_book(conn, "gold", files[0], files[1])
             built = time.perf_counter()
             return read_layer(conn, "gold"), extracted - start, built - extracted
         finally:
@@ -66,7 +66,6 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--gold", type=Path, default=LIBRARY / "contrefeu.gold.json")
     parser.add_argument("--source", type=Path, default=LIBRARY / "contrefeu.fr.pdf")
     parser.add_argument("--target", type=Path, default=LIBRARY / "contrefeu.it.pdf")
-    parser.add_argument("--aligner", choices=("anchor", "length"), default="anchor")
     args = parser.parse_args(argv)
     for path in (args.gold, args.source, args.target):
         if not path.exists():
@@ -74,14 +73,14 @@ def main(argv: list[str] | None = None) -> int:
             return 1
 
     gold = layer_from_json(json.loads(args.gold.read_text(encoding="utf-8")))
-    predicted, extract_s, build_s = _build(args.source, args.target, args.aligner)
+    predicted, extract_s, build_s = _build(args.source, args.target)
     try:
         result = score(gold, predicted)
     except ValueError as e:
         print(e, file=sys.stderr)
         return 1
 
-    print(f"aligner: {args.aligner}; extraction {extract_s:.1f} s, build {build_s:.1f} s; "
+    print(f"extraction {extract_s:.1f} s, build {build_s:.1f} s; "
           f"beads: {len(gold.reviewed)} gold, {len(predicted.reviewed)} predicted")
     print("predicted bead shapes: " + ", ".join(f"{s}:{t} {n}" for (s, t), n in _shapes(predicted).most_common()))
     print(f"alignment: precision {result.alignment_precision:.3f}  recall {result.alignment_recall:.3f}  "

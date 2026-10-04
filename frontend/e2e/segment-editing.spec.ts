@@ -1,7 +1,7 @@
 import { test, expect, type APIRequestContext, type Page } from '@playwright/test'
 
-// Beads after import: A (Chapitre un | Capitolo uno), B (Marie arriva. | Marie arrivò.), C (Il pleuvait. | ),
-// D (Paul partit. Il ne dit rien. | Paul partì. Non disse niente.) as two beads D1, D2.
+// Beads after import and `restoreGap`: A (Chapitre un | Capitolo uno), B (Marie arriva. | Marie arrivò.),
+// C (Il pleuvait. | ), D (Paul partit. Il ne dit rien. | Paul partì. Non disse niente.) as two beads D1, D2.
 const SOURCE = 'Chapitre un\n\nMarie arriva.\n\nIl pleuvait.\n\nPaul partit. Il ne dit rien.'
 const TARGET = 'Capitolo uno\n\nMarie arrivò.\n\nPaul partì. Non disse niente.'
 
@@ -13,7 +13,7 @@ const ORIGINAL = [
   [['Il ne dit rien.'], ['Non disse niente.']],
 ]
 
-async function importBook(request: APIRequestContext, title: string) {
+async function importBook(request: APIRequestContext, title: string, gap = true) {
   const res = await request.post('/api/v2/books', {
     multipart: {
       source: { name: 'fr.txt', mimeType: 'text/plain', buffer: Buffer.from(SOURCE) },
@@ -23,8 +23,25 @@ async function importBook(request: APIRequestContext, title: string) {
   })
   expect(res.status()).toBe(201)
   const id: string = (await res.json()).id
+  if (gap) await restoreGap(request, id)
   const book = await (await request.get(`/api/v2/books/${id}`)).json()
   return { id, book }
+}
+
+/** The two corrections that turn the imported layout into the one above: on so little text the length aligner pairs
+ * "Il pleuvait." with "Paul partì." and puts both remaining source sentences in the last bead. */
+async function restoreGap(request: APIRequestContext, id: string) {
+  let book = await (await request.get(`/api/v2/books/${id}`)).json()
+  const moved = await request.post(`/api/v2/books/${id}/beads/${book.beads[2].id}/move`, {
+    data: { side: 'target', to: 'next' },
+  })
+  expect(moved.status()).toBe(200)
+  book = await moved.json()
+  const last = book.beads[3]
+  const split = await request.post(`/api/v2/books/${id}/beads/${last.id}/split`, {
+    data: { source_at: last.source[1].segment_id, target_at: last.target[1].segment_id },
+  })
+  expect(split.status()).toBe(200)
 }
 
 function current(page: Page) {
@@ -69,13 +86,17 @@ test('Enter opens the editor and Enter saves', async ({ page, request }) => {
 })
 
 test('Escape cancels', async ({ page, request }) => {
-  const { id } = await importBook(request, 'Cancel')
+  const { id } = await importBook(request, 'Cancel', false)  // as imported, so there is nothing to undo
   await open(page, id)
   await page.keyboard.press('Enter')
   await page.keyboard.type(' changed')
   await page.keyboard.press('Escape')
   await expect(editor(page)).toHaveCount(0)
-  await expect.poll(() => rows(page)).toEqual(ORIGINAL)
+  await expect.poll(() => rows(page)).toEqual([
+    ...ORIGINAL.slice(0, 2),
+    [['Il pleuvait.'], ['Paul partì.']],
+    [['Paul partit.', 'Il ne dit rien.'], ['Non disse niente.']],
+  ])
   await expect(page.getByTestId('undo')).toBeDisabled()
 })
 

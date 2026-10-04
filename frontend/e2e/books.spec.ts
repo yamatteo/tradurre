@@ -38,15 +38,15 @@ test('importing through the form opens the book, which the project list then ope
   await expect(page).toHaveURL(/\/book\/[0-9a-f-]+$/)
   const bookId = page.url().split('/').pop()!
   await expect(page.getByTestId('book-title')).toHaveText('Bosco del form')
-  await expect(page.getByTestId('bead-row')).toHaveCount(3)
-  await expect(page.getByTestId('book-progress')).toHaveText('reviewed 0 / 3')
+  await expect(page.getByTestId('bead-row')).toHaveCount(2)
+  await expect(page.getByTestId('book-progress')).toHaveText('reviewed 0 / 2')
 
   await page.goto('/')
   const card = page.locator(`[data-project-id="${bookId}"]`)
-  await expect(card).toContainText('3 beads, 0 reviewed')
+  await expect(card).toContainText('2 beads, 0 reviewed')
   await card.click()
   await expect(page).toHaveURL(new RegExp(`/book/${bookId}$`))
-  await expect(page.getByTestId('bead-row')).toHaveCount(3)
+  await expect(page.getByTestId('bead-row')).toHaveCount(2)
 })
 
 test('importing an unreadable PDF shows the server message', async ({ page }) => {

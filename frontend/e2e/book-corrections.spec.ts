@@ -1,7 +1,7 @@
 import { test, expect, type APIRequestContext, type Page } from '@playwright/test'
 
-// Beads after import: A (Chapitre un | Capitolo uno), B (Marie arriva. | Marie arrivò.), C (Il pleuvait. | ),
-// D (Paul partit. Il ne dit rien. | Paul partì. Non disse niente.) as two beads D1, D2.
+// Beads after import and `restoreGap`: A (Chapitre un | Capitolo uno), B (Marie arriva. | Marie arrivò.),
+// C (Il pleuvait. | ), D (Paul partit. Il ne dit rien. | Paul partì. Non disse niente.) as two beads D1, D2.
 const SOURCE = 'Chapitre un\n\nMarie arriva.\n\nIl pleuvait.\n\nPaul partit. Il ne dit rien.'
 const TARGET = 'Capitolo uno\n\nMarie arrivò.\n\nPaul partì. Non disse niente.'
 
@@ -19,7 +19,10 @@ const B_MERGED = [
   ORIGINAL[4],
 ]
 
-async function importBook(request: APIRequestContext, title: string, source = SOURCE, target = TARGET) {
+async function importBook(
+  request: APIRequestContext, title: string, source = SOURCE, target = TARGET,
+  gap = source === SOURCE && target === TARGET,
+) {
   const res = await request.post('/api/v2/books', {
     multipart: {
       source: { name: 'fr.txt', mimeType: 'text/plain', buffer: Buffer.from(source) },
@@ -29,8 +32,25 @@ async function importBook(request: APIRequestContext, title: string, source = SO
   })
   expect(res.status()).toBe(201)
   const id: string = (await res.json()).id
+  if (gap) await restoreGap(request, id)
   const book = await (await request.get(`/api/v2/books/${id}`)).json()
   return { id, book }
+}
+
+/** The two corrections that turn the imported layout into the one above: on so little text the length aligner pairs
+ * "Il pleuvait." with "Paul partì." and puts both remaining source sentences in the last bead. */
+async function restoreGap(request: APIRequestContext, id: string) {
+  let book = await (await request.get(`/api/v2/books/${id}`)).json()
+  const moved = await request.post(`/api/v2/books/${id}/beads/${book.beads[2].id}/move`, {
+    data: { side: 'target', to: 'next' },
+  })
+  expect(moved.status()).toBe(200)
+  book = await moved.json()
+  const last = book.beads[3]
+  const split = await request.post(`/api/v2/books/${id}/beads/${last.id}/split`, {
+    data: { source_at: last.source[1].segment_id, target_at: last.target[1].segment_id },
+  })
+  expect(split.status()).toBe(200)
 }
 
 function current(page: Page) {
@@ -126,25 +146,38 @@ test('a refused correction shows the server message', async ({ page, request }) 
 })
 
 test('undo and redo with the keyboard and the header', async ({ page, request }) => {
-  const { id } = await importBook(request, 'Undo')
+  // The import as it is (no `restoreGap`), so there is nothing to undo at first.
+  const imported = [
+    ORIGINAL[0],
+    ORIGINAL[1],
+    [['Il pleuvait.'], ['Paul partì.']],
+    [['Paul partit.', 'Il ne dit rien.'], ['Non disse niente.']],
+  ]
+  const merged = [
+    ORIGINAL[0],
+    [['Marie arriva.', 'Il pleuvait.'], ['Marie arrivò.', 'Paul partì.']],
+    imported[3],
+  ]
+  const { id } = await importBook(request, 'Undo', SOURCE, TARGET, false)
   await open(page, id)
+  await expect.poll(() => rows(page)).toEqual(imported)
   await expect(page.getByTestId('undo')).toBeDisabled()
   await expect(page.getByTestId('redo')).toBeDisabled()
   await page.keyboard.press('ArrowDown')
   await page.keyboard.press('m')
-  await expect.poll(() => rows(page)).toEqual(B_MERGED)
+  await expect.poll(() => rows(page)).toEqual(merged)
   await expect(page.getByTestId('undo')).toBeEnabled()
 
   await page.keyboard.press('Control+z')
-  await expect.poll(() => rows(page)).toEqual(ORIGINAL)
+  await expect.poll(() => rows(page)).toEqual(imported)
   await page.keyboard.press('Control+y')
-  await expect.poll(() => rows(page)).toEqual(B_MERGED)
+  await expect.poll(() => rows(page)).toEqual(merged)
   await page.keyboard.press('Control+z')
-  await expect.poll(() => rows(page)).toEqual(ORIGINAL)
+  await expect.poll(() => rows(page)).toEqual(imported)
   await page.keyboard.press('Control+Shift+z')
-  await expect.poll(() => rows(page)).toEqual(B_MERGED)
+  await expect.poll(() => rows(page)).toEqual(merged)
   await page.getByTestId('undo').click()
-  await expect.poll(() => rows(page)).toEqual(ORIGINAL)
+  await expect.poll(() => rows(page)).toEqual(imported)
 })
 
 test('a header button does the same as its key', async ({ page, request }) => {

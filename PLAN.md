@@ -42,7 +42,7 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
   import through the form too (4.3 s, 1354 beads, 185 one-sided).
 - Licensed AGPL-3.0-only (`LICENSE`).
 - Python 3.14 only (`.python-version`, `requires-python`, launcher). Stage 0 is complete.
-- `uv run pytest`: 373 passed (PyMuPDF is a core dependency), also on a fresh clone (tests read only committed
+- `uv run pytest`: 375 passed (PyMuPDF is a core dependency), also on a fresh clone (tests read only committed
   synthetic fixtures; `-m library` tests run only where `library/contrefeu.*.pdf` exists, and assert counts only).
 - PDF extraction (`extract.py`) works on the reference book (page numbers, chapter numbers, two-up spreads), and
   `POST /api/v2/books` accepts PDFs (extraction in a worker thread; an unreadable PDF is a 400).
@@ -501,6 +501,11 @@ not added to the segmenter); re-export the gold before scoring (the score is the
 side): it keeps two full (n+1)×(m+1) Python tables although it computes only a band, so 10,000 × 10,000 took
 11.7 s and **1.8 GB**, and 10,000 × 10,300 (300 extra target sentences at the end) 44 s and **2.5 GB**, inside the
 server process. "Length aligner at book scale" fixes that before it becomes the import's aligner.
+**Fixed and verified (Pauli, 2026-10-04):** 7.3 s / 47 MB and 35.9 s / 101 MB; gold unchanged. Accepted limit: the
+narrow-band-first rule can miss the optimum without nearing the band edge when the segment counts differ wildly
+(found once in 200 random inputs, 13 × 146 segments, a slightly costlier path). Real pairs of editions are far
+from that; not worth more work. If a real book needs faster alignment, numpy is the next step (not a dependency
+today).
 Known weakness (Pauli, synthetic probe, not a task yet): the length ratio is taken over the whole input, one-sided
 material included, so a large one-sided run skews it. 600 sentences against the same 600 plus N other sentences
 at the end: N = 10 → 598/600 pairs right, N = 30 → 591, N = 60 → 523 (the extra text gets smeared over the book
@@ -580,7 +585,7 @@ change.
 Report: 2026-10-04 — `align.py`: band rows only (`array('d')` costs + `array('b')` move indices), prefix sums, move cost inlined in the DP loop, adaptive band (narrow, rerun wide if the path comes within `_EDGE` = 10 of an unclipped edge); 2 new tests (fallback equals unbanded; 2,000² peaks 5.6 MB traced, was 101 MB). Gold unchanged (P 0.991 R 0.998 F1 0.994, 1256 beads, same shapes). 10,000 × 10,000: 7.3 s, peak RSS 47 MB; 10,000 × 10,300: 35.9 s, 101 MB. Same output as before on 199 of 200 random inputs; the other (13 × 146 segments) finds a costlier path: the narrow pass misses the optimum without nearing its edge. pytest 375 passed.
 
 #### Length aligner on import
-Status: todo
+Status: done
 **Done when:** `uv run pytest`, `npm run type-check` and `npm run test:e2e` pass; importing the reference PDFs
 through the form gives beads with method `length`; `gold_score.py` (no `--aligner` any more) prints the same
 alignment numbers as the "Length aligner" report.
@@ -607,7 +612,12 @@ alignment numbers as the "Length aligner" report.
   - the e2e specs that import the same fixtures (`books.spec.ts`, `book-view.spec.ts`, `book-corrections.spec.ts`,
     `segment-editing.spec.ts`) follow the same rules.
   List in the `Report:` every test whose expectations changed, with one phrase each.
+- `tests/test_align.py` `test_memory_stays_within_the_band` takes 12 s of the suite's 31 s (tracemalloc slows
+  every float allocation). Rewrite it to monkeypatch `_BAND` to 10 and align `_book(500, seed=13)` against itself,
+  asserting a peak under 2 MB. Pauli measured: 0.6 MB in 0.75 s; the pre-"book scale" code peaked at 5.3 MB, so
+  the test still tells the two apart.
 - Don't change `align.py`, the segmenter, the extractor or any endpoint.
+Report: 2026-10-04 — `build_book` always uses `align.align` (method `length`), anchor path and `--aligner` removed; reference PDFs through `POST /api/v2/books`: 4.8 s, 1256 beads, all `length`, 12 one-sided; gold P 0.991 R 0.998 F1 0.994. Tests changed: `test_build.py` 3 (method `length`, confidence ranges; extra sentence now joins its neighbour's 2:1 bead, renamed); `test_books_api.py` import read-back and list counts (new 3-bead layout); `test_books_corrections_api.py` new `gap` fixture (move + split restore the one-sided layout) for move, merge/split, reviewed, skim, edit/split/join, join-across, undo/redo row on the plain import; memory test 500² with `_BAND` 10 (under 1.1 s; was 12 s). e2e: `restoreGap` (same two corrections via the API) in the book-view, book-corrections and segment-editing helpers; undo/redo and Escape tests on the plain import with its own rows; books.spec form import 2 beads. pytest 375 passed; type-check passes; e2e 28 passed.
 
 ### Import warnings and run metadata
 Status: todo

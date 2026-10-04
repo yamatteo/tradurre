@@ -5,8 +5,10 @@ from fastapi.testclient import TestClient
 
 from tradurre.app import app
 
-# Beads after import: A (Marie arriva. | Marie arrivò.), B (Il pleuvait. | ), C (Paul partit. | Paul partì.),
-# D (Il ne dit rien. | Non disse niente.)
+# Beads after import (length aligner): (Marie arriva. | Marie arrivò.), (Il pleuvait. | Paul partì.),
+# (Paul partit. Il ne dit rien. | Non disse niente.). The `gap` fixture corrects that into
+# A (Marie arriva. | Marie arrivò.), B (Il pleuvait. | ), C (Paul partit. | Paul partì.),
+# D (Il ne dit rien. | Non disse niente.), the layout with a one-sided bead most tests start from.
 SOURCE = "Marie arriva.\n\nIl pleuvait.\n\nPaul partit. Il ne dit rien."
 TARGET = "Marie arrivò.\n\nPaul partì. Non disse niente."
 
@@ -34,6 +36,25 @@ def _import(client, title="Contrefeu"):
 def book(client):
     book_id = _import(client)
     return book_id, client.get(f"/api/v2/books/{book_id}").json()
+
+
+@pytest.fixture()
+def gap(client, book):
+    """The book after two corrections: B's target segment moved on to C, then C split back into C and D."""
+    book_id, data = book
+    b = data["beads"][1]["id"]
+    data = _post(client, book_id, f"beads/{b}/move", {"side": "target", "to": "next"}).json()
+    c = data["beads"][2]
+    data = _post(client, book_id, f"beads/{c['id']}/split", {
+        "source_at": c["source"][1]["segment_id"], "target_at": c["target"][1]["segment_id"],
+    }).json()
+    assert _rows(data) == [
+        (["Marie arriva."], ["Marie arrivò."]),
+        (["Il pleuvait."], []),
+        (["Paul partit."], ["Paul partì."]),
+        (["Il ne dit rien."], ["Non disse niente."]),
+    ]
+    return book_id, data
 
 
 def _post(client, book_id, path, body=None):
@@ -68,8 +89,8 @@ def test_fresh_book_has_nothing_to_undo(client, book):
     assert _post(client, book_id, "redo").status_code == 409
 
 
-def test_move_to_previous_and_next(client, book):
-    book_id, data = book
+def test_move_to_previous_and_next(client, gap):
+    book_id, data = gap
     a, b = data["beads"][0]["id"], data["beads"][1]["id"]
     result = _ok(client, book_id, f"beads/{b}/move", {"side": "source", "to": "previous"})
     assert _rows(result)[0] == (["Marie arriva.", "Il pleuvait."], ["Marie arrivò."])
@@ -82,8 +103,8 @@ def test_move_to_previous_and_next(client, book):
     ]
 
 
-def test_merge_next_and_split(client, book):
-    book_id, data = book
+def test_merge_next_and_split(client, gap):
+    book_id, data = gap
     b = data["beads"][1]["id"]
     result = _ok(client, book_id, f"beads/{b}/merge-next")
     assert _rows(result)[1] == (["Il pleuvait.", "Paul partit."], ["Paul partì."])
@@ -94,8 +115,8 @@ def test_merge_next_and_split(client, book):
     assert _rows(result)[1:3] == [(["Il pleuvait."], ["Paul partì."]), (["Paul partit."], [])]
 
 
-def test_reviewed(client, book):
-    book_id, data = book
+def test_reviewed(client, gap):
+    book_id, data = gap
     ids = [data["beads"][0]["id"], data["beads"][2]["id"]]
     result = _ok(client, book_id, "reviewed", {"bead_ids": ids, "reviewed": True})
     assert [b["reviewed"] for b in result["beads"]] == [True, False, True, False]
@@ -103,8 +124,8 @@ def test_reviewed(client, book):
     assert [b["reviewed"] for b in result["beads"]] == [False, False, True, False]
 
 
-def test_skim_marks_coalesce_into_one_undo(client, book):
-    book_id, data = book
+def test_skim_marks_coalesce_into_one_undo(client, gap):
+    book_id, data = gap
     for bead in data["beads"][:3]:
         _ok(client, book_id, "reviewed", {"bead_ids": [bead["id"]], "reviewed": True, "skim": True})
     result = _ok(client, book_id, "undo")
@@ -117,8 +138,8 @@ def test_skim_unmark_is_400(client, book):
     assert resp.status_code == 400
 
 
-def test_edit_split_join_segment(client, book):
-    book_id, data = book
+def test_edit_split_join_segment(client, gap):
+    book_id, data = gap
     seg = _segment(data, "Il pleuvait.")["segment_id"]
     result = _ok(client, book_id, f"segments/{seg}/edit", {"text": "Il pleuvait fort."})
     assert _rows(result)[1] == (["Il pleuvait fort."], [])
@@ -128,8 +149,8 @@ def test_edit_split_join_segment(client, book):
     assert _rows(result)[1] == (["Il pleuvait fort."], [])
 
 
-def test_join_across_beads_merges_them(client, book):
-    book_id, data = book
+def test_join_across_beads_merges_them(client, gap):
+    book_id, data = gap
     seg = _segment(data, "Paul partit.")["segment_id"]
     result = _ok(client, book_id, f"segments/{seg}/join-next")
     assert _rows(result)[2] == (["Paul partit. Il ne dit rien."], ["Paul partì.", "Non disse niente."])
@@ -154,7 +175,7 @@ def test_undo_redo_round_trip(client, book):
     assert _rows(result) == _rows(data)
     assert (result["can_undo"], result["can_redo"]) == (False, True)
     result = _ok(client, book_id, "redo")
-    assert _rows(result)[1] == (["Il neigeait."], [])
+    assert _rows(result)[1] == (["Il neigeait."], ["Paul partì."])
     assert (result["can_undo"], result["can_redo"]) == (True, False)
 
 

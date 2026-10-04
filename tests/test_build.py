@@ -59,11 +59,13 @@ def test_build_aligns_included_segments(conn):
         ],
     )
     assert check_project(conn, "p1") == []
-    assert _beads(conn) == [
-        (["Chapitre premier"], ["Capitolo primo"], 0.5, "anchor"),
-        (["Marie arriva."], ["Marie arrivò."], 0.5, "anchor"),
-        (["Elle vit Paul."], ["Vide Paul."], 0.5, "anchor"),
+    beads = _beads(conn)
+    assert [(source, target, method) for source, target, _, method in beads] == [
+        (["Chapitre premier"], ["Capitolo primo"], "length"),
+        (["Marie arriva."], ["Marie arrivò."], "length"),
+        (["Elle vit Paul."], ["Vide Paul."], "length"),
     ]
+    assert all(0.8 < confidence <= 1 for _, _, confidence, _ in beads)
     excluded = conn.execute(
         "SELECT b.kind, b.excluded, b.page, s.text, s.bead_id FROM segments s JOIN blocks b ON b.id = s.block_id "
         "WHERE b.excluded = 1"
@@ -73,21 +75,23 @@ def test_build_aligns_included_segments(conn):
     assert [tuple(r) for r in documents] == [("source", "fr.txt", "txt"), ("target", "it.docx", "docx")]
 
 
-def test_extra_source_sentence_gives_unmatched_bead(conn):
+def test_extra_source_sentence_joins_a_neighbours_bead(conn):
+    # On so little text a 2:1 bead is likelier than a 1:0 one; its low confidence is what flags it for review.
     _build(
         conn,
         [ExtractedBlock("paragraph", "Marie arriva. Il pleuvait. Paul partit.")],
         [ExtractedBlock("paragraph", "Marie arrivò. Paul partì.")],
     )
     assert check_project(conn, "p1") == []
-    assert _beads(conn) == [
-        (["Marie arriva."], ["Marie arrivò."], 0.5, "anchor"),
-        (["Il pleuvait."], [], 0.2, "anchor"),
-        (["Paul partit."], ["Paul partì."], 0.5, "anchor"),
+    beads = _beads(conn)
+    assert [(source, target, method) for source, target, _, method in beads] == [
+        (["Marie arriva.", "Il pleuvait."], ["Marie arrivò."], "length"),
+        (["Paul partit."], ["Paul partì."], "length"),
     ]
+    assert beads[0][2] < 0.5 < 0.8 < beads[1][2]
 
 
 def test_block_without_sentence_boundary_is_one_segment(conn):
     _build(conn, [ExtractedBlock("paragraph", "sans point final")], [ExtractedBlock("paragraph", "senza punto")])
     assert check_project(conn, "p1") == []
-    assert _beads(conn) == [(["sans point final"], ["senza punto"], 0.5, "anchor")]
+    assert _beads(conn) == [(["sans point final"], ["senza punto"], 1.0, "length")]

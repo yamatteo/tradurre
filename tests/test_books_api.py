@@ -53,18 +53,19 @@ def test_import_txt_and_read_back(client):
     resp = _import(client, title="Contrefeu", source_lang="fr", target_lang="it")
     assert resp.status_code == 201
     body = resp.json()
-    assert (body["title"], body["bead_count"], body["warnings"]) == ("Contrefeu", 4, [])
+    assert (body["title"], body["bead_count"], body["warnings"]) == ("Contrefeu", 3, [])
 
     book = client.get(f"/api/v2/books/{body['id']}").json()
     assert (book["title"], book["source_lang"], book["target_lang"]) == ("Contrefeu", "fr", "it")
     assert [(_texts(b, "source"), _texts(b, "target")) for b in book["beads"]] == [
+        # Too little text for the length aligner to leave "Il pleuvait." unpaired (see test_build.py).
         (["Marie arriva."], ["Marie arrivò."]),
-        (["Il pleuvait."], []),
-        (["Paul partit."], ["Paul partì."]),
-        (["Il ne dit rien."], ["Non disse niente."]),
+        (["Il pleuvait."], ["Paul partì."]),
+        (["Paul partit.", "Il ne dit rien."], ["Non disse niente."]),
     ]
     first = book["beads"][0]
-    assert (first["method"], first["confidence"], first["reviewed"]) == ("anchor", 0.5, False)
+    assert (first["method"], first["reviewed"]) == ("length", False)
+    assert 0.8 < first["confidence"] <= 1
     assert first["source"][0]["block_kind"] == "paragraph"
     assert book["excluded"] == []
 
@@ -97,7 +98,7 @@ def test_list_only_books_with_counts(client):
     book_id = _import(client).json()["id"]
     assert client.get("/api/v2/books").json() == [{
         "id": book_id, "title": "contrefeu", "source_lang": "fr", "target_lang": "it",
-        "bead_count": 4, "reviewed_count": 0,
+        "bead_count": 3, "reviewed_count": 0,
     }]
 
 
