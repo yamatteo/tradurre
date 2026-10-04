@@ -105,7 +105,8 @@ sources per book).
 ## Stage 4 — Review view
 
 The correction screen of Stage 2 grows into the review screen of SPEC §3.3 (as changed 2026-10-04): one mode,
-problem-first. Plain text editing; TipTap is not used here. Steps in order; only the first three are tasks yet.
+problem-first. Plain text editing; TipTap is not used here. Steps in order; the layout tasks and the two review
+tasks after them are ready.
 
 Decisions carried into this stage:
 - (user, 2026-10-03) `reviewed` and `confidence` stay separate signals. A correction sets the touched beads to
@@ -124,6 +125,11 @@ Status: done
 **Done when:** `npm run type-check` passes; `npm run test:e2e` passes, including the new
 `frontend/e2e/review.spec.ts`; `uv run pytest` is unchanged (391 passed).
 Report: 2026-10-04 — `src/review.ts` (`LOW_CONFIDENCE`, `isProblem`); `BookView.vue`: `p`/`P`, "Next problem", "Highlight multi-segment", `problems N`; `BeadRow.vue`: `data-problem`, amber border, absolute `s:t · c.cc` badge; `e2e/review.spec.ts` 4 tests; type-check passes, e2e 33 passed (29 + 4), pytest 391 passed.
+Verified (/pauli, 2026-10-04, `9f8ab7c`): code and the 4 e2e tests match the task; pytest 391. One defect,
+fixed in the next task: the badge sits at `top-0 right-1` inside a row with `py-2 px-4`, so it overlaps the end
+of the target text's first line by ~8 px vertically and ~45 px horizontally (hiding words the translator must
+read). Reviewed low-confidence beads no longer stand out: that is the problem-first reading of SPEC §3.3 agreed
+on 2026-10-04 (a reviewed bead was accepted), not a gap.
 
 Frontend only (the API already returns each bead's `confidence`). SPEC §3.3: "Low-confidence beads and unmatched
 (1:0, 0:1) beads stand out visually; there are shortcuts to jump to the next one", and the multi-segment toggle.
@@ -159,6 +165,115 @@ Frontend only (the API already returns each bead's `confidence`). SPEC §3.3: "L
     the 2:2 row gets `data-problem="true"`.
 - Don't change the API, the other rows' layout, or the existing keys.
 
+### Screen layout and shortcuts
+Decided (user, 2026-10-04): **variant A** ("two-tier toolbar") of the Claude Design canvas "Tradurre — Review
+screen" (https://claude.ai/artifact/KSfbEbpiELukzpHe8JPY86, private to the user; artboards A1–A4), with: the serif
+text kept but **a little denser**; excluded blocks stay **independent, one row per block and side**, as now (not
+paired across sides as A2 draws them); **no highlighting of changes** in edited text (it would need a diff/version
+history; out of scope). Not taken from the mockup: A3's per-warning "Go to bead" (warnings carry no location) and its
+invented stats list. Built before the review tasks below, so they add their controls into slots that exist.
+
+Visual tokens (from A1, the source of truth for all three tasks), in `frontend/src/assets/main.css` as a Tailwind v4
+`@theme` block (`--color-*`, `--font-*`), used through utilities:
+- Fonts, **bundled** (SPEC §4: no network needed): `@fontsource/ibm-plex-sans` (400, 500, 600) for the UI,
+  `@fontsource/source-serif-4` (400, 600) for book text, `@fontsource/ibm-plex-mono` (400, 500) for keys and
+  numbers, imported in `src/main.ts`. Never a Google Fonts link.
+- Colours: ground `#F3F2EE`, second bar `#F8F7F4`, list `#FDFDFB`, ink `#1D1F23`, muted `#5E6168`, faint `#6A6D73`,
+  bar rule `#E0DDD6`, row rule `#EEECE7`, button hover `#E8E6E0`, outline border `#D5D2CA`, accent `#2B59A3`,
+  current side `#EFF3FA`, current segment `#D3DFF3`, problem text `#9A4A0C`, problem mark `#C2661A`, count pill
+  `#F6E7D6` on `#7D3D0A`, reviewed mark `#2D6B4F`, run `#F0F4FA`, excluded row `#F5F4F0`, progress fill `#4A6E9E`.
+- `<kbd>` chips: mono 10.5 px, 1 px border `#CBC7BE` with a 2 px bottom border, radius 4, white.
+
+#### Layout: frame, fonts and rows
+Status: done
+Report: 2026-10-04 — bundled fonts and `@theme` tokens; full-height book screen without the global nav, sticky column header, bottom bar with status and `position` (new `BookPosition.vue`, so a move doesn't re-render the list); `BeadRow` on A1's grid with gutter marks, meta column (`problem-badge` only on problems), separators, *Not in this edition*; excluded rows per side with Include in the meta column; four class-based e2e assertions switched to `data-reviewed`/text/CSS; pytest 391 passed, e2e 33 passed, type-check and build clean (92 font files, no googleapis); screenshots `scratchpad/layout-frame-1366.png` and `layout-frame-1366-excluded.png`; 20 ArrowDown on 10,000 beads ~1.2–1.45 s (HEAD ~0.9 s, limit 2 s).
+**Done when:** `npm run type-check` passes; `npm run test:e2e` passes unchanged (see the last bullet);
+`uv run pytest` unchanged; `npm run build` succeeds, its output holds the font files, and `grep -rn googleapis
+frontend/src tradurre/static` finds nothing; the `Report:` names a screenshot of the book screen at 1366 × 768
+(Playwright, saved to the scratchpad, not committed) for the user to compare with A1.
+
+- Fonts and tokens as above (`npm install` the three `@fontsource` packages as dependencies).
+- `App.vue`: the global nav is not shown on the `book` route (the book screen has its own "Library" link). The
+  book screen fills the window: `BookView.vue` root `h-screen flex flex-col` on the ground colour; the header
+  (today's controls, unchanged in this task, restyled with the tokens) stays on top, the bead list is the only
+  scrolling element (`flex-1 min-h-0 overflow-auto`, list background), and the status line moves to a bottom bar
+  (26 px, top rule, 12 px muted): status message left (`data-testid="status"`), on the right `Bead {i} of {n} ·
+  {Source|Target} · sentence {k} of {m}` (`data-testid="position"`; `sentence – of 0` on an empty side).
+- A sticky column header in the list (28 px, 10.5 px uppercase faint): `Source · {source_lang}` and `Target ·
+  {target_lang}` (the codes upper-cased, e.g. `FR`, `IT`).
+- `BeadRow.vue`, rewritten on A1's grid: `grid-template-columns: 40px minmax(0,1fr) minmax(0,1fr) 96px`, rows
+  separated by the row rule, max content width 1560 px centred.
+  - Text cells: Source Serif 4 **15 px, line-height 1.45, padding 7px 16px 8px** (A1 has 16/1.55, 11/12 18: this
+    is the "a little denser"); the target cell has a left row-rule border; headings 600; blocks start on a new line
+    as now; between two segments of the same block a thin rule (1 px × 0.9 em, `#B4B0A6`, 8 px margins) instead
+    of a space, so 2:1 beads show their parts.
+  - An empty side shows *Not in this edition* (UI font, 12.5 px italic, `#6E7177`).
+  - Gutter (40 px): a reviewed check (`#2D6B4F`, `aria-label="Reviewed"`) if reviewed, else a problem diamond
+    (`#C2661A`, `aria-label="Problem"`) if `isProblem`, else nothing. The green/amber left borders go.
+  - Meta column (96 px): mono 11 px, right-aligned, `{s}:{t} · {confidence, 2 decimals}`, always rendered but
+    transparent unless the row is current (muted) or a problem (`#9A4A0C`, 500). It carries
+    `data-testid="problem-badge"` only on problem rows. This replaces the absolutely positioned badge (so the
+    overlap found in "Problem navigation" is gone, and "Reviewed runs" drops its badge fix).
+  - Current bead: a 1.5 px accent inset outline; the current side's cell on the current-side colour; the current
+    segment on the current-segment colour with a 2 px accent underline (box-shadow), replacing today's underline.
+  - Keep every `data-*` attribute the e2e specs read (`data-bead-id`, `data-current`, `data-side`, `data-reviewed`,
+    `data-problem`, `data-cell`, `data-segment-id`, `data-current-segment`, `data-block-kind`) and the inline editor's
+    behaviour as it is (restyled only: it edits in the same serif, at the same size, as the text it replaces).
+  - Rows still never change height with state (the Stage 2 rule; `review.spec.ts` checks it).
+- Excluded rows (with "Show excluded"): one row per block and side as now, on the excluded-row colour, UI font 13
+  px muted, the kind as a 10.5 px uppercase label, the text, and the Include button (`data-testid="include"`) in
+  the meta column.
+- E2E changes allowed: none needed for text; if a selector depended on a removed class, switch it to the data
+  attribute. Don't change keys, API or behaviour.
+
+#### Layout: toolbars and import log
+Status: todo
+**Done when:** `npm run type-check` and `npm run test:e2e` pass (with the text changes listed below); a new e2e
+test at viewport 1366 × 768 checks that neither bar overflows (`scrollWidth <= clientWidth`) and that the bars are
+40 and 38 px high; the `Report:` names a screenshot at 1366 × 768 (scratchpad) with the import log open.
+
+The header becomes A1's two bars.
+- **Top bar** (40 px, ground): "← Library" link to `/`; a 1 px separator; the title (`data-testid="book-title"`,
+  13.5 px 600); spacer; "Show excluded" and "Highlight multi-segment" checkboxes (same testids); separator;
+  progress `Reviewed {r} / {n}` (`data-testid="book-progress"`) with an 84 × 4 px track filled to r/n; separator;
+  "Import log" button (warning triangle icon and a count pill when there are warnings; `data-testid="import-log"`).
+- **Second bar** (38 px, second-bar colour), groups separated by 1 px rules:
+  - navigation: previous-problem icon button (`aria-label="Previous problem"`, title "Previous problem (Shift+P)"),
+    `{n} problem(s)` (`data-testid="problem-count"`, "1 problem", "7 problems"), next-problem icon button
+    (`data-testid="next-problem"`, title "Next problem (P)"), "Next unreviewed" with a `N` chip;
+  - review: "Reviewed"/"Unreviewed" with an `R` chip (today's toggle);
+  - corrections (`BeadActions.vue`, `data-testid="bead-actions"`, each button keeps its `data-action`): "To
+    previous" `Alt+↑`, "To next" `Alt+↓`, "Merge" `M`, "Split" `S`, "Edit" `Enter` (new action `edit`, starts the
+    inline editor), "Join" `J` (new action `join`, joins with the next segment), "Exclude" `X`;
+  - spacer; Undo and Redo as icon buttons (`aria-label`, titles with the keys, testids `undo`/`redo`).
+  Buttons: 28 px high, transparent, hover colour, label then key chip. Icons: inline stroke SVG, no emoji.
+- **Import log** (A3, minus the invented parts): a 390 px popover under its button (`data-testid="import-log-panel"`),
+  closed by its × button, by Esc and by clicking the button again; "Warnings · {n}" and the list
+  (`data-testid="import-warning"`), "Imported {date} with Tradurre {version}", and the stats JSON in a small mono
+  `<pre data-testid="import-stats">` (as today).
+- E2E text changes: `book-progress` `reviewed x / y` → `Reviewed x / y`; `problem-count` `problems n` → `{n}
+  problem(s)`. Nothing else.
+- Leave room in the review group for "Up to here" (next task) and after the corrections for "More" (the range task).
+
+#### Layout: shortcuts panel
+Status: todo
+**Done when:** `npm run type-check` and `npm run test:e2e` pass with a new test: `h` opens the panel, it lists
+every entry of `SHORTCUTS`, Esc closes it, and the "Keys" button opens it too; while it is open, bead keys do
+nothing.
+
+- New `frontend/src/keys.ts`: `SHORTCUTS: { id: ShortcutId; group: 'Move around' | 'Review' | 'Corrections' |
+  'Editing a sentence' | 'History'; label: string; display: string[]; key?: string }[]` with every key the book
+  screen handles (A4's list, plus the correction keys). `key` is the `event.key` matched by the plain-key handler
+  (letters, Shift+letters as upper case, arrows, Tab, Enter); entries for Alt/Ctrl combinations and editor keys have
+  no `key` and stay handled where they are.
+- `BookView.vue` builds its plain-key `actions` map from `SHORTCUTS` entries with a `key` and a `handlers:
+  Record<ShortcutId, () => void>`, so the compiler refuses a shortcut without a handler.
+- The panel (A4): a modal dialog (`role="dialog"`, `aria-labelledby`, `data-testid="keys-panel"`) on a scrim,
+  "Keyboard shortcuts", "Open this list any time with H or the Keys button.", Close (Esc); groups in two columns,
+  each row the label and its key chips. Opened by `h` and by a "Keys" button with an `H` chip at the right end of
+  the top bar (`data-testid="keys"`); closed by Esc, Close or a click on the scrim.
+- `h` is in `SHORTCUTS` as "Show this list", the last entry of Move around.
+
 ### Reviewed runs and "up to here"
 Status: todo
 **Done when:** `uv run pytest` passes (skim tests removed, new ones below); `npm run type-check` passes; `npm run
@@ -170,24 +285,31 @@ the top of the book to the current one. The skim review is gone from SPEC, so it
   `BookReviewedRequest.skim` (`models.py`), its use in `api/books.py:reviewed` and in `client.ts`
   (`setReviewed` sends `{bead_ids, reviewed}`). Delete `test_skim_marks_coalesce`, `test_skim_unmark_is_an_error`
   (`tests/test_domain_beads.py`), `test_skim_marks_coalesce_into_one_undo`, `test_skim_unmark_is_400`
-  (`tests/test_books_corrections_api.py`), and the skim branch of `tests/test_domain_roundtrip.py` (it always
-  passes `skim=False` now: drop the third argument). Keep the generic `coalesce` mechanism of `history.py` and its
+  (`tests/test_books_corrections_api.py`), and the skim branch of `tests/test_domain_roundtrip.py` (drop the
+  `skim` draw and the third argument; removing that `rng.random()` call changes the random sequences the round
+  trip explores, which is expected; if a seed then fails, that is a real bug: stop and report it). Keep the generic `coalesce` mechanism of `history.py` and its
   tests (`tests/test_domain_history.py` uses its own kind names; leave it).
 - **Selected run** (`BookView.vue`): `Shift+↓`/`Shift+↑` extend a run from an anchor (the bead current when the
-  run started) to the new current bead; `Shift+click` on a row does the same; any plain move (arrows without
-  Shift, `n`, `p`, a click) clears the run. Rows in the run get `data-in-run="true"` and a `bg-blue-50/50`
-  background. Keep the Stage 2 scale rule: membership is a `shallowReactive<Record<number, true>>` map updated by
+  run started) to the new current bead; `Shift+click` on a row does the same (`BeadRow`'s `select` emit gains a
+  fourth argument `extend: boolean`, the click's `shiftKey`; segment clicks pass it too); any plain move (arrows without
+  Shift, `n`, `p`, a click) clears the run. Rows in the run get `data-in-run="true"` (styled as below). Keep the Stage 2 scale rule: membership is a `shallowReactive<Record<number, true>>` map updated by
   difference (like `currentRow`), never a per-row computed over indices.
 - `r` with a run: if any bead in the run is unreviewed, mark all of them reviewed, else clear all; one request
   (`setReviewed(ids, flag)`), one operation, one undo; the run stays selected. Without a run, `r` is as now.
 - `R` (Shift+r, `event.key === 'R'`): mark every bead from the first to the current one reviewed (one request
   with the ids of the unreviewed ones among them; nothing to do → `say('Already reviewed up to here')`); the
-  status line says `Reviewed up to here (N beads)`. A header button "Reviewed up to here"
-  (`data-testid="reviewed-up-to-here"`, title "Shift+R") does the same.
-- Tests: `tests/test_books_corrections_api.py`: marking 3 beads in one request is one undo step; a request with
-  `skim` in the body is ignored or rejected as Pydantic does by default (assert whichever, don't add code for it).
+  status line says `Reviewed up to here (N beads)`. A button "Up to here" with a `Shift+R` chip in the second
+  bar's review group, after "Reviewed" (`data-testid="reviewed-up-to-here"`), does the same.
+- Run style (A1): run rows on the run colour with a 3 px accent bar at their left edge; while a run is selected the
+  bottom bar's message reads `{k} beads selected ({first}–{last}). R marks them all reviewed.`; Esc clears the
+  run. Add the run keys to `SHORTCUTS` (Review group: "Extend the selection" `Shift+↑ ↓`, "Select up to a bead"
+  `Shift+click`, "Mark everything up to here reviewed" `Shift+R`) without a `key` for the Shift+arrows (handled
+  before the plain-key map, like Alt+arrows).
+- Tests: `tests/test_books_corrections_api.py`: marking 3 beads in one request is one undo step; a request that still
+  sends `"skim": true` is accepted with the field ignored (Pydantic's default for extra fields; add no code).
   `review.spec.ts`: Shift+↓ twice then `r` marks 3 beads and Ctrl+Z clears all 3; a run with mixed marks → `r`
-  marks all; `R` on the third bead marks beads 1–3 and leaves the rest; a plain ↓ clears the run.
+  marks all; `R` on the second bead marks beads 1–2 and leaves bead 3 (the 3-bead book of this spec), and `R` again says
+  "Already reviewed up to here"; a plain ↓ clears the run.
 
 ### Range exclude/include
 Status: todo
@@ -213,8 +335,12 @@ end". Agreed (user, 2026-10-04): one operation, one undo; range *include* skips 
 - `api/books.py` + `models.py`: `POST /books/{id}/blocks/exclude-range` and `/blocks/include-range`, body
   `BookRangeRequest(bead_id: int, side: Side, to: Literal["start", "end"])`, through `_correct` as the other
   corrections. `client.ts`: `excludeRange`, `includeRange`.
-- `BookView.vue`/`BeadActions.vue`: four header buttons, no keys: "Exclude to start", "Exclude to end", "Include
-  to start", "Include to end" (`data-testid="exclude-to-start"`, …), acting on the current bead and side; after
+- `BookView.vue`: the **"More" menu** of A1, after the corrections group of the second bar ("More ▾",
+  `data-testid="more"`, `aria-expanded`): a 310 px popover, heading "Exclude or include in bulk" (10.5 px
+  uppercase faint), four items "Exclude from the start up to here", "Include from the start up to here", "Exclude
+  from here to the end", "Include from here to the end" (`data-testid="exclude-to-start"`, `include-to-start`,
+  `exclude-to-end`, `include-to-end`), 30 px rows; closed by Esc, a click outside or choosing an item. No keys.
+  They act on the current bead and side; after
   success `say('Excluded N blocks (Ctrl+Z to undo)')` / `Included N blocks`, N = the difference in the book's
   excluded-block count.
 - Tests (`tests/test_domain_blocks.py`, `tests/test_books_corrections_api.py`):
@@ -224,17 +350,11 @@ end". Agreed (user, 2026-10-04): one operation, one undo; range *include* skips 
   the first bead's source text, "Show excluded" reveals it, Ctrl+Z brings it back.
 - Don't change the single-block exclude/include behaviour or keys.
 
-### Screen layout and shortcuts
-Not ready: waits for the user's design exploration (Claude Design, 2026-10-04, from Pauli's brief: 2–3 layout
-variants of the review screen, a shortcuts panel, the row states). Then a Braun task rebuilds the chosen variant
-in `BookView.vue`/`BeadRow.vue`/`BeadActions.vue` with Tailwind, keeping the binding rules (rows never change
-height, the 5,000-row list stays light, keys valid on an Italian layout). The shortcuts panel is built from the
-same table the key handler uses. No book text in the mockups (invented sample content only).
-
 ### Original text and revert
 Not ready. SPEC §2: the extracted text is kept "so the translator can always compare or revert"; `original_text`
-is stored but not in the API. Show edited segments distinctly, their original on demand, and a "revert to
-original" (a text edit, undoable).
+is stored but not in the API. Show edited segments distinctly (A2: a dotted underline), their original on demand
+in a popover (A2), and "Restore original" (a text edit, undoable; also in the "More" menu). **No highlighting of
+what changed** (user, 2026-10-04: it needs a diff/version history, out of scope): the original is shown whole.
 
 ### Re-align range
 Not ready. SPEC §3.3: select a stretch between two trusted beads and re-run the local aligner on just that stretch

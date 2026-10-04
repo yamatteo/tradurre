@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, provide, ref, shallowRe
 import { booksApi, type Book, type BookBead, type BookExcludedBlock, type BookRun, type Side } from '@/api/client'
 import BeadActions, { type Correction } from '@/components/BeadActions.vue'
 import BeadRow from '@/components/BeadRow.vue'
+import BookPosition from '@/components/BookPosition.vue'
 import { selectionKey } from '@/selection'
 import { isProblem } from '@/review'
 
@@ -340,80 +341,99 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="max-w-6xl mx-auto p-6">
-    <p v-if="error" class="text-red-600">{{ error }}</p>
+  <div class="h-screen flex flex-col bg-ground font-ui text-ink">
+    <p v-if="error" class="p-6 text-red-600">{{ error }}</p>
     <template v-else-if="book">
-      <div class="sticky top-0 z-10 bg-gray-50 pb-2 mb-2">
+      <div class="shrink-0 border-b border-bar-rule px-4 py-2 text-[12.5px]">
         <div class="flex items-center justify-between gap-4">
           <div class="flex items-center gap-3">
-            <router-link to="/" class="text-gray-400 hover:text-gray-600">&larr;</router-link>
-            <h1 class="text-xl font-bold text-gray-900" data-testid="book-title">{{ book.title }}</h1>
+            <router-link to="/" class="text-muted hover:text-ink">&larr; Library</router-link>
+            <h1 class="text-[13.5px] font-semibold" data-testid="book-title">{{ book.title }}</h1>
             <BeadActions :book="book" :disabled="busy || editingSegmentId !== null" @correct="runCorrection" />
           </div>
-          <div class="flex items-center gap-4 text-sm text-gray-600">
+          <div class="flex items-center gap-4 text-muted">
             <button type="button" data-testid="undo" title="Ctrl+Z" :disabled="!book.can_undo || busy || editingSegmentId !== null" @click="undo"
-              class="px-2 py-1 border border-gray-300 rounded bg-white hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed">
+              class="px-2 py-1 border border-outline rounded bg-white text-ink hover:bg-hover disabled:opacity-50 disabled:cursor-not-allowed">
               Undo
             </button>
             <button type="button" data-testid="redo" title="Ctrl+Y" :disabled="!book.can_redo || busy || editingSegmentId !== null" @click="redo"
-              class="px-2 py-1 border border-gray-300 rounded bg-white hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed">
+              class="px-2 py-1 border border-outline rounded bg-white text-ink hover:bg-hover disabled:opacity-50 disabled:cursor-not-allowed">
               Redo
             </button>
             <button v-if="importRun" type="button" data-testid="import-log" @click="showImportLog = !showImportLog"
-              :class="importRun.warnings.length ? 'text-amber-700 border-amber-400' : 'border-gray-300'"
-              class="px-2 py-1 border rounded bg-white hover:bg-gray-100">
+              :class="importRun.warnings.length ? 'text-problem border-problem-mark' : 'text-ink border-outline'"
+              class="px-2 py-1 border rounded bg-white hover:bg-hover">
               {{ importLogLabel }}
             </button>
             <button type="button" data-testid="next-problem" title="P" @click="nextProblem(1)"
-              class="px-2 py-1 border border-gray-300 rounded bg-white hover:bg-gray-100">
+              class="px-2 py-1 border border-outline rounded bg-white text-ink hover:bg-hover">
               Next problem
             </button>
             <label class="flex items-center gap-1 cursor-pointer">
-              <input v-model="showExcluded" type="checkbox" data-testid="show-excluded" />
+              <input v-model="showExcluded" type="checkbox" data-testid="show-excluded" class="accent-accent" />
               Show excluded
             </label>
             <label class="flex items-center gap-1 cursor-pointer">
-              <input v-model="showMulti" type="checkbox" data-testid="show-multi" />
+              <input v-model="showMulti" type="checkbox" data-testid="show-multi" class="accent-accent" />
               Highlight multi-segment
             </label>
             <p data-testid="problem-count">problems {{ problemCount }}</p>
             <p data-testid="book-progress">reviewed {{ reviewedCount }} / {{ book.beads.length }}</p>
           </div>
         </div>
-        <p class="text-sm text-amber-700 min-h-[1.25rem]" data-testid="status">{{ status }}</p>
         <div v-if="showImportLog && importRun" data-testid="import-log-panel"
-          class="mt-1 p-3 bg-white border border-gray-200 rounded text-sm text-gray-700 max-h-80 overflow-auto">
-          <ul v-if="importRun.warnings.length" class="mb-2 list-disc pl-5 text-amber-700">
+          class="mt-2 p-3 bg-white border border-bar-rule rounded max-h-80 overflow-auto">
+          <ul v-if="importRun.warnings.length" class="mb-2 list-disc pl-5 text-problem">
             <li v-for="(w, i) in importRun.warnings" :key="i" data-testid="import-warning">
               {{ w.side ? `${w.side}: ` : '' }}{{ w.message }}
             </li>
           </ul>
-          <p class="text-gray-500">Imported {{ importRun.created_at }} with Tradurre {{ importRun.app_version }}</p>
-          <pre data-testid="import-stats" class="mt-1 text-xs">{{ JSON.stringify(importRun.stats, null, 2) }}</pre>
+          <p class="text-muted">Imported {{ importRun.created_at }} with Tradurre {{ importRun.app_version }}</p>
+          <pre data-testid="import-stats" class="mt-1 font-code text-[11px]">{{ JSON.stringify(importRun.stats, null, 2) }}</pre>
         </div>
       </div>
 
-      <div class="bg-white border border-gray-200 rounded-lg divide-y divide-gray-100">
-        <template v-for="item in items" :key="item.type === 'bead' ? `b${item.bead.id}` : `x${item.block.block_id}`">
-          <BeadRow v-if="item.type === 'bead'" :bead="item.bead" :multi="showMulti"
-            @select="select" @edit="editSegment" @save="saveEdit" @cancel="cancelEdit"
-            @split="splitEdit" />
-          <div v-else :data-excluded-block-id="item.block.block_id" data-testid="excluded-row"
-            class="grid grid-cols-2 gap-4 px-4 py-2 text-sm border-l-4 border-transparent text-gray-400 italic">
-            <div v-for="side in (['source', 'target'] as const)" :key="side">
-              <template v-if="side === item.block.side">
-                <span class="not-italic text-xs uppercase tracking-wide bg-gray-100 rounded px-1 mr-1">
-                  {{ item.block.kind.replace('_', ' ') }}
-                </span>
-                {{ item.block.segments.map((s) => s.text).join(' ') }}
+      <!-- The bead list is the only scrolling element. -->
+      <div class="flex-1 min-h-0 overflow-auto bg-list">
+        <div class="max-w-[1560px] mx-auto">
+          <div class="sticky top-0 z-10 h-7 grid grid-cols-[40px_minmax(0,1fr)_minmax(0,1fr)_96px] items-center bg-list border-b border-bar-rule text-[10.5px] uppercase tracking-wider text-faint">
+            <span />
+            <span class="px-4">Source · {{ book.source_lang.toUpperCase() }}</span>
+            <span class="px-4">Target · {{ book.target_lang.toUpperCase() }}</span>
+            <span />
+          </div>
+          <template v-for="item in items" :key="item.type === 'bead' ? `b${item.bead.id}` : `x${item.block.block_id}`">
+            <BeadRow v-if="item.type === 'bead'" :bead="item.bead" :multi="showMulti"
+              @select="select" @edit="editSegment" @save="saveEdit" @cancel="cancelEdit"
+              @split="splitEdit" />
+            <!-- One row per excluded block and side (user, 2026-10-04): never paired across sides. -->
+            <div v-else :data-excluded-block-id="item.block.block_id" data-testid="excluded-row"
+              class="grid grid-cols-[40px_minmax(0,1fr)_minmax(0,1fr)_96px] border-b border-row-rule bg-excluded text-[13px] text-muted">
+              <span />
+              <div v-for="side in (['source', 'target'] as const)" :key="side" class="px-4 pt-[7px] pb-2"
+                :class="side === 'target' ? 'border-l border-row-rule' : ''">
+                <template v-if="side === item.block.side">
+                  <span class="mr-2 text-[10.5px] uppercase tracking-wider text-faint">
+                    {{ item.block.kind.replace('_', ' ') }}
+                  </span>
+                  {{ item.block.segments.map((s) => s.text).join(' ') }}
+                </template>
+              </div>
+              <div class="pt-[6px] pr-3 text-right">
                 <button type="button" data-testid="include" @click="include(item.block.block_id)"
-                  class="not-italic ml-2 px-1.5 py-0.5 text-xs border border-gray-300 rounded bg-white text-gray-600 hover:bg-gray-100">
+                  class="px-1.5 py-0.5 text-xs border border-outline rounded bg-white text-ink hover:bg-hover">
                   Include
                 </button>
-              </template>
+              </div>
             </div>
-          </div>
-        </template>
+          </template>
+        </div>
+      </div>
+
+      <!-- Both texts sit in fixed, size-contained boxes: their changes are laid out alone, not with the bead list. -->
+      <div class="shrink-0 relative h-[26px] border-t border-bar-rule text-[12px] text-muted">
+        <p data-testid="status" class="absolute left-4 right-[380px] inset-y-0 leading-[25px] truncate [contain:strict]">{{ status }}</p>
+        <BookPosition :book="book" />
       </div>
     </template>
   </div>

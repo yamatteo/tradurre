@@ -212,7 +212,7 @@ test('r on a 10,000-bead book is fast', async ({ page, request }) => {
 
   const start = Date.now()
   await page.keyboard.press('r')
-  await expect(row).toHaveClass(/border-green-500/)
+  await expect(row).toHaveAttribute('data-reviewed', 'true')
   const elapsed = Date.now() - start
 
   console.log(`10,000-bead book: r to reviewed border ${elapsed} ms`)

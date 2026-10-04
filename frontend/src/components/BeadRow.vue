@@ -88,37 +88,50 @@ const cells = computed(() =>
 </script>
 
 <template>
+  <!-- A1's grid: gutter mark | source | target | meta. Every state changes colours only, never the row's height. -->
   <div :data-bead-id="bead.id" :data-current="current" :data-side="current ? currentSide : undefined"
     :data-reviewed="bead.reviewed" :data-problem="problem" data-testid="bead-row"
-    class="relative grid grid-cols-2 gap-4 px-4 py-2 text-sm border-l-4"
-    :class="[bead.reviewed ? 'border-green-500' : problem ? 'border-amber-400' : 'border-transparent', current ? 'outline outline-2 outline-blue-400 -outline-offset-2' : '']">
+    class="relative grid grid-cols-[40px_minmax(0,1fr)_minmax(0,1fr)_96px] border-b border-row-rule scroll-mt-7"
+    :class="current ? 'outline-[1.5px] outline-accent -outline-offset-[1.5px]' : ''">
+    <div class="flex justify-center pt-[11px]">
+      <svg v-if="bead.reviewed" aria-label="Reviewed" role="img" width="14" height="14" viewBox="0 0 14 14"
+        class="text-reviewed" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+        stroke-linejoin="round"><path d="M2.5 7.5l3 3 6-7" /></svg>
+      <svg v-else-if="problem" aria-label="Problem" role="img" width="12" height="12" viewBox="0 0 12 12"
+        class="text-problem-mark mt-px" fill="currentColor"><path d="M6 0.5L11.5 6 6 11.5 0.5 6z" /></svg>
+    </div>
     <div v-for="cell in cells" :key="cell.side" :data-cell="cell.side"
-      class="rounded px-1 cursor-text min-h-[1.5em]"
+      class="cursor-text px-4 pt-[7px] pb-2 font-text text-[15px] leading-[1.45] text-ink"
       :class="[
-        cell.blocks.length === 0 ? 'bg-gray-100' : '',
-        current && currentSide === cell.side ? 'bg-blue-50' : '',
+        cell.side === 'target' ? 'border-l border-row-rule' : '',
+        current && currentSide === cell.side ? 'bg-current-side' : '',
       ]"
       @click="emit('select', bead.id, cell.side, null)">
+      <span v-if="cell.blocks.length === 0" class="font-ui text-[12.5px] italic text-absent">Not in this edition</span>
       <div v-for="block in cell.blocks" :key="block.blockId" :data-block-kind="block.kind"
-        :class="block.kind === 'heading' ? 'font-bold' : ''">
+        :class="block.kind === 'heading' ? 'font-semibold' : ''">
         <template v-for="(seg, i) in block.segments" :key="seg.segment_id">
-          <span v-if="i > 0">{{ ' ' }}</span>
+          <span v-if="i > 0" aria-hidden="true" class="inline-block w-px h-[0.9em] mx-2 align-[-0.1em] bg-separator" />
           <textarea v-if="editingSegmentId === seg.segment_id" :ref="mountEditor" :value="seg.text" rows="1"
             data-testid="segment-editor"
-            class="block w-full resize-none overflow-hidden border border-blue-400 rounded px-1 font-normal"
+            class="block w-full resize-none overflow-hidden border border-accent rounded px-1 bg-white font-text text-[15px] leading-[1.45] font-normal"
             @input="grow($event.target as HTMLTextAreaElement)" @click.stop
             @keydown="onEditorKey($event, seg.segment_id)" @blur="onEditorBlur($event, seg.segment_id)" />
+          <!-- The bottom border is always there, only recoloured: so selecting a segment repaints it without a layout
+               (an inline gaining a background or a border is laid out again, and that walks all 10,000 rows). -->
           <span v-else :data-segment-id="seg.segment_id" :data-current-segment="currentSegmentId === seg.segment_id"
-            :class="currentSegmentId === seg.segment_id ? 'underline decoration-blue-500 decoration-2' : ''"
+            class="border-b-2"
+            :class="currentSegmentId === seg.segment_id ? 'bg-current-segment border-accent' : 'border-transparent'"
             @click.stop="emit('select', bead.id, cell.side, seg.segment_id)"
             @dblclick.stop="emit('edit', seg.segment_id)">{{ seg.text }}</span>
         </template>
       </div>
     </div>
-    <!-- Absolutely positioned: reviewing a bead removes the badge without changing the row's height. -->
-    <span v-if="problem" data-testid="problem-badge"
-      class="absolute top-0 right-1 text-xs text-amber-700 pointer-events-none">
+    <!-- Always rendered (so it never shifts anything), transparent unless current or a problem. -->
+    <div :data-testid="problem ? 'problem-badge' : undefined"
+      class="pt-[10px] pr-3 text-right font-code text-[11px] whitespace-nowrap"
+      :class="problem ? 'text-problem font-medium' : current ? 'text-muted' : 'text-transparent'">
       {{ bead.source.length }}:{{ bead.target.length }} · {{ bead.confidence.toFixed(2) }}
-    </span>
+    </div>
   </div>
 </template>

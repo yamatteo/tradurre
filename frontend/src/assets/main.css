@@ -1,5 +1,50 @@
 @import "tailwindcss";
 
+/* The book screen's visual tokens (PLAN.md, "Screen layout and shortcuts"; Claude Design variant A1).
+   The fonts are bundled by @fontsource in main.ts: no network needed. */
+@theme {
+  --font-ui: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-text: "Source Serif 4", ui-serif, Georgia, serif;
+  --font-code: "IBM Plex Mono", ui-monospace, monospace;
+
+  --color-ground: #F3F2EE;
+  --color-bar: #F8F7F4;
+  --color-list: #FDFDFB;
+  --color-ink: #1D1F23;
+  --color-muted: #5E6168;
+  --color-faint: #6A6D73;
+  --color-bar-rule: #E0DDD6;
+  --color-row-rule: #EEECE7;
+  --color-hover: #E8E6E0;
+  --color-outline: #D5D2CA;
+  --color-accent: #2B59A3;
+  --color-current-side: #EFF3FA;
+  --color-current-segment: #D3DFF3;
+  --color-problem: #9A4A0C;
+  --color-problem-mark: #C2661A;
+  --color-pill: #F6E7D6;
+  --color-pill-ink: #7D3D0A;
+  --color-reviewed: #2D6B4F;
+  --color-run: #F0F4FA;
+  --color-excluded: #F5F4F0;
+  --color-progress: #4A6E9E;
+  --color-kbd: #CBC7BE;
+  --color-separator: #B4B0A6;
+  --color-absent: #6E7177;
+}
+
+/* Key chips (A1): mono 10.5 px, 1 px border with a 2 px bottom border, radius 4, white. */
+kbd {
+  font-family: var(--font-code);
+  font-size: 10.5px;
+  line-height: 1;
+  padding: 2px 4px 1px;
+  border: 1px solid var(--color-kbd);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: #fff;
+}
+
 /* TipTap editor styles */
 .tiptap {
   outline: none;

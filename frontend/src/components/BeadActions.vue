@@ -27,7 +27,7 @@ const actions = computed<{ action: Correction; label: string; key: string }[]>((
   <div class="flex flex-wrap gap-1" data-testid="bead-actions">
     <button v-for="a in actions" :key="a.action" type="button" :data-action="a.action" :title="a.key"
       :disabled="disabled || !bead" @click="emit('correct', a.action)"
-      class="px-1.5 py-0.5 text-xs border border-gray-300 rounded bg-white text-gray-600 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed">
+      class="px-1.5 py-0.5 text-xs border border-outline rounded bg-white text-ink hover:bg-hover disabled:opacity-50 disabled:cursor-not-allowed">
       {{ a.label }}
     </button>
   </div>

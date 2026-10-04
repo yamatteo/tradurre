@@ -67,8 +67,8 @@ test('arrows, tab and clicks move the current bead, side and segment', async ({ 
   await page.getByText('Il pleuvait.').click()
   await expect(current(page)).toHaveAttribute('data-bead-id', String(ids[2]))
   await expect(current(page)).toHaveAttribute('data-side', 'source')
-  // The one-sided bead's empty target cell is grey.
-  await expect(current(page).locator('[data-cell="target"]')).toHaveClass(/bg-gray-100/)
+  // The one-sided bead's empty target cell says so.
+  await expect(current(page).locator('[data-cell="target"]')).toHaveText('Not in this edition')
 })
 
 test('a heading block renders bold', async ({ page, request }) => {
@@ -82,9 +82,9 @@ test('a heading block renders bold', async ({ page, request }) => {
   await page.goto(`/book/${id}`)
   const first = page.locator(`[data-bead-id="${book.beads[0].id}"]`)
   await expect(first.locator('[data-block-kind="heading"]')).toHaveCount(2)
-  await expect(first.locator('[data-block-kind="heading"]').first()).toHaveClass(/font-bold/)
+  await expect(first.locator('[data-block-kind="heading"]').first()).toHaveCSS('font-weight', '600')
   await expect(page.locator(`[data-bead-id="${book.beads[1].id}"] [data-block-kind="paragraph"]`).first())
-    .not.toHaveClass(/font-bold/)
+    .toHaveCSS('font-weight', '400')
 })
 
 test('tab moves between segments of a cell', async ({ page, request }) => {
@@ -111,7 +111,7 @@ test('n jumps to the next unreviewed bead', async ({ page, request }) => {
   await request.post(`/api/v2/books/${id}/reviewed`, { data: { bead_ids: [ids[1]], reviewed: true } })
   await page.goto(`/book/${id}`)
   await expect(page.locator(`[data-bead-id="${ids[1]}"]`)).toHaveAttribute('data-reviewed', 'true')
-  await expect(page.locator(`[data-bead-id="${ids[1]}"]`)).toHaveClass(/border-green-500/)
+  await expect(page.locator(`[data-bead-id="${ids[1]}"]`)).toHaveAttribute('data-reviewed', 'true')
   await page.keyboard.press('n')
   await expect(current(page)).toHaveAttribute('data-bead-id', String(ids[2]))  // skipped the reviewed one
 
