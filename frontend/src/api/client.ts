@@ -331,6 +331,10 @@ export const booksApi = {
 
   joinNext: (id: string, segmentId: number) => booksPost(`/books/${id}/segments/${segmentId}/join-next`),
 
+  /** Re-align the beads from `firstBeadId` to `lastBeadId` with the aligner; the new beads start unreviewed. */
+  realign: (id: string, firstBeadId: number, lastBeadId: number) =>
+    booksPost(`/books/${id}/beads/realign`, { first_bead_id: firstBeadId, last_bead_id: lastBeadId }),
+
   /** Put the segment's original extracted text back. */
   restoreOriginal: (id: string, segmentId: number) => booksPost(`/books/${id}/segments/${segmentId}/restore`),
 

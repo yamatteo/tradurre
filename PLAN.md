@@ -31,8 +31,8 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
 - **Book screen** (Stages 2, 4): reading and keyboard navigation, `n` next unreviewed, `r` reviewed, "Show
   excluded", every SPEC §3.3 single-bead correction (keys and header buttons), inline segment editing, persistent
   undo/redo, problem navigation (`p`/`P`), selected runs (Shift+↑/↓, Shift+click) marked with `r`, and `R` "up to
-  here", range exclude/include in the "More" menu. Restyled to design variant A; original text, re-align and
-  cut/copy/paste to come (Stage 4).
+  here", range exclude/include in the "More" menu, edited sentences marked with their original on `o` and
+  "Restore original". Restyled to design variant A; re-align and cut/copy/paste to come (Stage 4).
 - **Re-planned with the user (2026-10-04), SPEC changed accordingly:** review is one mode, problem-first: jump to
   the next likely problem, correct, mark one bead, a selected run, or everything up to here as reviewed. The
   timed scroll "skim review" is dropped. The Colab aligner is **parked** (SPEC §3.2, §5): it returns only if a
@@ -41,7 +41,7 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
   gold (the current one was made by the user, the developer), and maybe a second book, to score the aligner again.
 - `uv run pytest`: 399 passed, also on a fresh clone (tests read only committed synthetic fixtures; `-m library`
   tests run only where `library/contrefeu.*.pdf` exists, and assert counts only).
-- `npm run type-check` passes; releases build with `npm run build`. `npm run test:e2e` (45 tests) runs on its own
+- `npm run type-check` passes; releases build with `npm run build`. `npm run test:e2e` (48 tests) runs on its own
   backend (:8001, throwaway `.e2e.db`) and Vite (:5174), never the user's database. Setup per machine: `npx
   playwright install chromium` (on Ubuntu 26.04 with `PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=ubuntu24.04-x64`); tests
   use the full Chromium headless (`channel: 'chromium'`).
@@ -518,6 +518,10 @@ passes unchanged.
 #### Original text in the book screen
 Status: done
 Report: 2026-10-04 — dotted underline and `data-edited` on edited spans (`BeadRow`); new `OriginalPopover.vue` (state by `originalKey` injection, fixed, under or above the span, empty-original message, Restore disabled for it); key `o` in `SHORTCUTS`; "Text" heading and "Restore the original sentence" in More; Esc order panel > import log > More > popover > run, the three mutually exclusive; import log closes on a click outside; 3 e2e tests in `book-corrections.spec.ts` + a click-outside step in `book-layout.spec.ts`, all 4 failing on the old code; e2e 48 passed, pytest 399 passed, type-check clean; 20 ArrowDown on 10,000 beads 1.09–1.18 s alone.
+Verified (Pauli, 2026-10-04): Done when holds (commit 65bd5a9; pytest 399 here). Braun's two notes become part of
+"Re-align in the book screen": the popover stays put while the list scrolls (it closes on scroll there), and the
+open More menu reads the current bead in `BookView`'s template (render rule 1; the menu moves to its own
+component there, as the re-align item needs the run too).
 **Done when:** `npm run type-check` passes; `npm run test:e2e` passes with the new tests below in
 `frontend/e2e/book-corrections.spec.ts` (each failing before the change, see Conventions) and
 `e2e/book-layout.spec.ts` still passing at 1366; `uv run pytest` unchanged; 20 ArrowDown on 10,000 beads not
@@ -559,11 +563,60 @@ worse than ~1.2–1.3 s alone.
 - Don't change the editing flow (Enter / Ctrl+Enter / Esc in the editor) or any existing key.
 
 ### Re-align range
-Not ready. SPEC §3.3: select a stretch between two trusted beads and re-run the local aligner on just that stretch
-(the selected run of "Reviewed runs" is the natural selection; `domain/replace.py` has `replace_beads`).
-Decided (user, 2026-10-04): every bead in the stretch is replaced, reviewed or not, and the new beads start
-**unreviewed** (SPEC §3.3: "Beads produced by an aligner start unreviewed"); one operation, so one undo restores
-the old beads and their marks.
+SPEC §3.3: "select a stretch between two trusted beads and re-run the local aligner on just that stretch". The
+stretch is the selected run (or the current bead alone, to re-split one many-to-many bead). Decided (user,
+2026-10-04): every bead in the stretch is replaced, reviewed or not, and the new beads start **unreviewed** (SPEC
+§3.3: "Beads produced by an aligner start unreviewed"); one operation, so one undo restores the old beads and
+their marks. The aligner is the import's: `services/align.py:align` (its length ratio is computed from the texts
+it is given, i.e. from the stretch, which is right between two trusted beads).
+
+#### Re-align: service and API
+Status: done
+Report: 2026-10-04 — new `services/realign.py` (`_run`, `_segments`, `align.align`, `replace_beads(kind="realign")`); `BookRealignRequest`, `POST /beads/realign`, `booksApi.realign`; `tests/test_realign.py` (stretch equals the aligner's output, inside reviewed mark replaced, outside kept, invariants, one undo = exact snapshot; three refusals record nothing) and an API test on `gap`; all fail on the old code (import error / 404); pytest 402 passed, e2e 48 passed, type-check clean.
+**Done when:** `uv run pytest` passes with the new tests below (each failing before the change); `npm run
+type-check` passes; `npm run test:e2e` passes unchanged.
+
+- New `tradurre/services/realign.py`: `realign(conn, project_id, first: int, last: int) -> list[int]`. It reads
+  the run's beads in order (`domain/replace.py:_run`), their segment ids and texts per side in document order
+  (`domain/beads.py:_segments`, then the texts), calls `align.align(source_texts, target_texts)`, maps the
+  returned indices back to segment ids as `NewBead(source_ids, target_ids, confidence, "length")`, and calls
+  `replace_beads(conn, project_id, first, last, new_beads, kind="realign")`. Returns the new bead ids. Errors
+  come from `replace_beads` (`_run`): another project's bead, first after last. Callers own the transaction.
+  The domain layer doesn't import services; this module may import the domain.
+- `models.py`: `BookRealignRequest(first_bead_id: int, last_bead_id: int)`. `api/books.py`: `POST
+  /books/{id}/beads/realign` through `_correct`. `client.ts`: `booksApi.realign(id, firstBeadId, lastBeadId)`.
+- Tests, new `tests/test_realign.py` on a synthetic project (as `tests/test_domain_blocks.py` builds one): a
+  3-bead stretch laid out wrongly by hand (e.g. a 1:0 bead followed by a 1:2) re-aligns to the aligner's own
+  output for those texts (compare with `align.align` called directly on them), every new bead has `method
+  "length"` and `reviewed 0`, a reviewed bead inside the stretch is replaced and one outside keeps its mark,
+  `check_project` is `[]`, and one `undo` restores the exact snapshot (beads and marks); first after last and a
+  bead of another project are refused with nothing recorded. `tests/test_books_corrections_api.py`: on the `gap`
+  fixture, `beads/realign` over B..D returns 200, `/check` is `[]`, the beads outside the stretch are unchanged,
+  and `undo` returns the `gap` layout.
+
+#### Re-align in the book screen
+Status: todo
+**Done when:** `npm run type-check` passes; `npm run test:e2e` passes with the new tests below (each failing
+before the change) and `e2e/book-layout.spec.ts` still passing at 1366; `uv run pytest` unchanged; 20 ArrowDown
+on 10,000 beads not worse than ~1.2–1.3 s alone, and also measured once with the More menu open (report both).
+
+- **More as a component** (render rule 1): move the menu's button and popover out of `BookView.vue` into
+  `frontend/src/components/MoreMenu.vue`. It injects the selection (and the book through it) for its disabled
+  states, and emits `bulk(action, to)`, `restore`, `realign`; `BookView` keeps the handlers and the open state
+  (`showMore`, still a `BookView` ref for the mutual exclusion and Esc order, passed as a prop, with a `toggle`
+  emit). After the move `BookView`'s template reads nothing that changes on a move, menu open or not.
+- **Item:** under a third heading "Alignment", "Re-align the selection" (`data-testid="realign"`), enabled when
+  there is a current bead; it re-aligns the selected run, or the current bead if there is no run. After success:
+  `say('Re-aligned N beads into M (Ctrl+Z to undo)')` (N the stretch's size, M the new count: N plus the
+  difference in the book's bead count), the run is cleared and the current bead is the first new one (the
+  `selectIndex` of `correct`). No key.
+- **Popover and scrolling:** the original popover closes when the bead list scrolls (`@scroll` on the list
+  container sets `showOriginal = false`; a handler binding, not a read, so render rule 1 holds).
+- Tests (`review.spec.ts`, its 3-bead book, whose import gives B3 a 2:1 below 0.5): a run of B2..B3 → "Re-align
+  the selection" → `/check` (API) is `[]`, every bead of the stretch is unreviewed, the status starts
+  `Re-aligned 2 beads into`, and Ctrl+Z restores the previous rows and marks (mark B2 reviewed first). With the
+  original popover open (edit a sentence through the API first), a mouse-wheel scroll of the list closes it.
+- `SHORTCUTS` and existing keys don't change.
 
 ### Cut/copy/paste between rows
 Not ready. See the decision above; agree the SPEC wording with the user first.

@@ -268,6 +268,11 @@ class BookReviewedRequest(BaseModel):
     reviewed: bool
 
 
+class BookRealignRequest(BaseModel):
+    first_bead_id: int
+    last_bead_id: int
+
+
 class BookRangeRequest(BaseModel):
     bead_id: int
     side: Literal["source", "target"]

@@ -193,6 +193,15 @@ def test_exclude_and_include_range(client, gap):
     assert result["excluded"] == []
 
 
+def test_realign(client, gap):
+    book_id, data = gap
+    b, d = data["beads"][1]["id"], data["beads"][3]["id"]
+    result = _ok(client, book_id, "beads/realign", {"first_bead_id": b, "last_bead_id": d})
+    assert result["beads"][0] == data["beads"][0]
+    assert all(not bead["reviewed"] and bead["method"] == "length" for bead in result["beads"][1:])
+    assert _ok(client, book_id, "undo")["beads"] == data["beads"]
+
+
 def test_range_refusals(client, gap):
     book_id, data = gap
     b = data["beads"][1]["id"]

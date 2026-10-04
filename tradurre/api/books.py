@@ -28,6 +28,7 @@ from tradurre.models import (
     BookImportResponse,
     BookMoveRequest,
     BookRangeRequest,
+    BookRealignRequest,
     BookResponse,
     BookReviewedRequest,
     BookRun,
@@ -37,6 +38,7 @@ from tradurre.models import (
 )
 from tradurre.services.build import PreparedBook, prepare_book, write_book
 from tradurre.services.extract import EXCLUDED_KINDS, Extraction, extract
+from tradurre.services.realign import realign as realign_beads
 
 router = APIRouter(tags=["books"])
 
@@ -314,6 +316,11 @@ def merge_next(book_id: str, bead_id: int, db: sqlite3.Connection = Depends(get_
 @router.post("/books/{book_id}/beads/{bead_id}/split", response_model=BookResponse)
 def split(book_id: str, bead_id: int, body: BookSplitBeadRequest, db: sqlite3.Connection = Depends(get_db)):
     return _correct(db, book_id, lambda: split_bead(db, book_id, bead_id, body.source_at, body.target_at))
+
+
+@router.post("/books/{book_id}/beads/realign", response_model=BookResponse)
+def realign(book_id: str, body: BookRealignRequest, db: sqlite3.Connection = Depends(get_db)):
+    return _correct(db, book_id, lambda: realign_beads(db, book_id, body.first_bead_id, body.last_bead_id))
 
 
 @router.post("/books/{book_id}/reviewed", response_model=BookResponse)
