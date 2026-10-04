@@ -35,7 +35,7 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
   "Restore original", re-align of the selection (More menu), cut/copy/paste of whole sentences (Ctrl+X/C/V).
   Restyled to design variant A; smooth at 5,000 beads. Stages 4 and 6 done (search at `/search` and from the book; More → Export: edition .txt/.docx and the
   project bundle; "Restore a bundle" on the library page). Stage 7: search grouped by book and the library order
-  done; next database snapshots, retire v1, a Windows checklist, then the v0.2 tag. On the reference book the problem flags catch
+  done, and database snapshots; next snapshot names in local time, retire v1 (4 tasks), a Windows checklist, then the v0.2 tag. On the reference book the problem flags catch
   none of the 15 real errors: review is reading-first; better signals come after v0.2.
 - **Re-planned with the user (2026-10-04), SPEC changed accordingly:** review is one mode, problem-first: jump to
   the next likely problem, correct, mark one bead, a selected run, or everything up to here as reviewed. The
@@ -271,17 +271,117 @@ not against losing the disk (the bundle and copying the file do that).
   to it, in the repo root; they hold book text and must never be committed.
 Report: 2026-10-04 — `tradurre/backup.py` `snapshot` (backup API, keep 10 by stem, failures print and return None), called before `init_db` unless `TRADURRE_DEV` (set by `--dev`); README "Backups", `/backups/` ignored; manual: two `--no-browser` starts on a scratch copy → `t-20261004-182031.db`, `t-20261004-182039.db`, 143,360 bytes each, `--dev` (reached startup) added none; pytest 447 (8 new), e2e 70.
 
+### Snapshot names in local time
+Status: done
+**Done when:** `uv run pytest` passes with the new test, which fails on the code before the change (check it by
+restoring the old line).
+
+Review of "Database snapshots at start": names use UTC (`tradurre/backup.py`, `datetime.now(timezone.utc)`), so in
+Italy the snapshot taken at 20:20 is named `…-182031.db`. The names exist for a person choosing one to restore
+(README "Backups": "named by date and time"); they must read as the local clock.
+- `backup.py`: the default `now` is `datetime.now()` (local, naive). The `now` parameter, the name format and the
+  sort by stem don't change. Accepted: in the hour repeated when daylight saving ends, names can sort out of order;
+  at worst the clean-up drops a snapshot from that hour first. Don't add logic for it.
+- README "Backups": "named by the date and time they were taken (your computer's clock)".
+- `tests/test_backup.py`: `snapshot(db_path)` without `now` gives a name whose `YYYYmmdd-HHMM` is
+  `datetime.now()`'s, read just before or just after the call (either one, to survive a minute boundary).
+Report: 2026-10-04 — default `now` is `datetime.now()` (local); README says "your computer's clock"; new test fails on the old code under `TZ=Europe/Rome` (on a UTC machine both clocks agree, so it can't fail there); pytest 448.
+
 ### Retire the old model
-Not ready (broken down after the two tasks above). Remove the `pairs` table (a migration dropping it, no export:
-the translator has no v0.1 data) and its API, the old import wizard, `resplit`, the TipTap per-pair editor, the old artifact
-format and `services/importer.py`; update `CLAUDE.md`, `README.md` and the e2e tests. Also: the library page
-(`ProjectList.vue`) shows books only and deletes them through a new `DELETE /api/v2/books/{id}` (today it uses the
-v1 `deleteProject`); the global `mark` rule in `main.css` (v1, yellow, unlayered so it beats Tailwind classes)
-becomes the A tokens (`--color-current-segment`); the old nav in `App.vue` ("Projects", "Import") points to the
-new screens.
+The v0.1 code goes; v0.2 is the books model only (user, 2026-10-04: no v0.1 data to keep, nothing exported). Also
+goes (user, 2026-10-04): the parked Colab aligner's old code (`tradurre-align` and its modules), whose output only
+the v1 import reads; if it is ever unparked (SPEC §3.2), it is rebuilt on project bundles (Stage 5 notes), and
+the old code stays in git history. Order: the screens the translator uses move off v1 first, then the v1
+frontend goes, then the backend, then the docs. Each task leaves the app working.
+
+#### Library page on books
+Status: todo
+**Done when:** `uv run pytest` passes with the new tests; `npm run type-check` passes; `npm run test:e2e` passes,
+with the new test.
+
+`ProjectList.vue` today lists v1 projects (`api.listProjects`), merges book counts in, offers "New Project" (a v1
+pair project) and deletes through v1 `api.deleteProject`.
+- Backend: `DELETE /api/v2/books/{book_id}` in `api/books.py`, 204; 404 (as `_book_row`) for an unknown id. In
+  `with transaction(db)`: `DELETE FROM projects WHERE id = ?`; the `ON DELETE CASCADE` foreign keys and the
+  `bead_index` delete triggers do the rest (`tests/test_schema.py::test_delete_project_cascades` covers the
+  schema side). Not undoable (the operation log goes with the book); the start-up snapshots are the safety net.
+- `client.ts`: `booksApi.deleteBook(id)`.
+- `ProjectList.vue`: books only, from `booksApi.listBooks()` (library order). Heading "Library". Each card:
+  title, `FR → IT` (upper-case codes), "N beads, M reviewed"; `data-book-id` (replaces `data-project-id`);
+  click opens `/book/<id>`. "Delete" asks `confirm('Delete "<title>"? This can\'t be undone.')`, then
+  `deleteBook` and reload. Remove "New Project" and its form. Buttons stay: "Import a book (txt/docx/pdf)",
+  "Restore a bundle". Empty: "No books yet. Import one to get started." Keep the current classes; no restyle.
+- `App.vue` nav: "Tradurre", "Library" (`/`), "Search" (`/search`); the "Import" link (v1 wizard) goes.
+- Tests: `tests/test_books_api.py`: delete → 204, then `GET /books/{id}` 404, the book gone from `GET /books`,
+  its words gone from `/search`, and no rows left for it in `documents`, `beads`, `operations`, `runs`
+  (read through the app's database file); a second delete → 404. `e2e/books.spec.ts`: `data-project-id` →
+  `data-book-id`; new: import a book through the API, open `/`, Delete (accept the dialog with
+  `page.once('dialog', d => d.accept())`), the card is gone and `GET /api/v2/books/<id>` is 404.
+
+#### Remove the v1 frontend
+Status: todo
+**Done when:** `npm run type-check` and `npm run build` pass; `npm run test:e2e` passes; `grep -rn
+"tiptap\|/api/v1\|ProjectEditor\|ImportWizard\|SearchView" frontend/src frontend/e2e frontend/package.json` finds
+nothing.
+- Delete `views/ProjectEditor.vue`, `views/ImportWizard.vue`, `views/SearchView.vue` (unrouted since Stage 6) and
+  their routes (`/project/:id`, `/import`) in `router/index.ts`.
+- `client.ts`: remove `BASE`, `request`, the `api` object and the v1 types (`Project`, `Pair`, `SearchResult`,
+  `SearchResponse`, `Import*`, `ResplitResponse`); `booksApi` and its types don't change.
+- `npm uninstall` the four `@tiptap/*` packages (`package.json` and `package-lock.json`).
+- `assets/main.css`: remove the "TipTap editor styles" block; the global `mark` rule becomes `background-color:
+  var(--color-current-segment); color: inherit; padding: 0 1px; border-radius: 2px;` (search highlights in the
+  A palette instead of v1 yellow).
+- The backend is not touched (the v1 API stays until the next task).
+
+#### Remove the v1 backend and the old Colab aligner
+Status: todo
+**Done when:** `uv run pytest` passes; `npm run test:e2e` passes; `uv run tradurre --version` works; a migration
+test shows a database at version 5 holding a v1 project with pairs and a book comes out at version 6 with the
+book intact (`check_project` clean, searchable) and no `pairs`, `translation_memory` or v1 project; `grep -rn --exclude-dir=static
+"api/v1\|pairs\|translation_memory\|tradurre-align\|doc_adapter" tradurre tests scripts pyproject.toml` (static: the
+gitignored build, rebuilt by `npm run build`) finds only
+`db.py`'s `_m001_pairs` and its schema strings, the new migration, and the migration tests.
+- Migration `_m006_drop_v1` appended to `MIGRATIONS` (never edit `_m001_pairs`): drop the triggers `pairs_ai`,
+  `pairs_au`, `pairs_ad`, the table `translation_memory`, the index `idx_pairs_project`, the table `pairs`; then
+  `DELETE FROM projects WHERE NOT EXISTS (SELECT 1 FROM documents d WHERE d.project_id = projects.id)` (v1
+  projects; a book always has its documents, import and restore write them in one transaction). Use
+  `_run_script`/`execute`, not `executescript`.
+- Delete `api/projects.py`, `api/pairs.py`, `api/search.py`, `api/import_.py`, `api/export.py` and their
+  `include_router` lines in `app.py`; `services/importer.py`, `html_utils.py`, `exporter.py`, `artifact_io.py`,
+  `aligner.py`, `pipeline.py`, `pipeline_cli.py`, `embed_align.py`, `bertalign_align.py`, `llm_judge.py`; the
+  models only they use (`Project*`, `Pair*`, `SearchResult`, `SearchResponse`, `Import*` but not
+  `BookImportResponse`, `Resplit*`, `Artifact*`, `AlignedArtifact`).
+- `doc_adapter.py`: move `normalize_ocr_artifacts` (and what it needs) into `services/extract.py`, update the import
+  and the module docstring line that names `doc_adapter`, delete the file. `glyph_resolver.py` stays as it is.
+- `pyproject.toml`: remove the `tradurre-align` script and the `align` extra; `uv lock`. Keep `pdf` and `ocr`.
+- Tests: delete `test_aligner.py`, `test_pairs_api.py`, `test_import_artifact.py`, `test_pipeline_cli.py`;
+  `test_doc_adapter.py`'s `normalize_ocr_artifacts` tests move to `test_extract.py`, the rest go.
+  `test_books_api.py`'s two tests that create a v1 project through `/api/v1/projects` insert the document-less
+  project row with SQL on the app's database instead (the `EXISTS` filter in `GET /books` stays).
+  `test_migrations.py`: tests of `_m001_pairs` alone stay; any that expect `pairs` after the full `init_db` now
+  expect it gone; plus the version-5 → 6 test above.
+- `README.md`: remove the Colab/`tradurre-align` note and the `align` extra wherever they appear. CLAUDE.md is the
+  next task.
+
+#### CLAUDE.md and README describe v0.2
+Status: todo
+**Done when:** every module, command, route and table named in `CLAUDE.md` exists (check each with `ls`/`grep`,
+list the checks in the report); nothing in `CLAUDE.md` or `README.md` names `pairs`, `/api/v1`, TipTap, the import
+wizard or translation memory.
+- `CLAUDE.md` "Architecture": the code as it is now: `api/books.py` (`/api/v2`), `domain/` (layer, beads, blocks,
+  segments, history/undo, invariants, search), `services/` (extract, matter, segment, align, build, realign,
+  edition, bundle, gold, glyph_resolver), `backup.py`; the data model (projects → documents → blocks → segments,
+  beads, operations, runs/warnings, `bead_index` kept by triggers: never write to it); the migration rule stays;
+  the frontend views (`ProjectList`, `BookImport`, `BookView`, `BookSearch`) and components. Drop the v1 data
+  model paragraph and the negative-position reindexing note. Keep "Workflow" and "Commands" (fix the example test
+  names to existing files). The intro sentence saying the architecture notes describe code "the plan is
+  replacing" goes.
+- `README.md`: the intro speaks of books (import a source and its translation, review the alignment, search
+  everything); no "translation memory" wording, no edit-both-sides-in-an-editor claim.
 
 ### Windows checklist and release
-Not ready (written once the old model is gone). `packaging/WINDOWS-CHECKLIST.md`, written for the Claude agent
+Not ready (written once the old model is gone; the checklist's "upgrade from v0.1" step means: a v0.1
+database opens and loses its v1 projects, as agreed). `packaging/WINDOWS-CHECKLIST.md`, written for the Claude agent
 on the developer's Windows machine: each step a command or browser action and its expected result (fresh install
 through the launcher from the release candidate's wheel, upgrade from v0.1, Edge and Chrome, the Italian-layout
 keys of the book screen, import of a .txt/.docx/.pdf pair, corrections and undo after a restart, search,

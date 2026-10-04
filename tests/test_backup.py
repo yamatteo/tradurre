@@ -91,3 +91,12 @@ def test_dev_start_takes_none(db_path, monkeypatch):
     monkeypatch.setenv("TRADURRE_DEV", "1")
     _start(db_path, monkeypatch)
     assert not (db_path.parent / "backups").exists()
+
+
+def test_default_name_is_local_time(db_path):
+    # Read the clock on both sides of the call, so a minute boundary in between can't fail the test.
+    before = datetime.now()
+    target = snapshot(db_path)
+    after = datetime.now()
+    stamp = target.stem.removeprefix("tradurre-")[:13]
+    assert stamp in {f"{before:%Y%m%d-%H%M}", f"{after:%Y%m%d-%H%M}"}

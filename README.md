@@ -78,9 +78,10 @@ Notes:
 ## Backups
 
 Each time it starts, Tradurre copies its database into `~/.tradurre/backups/` (on Windows:
-`%USERPROFILE%\.tradurre\backups`), keeping the last 10 copies, named by date and time. To go back to one, close
-Tradurre and copy it over `~/.tradurre/tradurre.db`. These copies are on the same disk: to protect your work against
-losing the computer, also copy `tradurre.db` (or download a book's bundle) somewhere else.
+`%USERPROFILE%\.tradurre\backups`), keeping the last 10 copies, named by the date and time they were taken (your
+computer's clock). To go back to one, close Tradurre and copy it over `~/.tradurre/tradurre.db`. These copies are on
+the same disk: to protect your work against losing the computer, also copy `tradurre.db` (or download a book's
+bundle) somewhere else.
 
 ## Development
 

@@ -5,7 +5,7 @@ bad migration or a bad correction; not against losing the disk.
 """
 
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
 
@@ -20,7 +20,7 @@ def snapshot(db_path: Path, keep: int = 10, now: datetime | None = None) -> Path
     folder = db_path.parent / "backups"
     try:
         folder.mkdir(exist_ok=True)
-        base = f"{db_path.stem}-{(now or datetime.now(timezone.utc)):%Y%m%d-%H%M%S}"
+        base = f"{db_path.stem}-{(now or datetime.now()):%Y%m%d-%H%M%S}"
         target = folder / f"{base}.db"
         k = 2
         while target.exists():
