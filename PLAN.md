@@ -31,17 +31,17 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
 - **Book screen** (Stages 2, 4): reading and keyboard navigation, `n` next unreviewed, `r` reviewed, "Show
   excluded", every SPEC §3.3 single-bead correction (keys and header buttons), inline segment editing, persistent
   undo/redo, problem navigation (`p`/`P`), selected runs (Shift+↑/↓, Shift+click) marked with `r`, and `R` "up to
-  here". Restyled to design variant A (frame, fonts, rows, bars, shortcuts panel); ranges, original text and
-  re-align to come (Stage 4).
+  here", range exclude/include in the "More" menu. Restyled to design variant A; original text, re-align and
+  cut/copy/paste to come (Stage 4).
 - **Re-planned with the user (2026-10-04), SPEC changed accordingly:** review is one mode, problem-first: jump to
   the next likely problem, correct, mark one bead, a selected run, or everything up to here as reviewed. The
   timed scroll "skim review" is dropped. The Colab aligner is **parked** (SPEC §3.2, §5): it returns only if a
   gold book scores below 0.95. A typical book is 1,000–5,000 sentences a side; performance targets are at 5,000
   beads. Order: Stage 4 → Stage 6 → Stage 7 (v0.2). Then the translator reviews *Contrefeu* in v0.2 for a true
   gold (the current one was made by the user, the developer), and maybe a second book, to score the aligner again.
-- `uv run pytest`: 388 passed, also on a fresh clone (tests read only committed synthetic fixtures; `-m library`
+- `uv run pytest`: 396 passed, also on a fresh clone (tests read only committed synthetic fixtures; `-m library`
   tests run only where `library/contrefeu.*.pdf` exists, and assert counts only).
-- `npm run type-check` passes; releases build with `npm run build`. `npm run test:e2e` (42 tests) runs on its own
+- `npm run type-check` passes; releases build with `npm run build`. `npm run test:e2e` (45 tests) runs on its own
   backend (:8001, throwaway `.e2e.db`) and Vite (:5174), never the user's database. Setup per machine: `npx
   playwright install chromium` (on Ubuntu 26.04 with `PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=ubuntu24.04-x64`); tests
   use the full Chromium headless (`channel: 'chromium'`).
@@ -430,6 +430,11 @@ Found in review of the task above (Pauli, 2026-10-04):
 ### Range exclude/include
 Status: done
 Report: 2026-10-04 — `blocks.py` bodies factored into `_exclude`/`_include`, new `exclude_range`/`include_range` (shared `_range_blocks`); `POST /blocks/exclude-range` and `/include-range` with `BookRangeRequest`; `client.ts` `excludeRange`/`includeRange`; "More" menu in the second bar (Esc, click outside, item; toggles against the import log; Esc order panel > import log > More > run); `BookStatus` says "R clears them all." when the run is all reviewed (`book` added to `Selection`; its test fails on the old code); 6 domain tests, 2 API tests, 3 e2e tests; pytest 396 passed, e2e 45 passed (book-layout at 1366 unchanged), type-check clean. "Nothing to exclude" is unreachable (a bead's own block is never excluded), so untested; the open import log covers the More button, so that toggle's test dispatches the click.
+Verified (Pauli, 2026-10-04): Done when holds (commit e52323b; pytest 396 here). Both deviations accepted. The
+overlap is real: the import log (top bar, right-aligned, 390 px) hangs over the second bar's right half and closes
+only by ×/Esc/its button; it gets click-outside closing in "Original text in the book screen". Range include
+placing restored blocks as one-sided beads ahead of a target-only bead is `include_block`'s rule, as specified;
+"Re-align range" is the repair.
 **Done when:** `uv run pytest` passes with the new domain and API tests; `npm run type-check` passes; `npm run
 test:e2e` passes with the new tests in `frontend/e2e/review.spec.ts`.
 
@@ -480,10 +485,70 @@ end". Agreed (user, 2026-10-04): one operation, one undo; range *include* skips 
   it must fail before the change.
 
 ### Original text and revert
-Not ready. SPEC §2: the extracted text is kept "so the translator can always compare or revert"; `original_text`
-is stored but not in the API. Show edited segments distinctly (A2: a dotted underline), their original on demand
-in a popover (A2), and "Restore original" (a text edit, undoable; also in the "More" menu). **No highlighting of
+SPEC §2: "The original extracted text is kept, so the translator can always compare or revert." `original_text`
+is stored (`db.py`, segments) and kept consistent by split and join (`domain/segments.py`: an unedited segment
+stays equal to its original through both), but the API never sends it. A2 of the design: edited sentences get a
+dotted underline, their original shows on demand in a popover, with "Restore original". **No highlighting of
 what changed** (user, 2026-10-04: it needs a diff/version history, out of scope): the original is shown whole.
+"Edited" means `text != original_text`, nothing else.
+
+#### Original text: API and restore
+Status: done
+Report: 2026-10-04 — `BookSegment.original` (null unless edited) filled by `_read_book`; `segments.restore_original` (kind `restore_original`, the two refusals); `POST /segments/{id}/restore`; `client.ts` `original` and `restoreOriginal`; 2 domain tests (the empty-original case made for real: edit, then a split whose cut maps to the end of the original), 1 API test; pytest 399 passed, e2e 45 passed, type-check clean.
+**Done when:** `uv run pytest` passes with the new tests below; `npm run type-check` passes; `npm run test:e2e`
+passes unchanged.
+
+- `models.py`: `BookSegment` gains `original: str | None`, the extracted text **only when it differs** from
+  `text`, else `None` (a 5,000-bead book must not carry every sentence twice). `api/books.py:_read_book` selects
+  `s.original_text` and fills it. Excluded blocks' segments don't change.
+- `domain/segments.py`: `restore_original(conn, project_id, segment_id) -> int`: sets `text = original_text` in one
+  `Recorder`, recorded as `restore_original` (one undo). DomainError "The sentence is not edited" when they are
+  equal; "The original of this sentence is empty" when `original_text.strip()` is empty (possible after a split
+  of an edited segment maps the cut to the end of the original). `original_text` itself never changes.
+- `api/books.py`: `POST /books/{id}/segments/{segment_id}/restore` through `_correct`. `client.ts`:
+  `BookSegment.original: string | null`, `booksApi.restoreOriginal(id, segmentId)`.
+- Tests: `tests/test_domain_segments.py` (or the module holding `edit_text`'s tests): edit then restore gives the
+  original back and one undo returns the edit; the two refusals change nothing and record no operation.
+  `tests/test_books_corrections_api.py`: a fresh book has `original: null` everywhere; after an edit that segment
+  has `original` = the old text and the others stay `null`; `restore` → `null` again; restore of an unedited
+  segment is 409.
+
+#### Original text in the book screen
+Status: todo
+**Done when:** `npm run type-check` passes; `npm run test:e2e` passes with the new tests below in
+`frontend/e2e/book-corrections.spec.ts` (each failing before the change, see Conventions) and
+`e2e/book-layout.spec.ts` still passing at 1366; `uv run pytest` unchanged; 20 ArrowDown on 10,000 beads not
+worse than ~1.2–1.3 s alone.
+
+- **Mark** (`BeadRow.vue`): a segment span with `seg.original !== null` gets `data-edited="true"` and a dotted
+  underline (`underline decoration-dotted decoration-muted underline-offset-[3px]`), drawn as text decoration, not
+  a border (the 2 px bottom border stays the current-segment marker). It changes only when the bead's data
+  changes, never on a move.
+- **Popover** (A2): new `frontend/src/components/OriginalPopover.vue`, rendered by `BookView` and reading its
+  state by injection (render rule 1: `BookView`'s template must not read it). State: `showOriginal:
+  Ref<boolean>` in `BookView`, provided with a new `originalKey` in `selection.ts`. When open and the current
+  segment is edited, the popover is `position: fixed`, 360 px wide, placed under the current segment's span
+  (`document.querySelector('[data-segment-id="…"]').getBoundingClientRect()`, flipped above it if it would leave
+  the viewport), white, `border-bar-rule`, rounded, shadow, `data-testid="original-popover"`. Content: heading
+  "Original" (10.5 px uppercase faint), the original in `font-text` 15 px, then a "Restore original" button
+  (`data-testid="restore-original"`) and a close ×. It closes on Esc, on ×, after a restore, and whenever the
+  current segment changes (a `watch` on `currentSegmentId` in `BookView`).
+- **Key `o`** (`SHORTCUTS`, group "Corrections", label "Show the original sentence", `display: ['O']`): toggles
+  the popover for the current segment; on an unedited one, `say('This sentence is not edited')` and nothing
+  opens. **Restore** has no key: the popover's button and a "More" menu item "Restore the original sentence"
+  (`data-testid="restore-original-more"`, under a second heading "Text" after the four bulk items, disabled
+  unless the current segment is edited). Both call `correct(… restoreOriginal …)` and then `say('Original
+  restored (Ctrl+Z to undo)')`.
+- **Esc precedence** in `onKey`: shortcuts panel, import log, More, original popover, run. The popover, the
+  import log and More are mutually exclusive: opening one closes the others.
+- **Import log click-outside** (left over from "Range exclude/include"): a mousedown outside the import log's
+  button and panel closes it, in the same `onWindowMouseDown` as More.
+- Tests (`book-corrections.spec.ts`, its own book): Enter, type a change, Enter → the span has
+  `data-edited="true"`, other spans don't; `o` opens the popover showing the old text; "Restore original" puts the
+  old text back, removes `data-edited`, closes the popover, and Ctrl+Z brings the edit back; `o` on an unedited
+  sentence shows "This sentence is not edited" and no popover; with the popover open, ↓ closes it; the More item
+  restores too. `book-layout.spec.ts`: with the import log open, a click on the list closes it.
+- Don't change the editing flow (Enter / Ctrl+Enter / Esc in the editor) or any existing key.
 
 ### Re-align range
 Not ready. SPEC §3.3: select a stretch between two trusted beads and re-run the local aligner on just that stretch

@@ -22,7 +22,7 @@ from tradurre.domain.beads import merge_with_next, move_first_to_previous, move_
 from tradurre.domain.blocks import exclude_block, exclude_range, include_block, include_range
 from tradurre.domain.history import transaction
 from tradurre.domain.invariants import check_project
-from tradurre.domain.segments import edit_text, join_with_next, split_segment
+from tradurre.domain.segments import edit_text, join_with_next, restore_original, split_segment
 from tradurre.models import (
     BookEditRequest,
     BookImportResponse,
@@ -218,7 +218,8 @@ def _read_book(db: sqlite3.Connection, book_id: str) -> dict:
     last_bead: dict[str, int | None] = {"source": None, "target": None}
     rows = db.execute(
         """
-        SELECT d.side, b.id AS block_id, b.kind, b.excluded, b.page, s.id AS segment_id, s.text, s.bead_id
+        SELECT d.side, b.id AS block_id, b.kind, b.excluded, b.page, s.id AS segment_id, s.text, s.original_text,
+               s.bead_id
         FROM segments s
         JOIN blocks b ON b.id = s.block_id
         JOIN documents d ON d.id = b.document_id
@@ -236,7 +237,8 @@ def _read_book(db: sqlite3.Connection, book_id: str) -> dict:
             excluded[-1]["segments"].append({"segment_id": r["segment_id"], "text": r["text"]})
         else:
             beads[r["bead_id"]][side].append({"segment_id": r["segment_id"], "block_id": r["block_id"],
-                                              "block_kind": r["kind"], "text": r["text"]})
+                                              "block_kind": r["kind"], "text": r["text"],
+                                              "original": None if r["original_text"] == r["text"] else r["original_text"]})
             last_bead[side] = r["bead_id"]
     undone = {r[0] for r in db.execute("SELECT DISTINCT undone FROM operations WHERE project_id = ?", (book_id,))}
     return {**book, "beads": list(beads.values()), "excluded": excluded,
@@ -332,6 +334,11 @@ def split_text(book_id: str, segment_id: int, body: BookSplitSegmentRequest, db:
 @router.post("/books/{book_id}/segments/{segment_id}/join-next", response_model=BookResponse)
 def join_next(book_id: str, segment_id: int, db: sqlite3.Connection = Depends(get_db)):
     return _correct(db, book_id, lambda: join_with_next(db, book_id, segment_id))
+
+
+@router.post("/books/{book_id}/segments/{segment_id}/restore", response_model=BookResponse)
+def restore(book_id: str, segment_id: int, db: sqlite3.Connection = Depends(get_db)):
+    return _correct(db, book_id, lambda: restore_original(db, book_id, segment_id))
 
 
 @router.post("/books/{book_id}/blocks/{block_id}/exclude", response_model=BookResponse)

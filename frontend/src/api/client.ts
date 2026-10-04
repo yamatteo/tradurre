@@ -230,6 +230,8 @@ export interface BookSegment {
   block_id: number
   block_kind: string
   text: string
+  /** The extracted text, only when it differs from `text` (the sentence is edited); else null. */
+  original: string | null
 }
 
 export interface BookBead {
@@ -328,6 +330,9 @@ export const booksApi = {
     booksPost(`/books/${id}/segments/${segmentId}/split`, { offset }),
 
   joinNext: (id: string, segmentId: number) => booksPost(`/books/${id}/segments/${segmentId}/join-next`),
+
+  /** Put the segment's original extracted text back. */
+  restoreOriginal: (id: string, segmentId: number) => booksPost(`/books/${id}/segments/${segmentId}/restore`),
 
   undo: (id: string) => booksPost(`/books/${id}/undo`),
 

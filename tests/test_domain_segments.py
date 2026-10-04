@@ -7,7 +7,7 @@ from tradurre.domain import DomainError
 from tradurre.domain.history import redo, transaction, undo
 from tradurre.domain.invariants import check_project
 from tradurre.domain.layer import NewBead, NewBlock, append_beads, create_document
-from tradurre.domain.segments import _map_offset, edit_text, join_with_next, split_segment
+from tradurre.domain.segments import _map_offset, edit_text, join_with_next, restore_original, split_segment
 
 
 def snapshot(conn):
@@ -201,3 +201,34 @@ def test_join_refused(db):
     refused(conn, join_with_next, i["other"])
     refused(conn, edit_text, i["other"], "Z.")
     refused(conn, split_segment, i["other"], 1)
+
+
+def test_restore_original(db):
+    conn, i = db
+    with transaction(conn):
+        edit_text(conn, "p1", i["s1"], "Il partit!")
+    ops = _op_count(conn)
+    run(conn, restore_original, i["s1"])
+    assert _op_count(conn) == ops + 1
+    assert seg(conn, i["s1"]) == ("Il partit.", "Il partit.", i["A"])
+    with transaction(conn):
+        undo(conn, "p1")  # one undo brings the edit back
+    assert seg(conn, i["s1"]) == ("Il partit!", "Il partit.", i["A"])
+
+
+def test_restore_refused(db):
+    conn, i = db
+    with pytest.raises(DomainError, match="The sentence is not edited"):
+        with transaction(conn):
+            restore_original(conn, "p1", i["s1"])
+    refused(conn, restore_original, i["s1"])
+    with transaction(conn):
+        edit_text(conn, "p1", i["s1"], "Il partit. Encore.")
+    with transaction(conn):
+        new = split_segment(conn, "p1", i["s1"], 11)  # the cut maps to the end of the original
+    assert seg(conn, new) == ("Encore.", "", i["A"])
+    with pytest.raises(DomainError, match="The original of this sentence is empty"):
+        with transaction(conn):
+            restore_original(conn, "p1", new)
+    refused(conn, restore_original, new)
+    refused(conn, restore_original, i["other"])

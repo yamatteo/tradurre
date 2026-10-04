@@ -202,6 +202,7 @@ class BookSegment(BaseModel):
     block_id: int
     block_kind: str
     text: str
+    original: str | None  # the extracted text, only when it differs from `text` (the sentence is edited)
 
 
 class BookBead(BaseModel):

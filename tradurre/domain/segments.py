@@ -39,6 +39,18 @@ def edit_text(conn: sqlite3.Connection, project_id: str, segment_id: int, text: 
     return record(conn, project_id, "edit_text", rec)
 
 
+def restore_original(conn: sqlite3.Connection, project_id: str, segment_id: int) -> int:
+    """Put the segment's original extracted text back (SPEC §2: "can always compare or revert")."""
+    seg = _segment(conn, project_id, segment_id)
+    if seg["text"] == seg["original_text"]:
+        raise DomainError("The sentence is not edited")
+    if not seg["original_text"].strip():
+        raise DomainError("The original of this sentence is empty")
+    rec = Recorder(conn)
+    rec.update("segments", segment_id, text=seg["original_text"])
+    return record(conn, project_id, "restore_original", rec)
+
+
 def _map_offset(text: str, original: str, offset: int) -> int:
     """Map an offset in `text` to the corresponding offset in `original`."""
     for tag, i1, i2, j1, _ in SequenceMatcher(None, text, original, autojunk=False).get_opcodes():

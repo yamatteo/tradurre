@@ -205,6 +205,24 @@ def test_range_refusals(client, gap):
     assert client.get(f"/api/v2/books/{book_id}").json() == data
 
 
+def _originals(book):
+    return [s["original"] for b in book["beads"] for side in ("source", "target") for s in b[side]]
+
+
+def test_original_and_restore(client, book):
+    book_id, data = book
+    assert set(_originals(data)) == {None}
+    seg = _segment(data, "Il pleuvait.")["segment_id"]
+    result = _ok(client, book_id, f"segments/{seg}/edit", {"text": "Il neigeait."})
+    assert _segment(result, "Il neigeait.")["original"] == "Il pleuvait."
+    assert _originals(result).count(None) == len(_originals(result)) - 1
+    result = _ok(client, book_id, f"segments/{seg}/restore")
+    assert _segment(result, "Il pleuvait.")["original"] is None
+    assert set(_originals(result)) == {None}
+    resp = _post(client, book_id, f"segments/{seg}/restore")
+    assert (resp.status_code, resp.json()["detail"]) == (409, "The sentence is not edited")
+
+
 def test_undo_redo_round_trip(client, book):
     book_id, data = book
     seg = _segment(data, "Il pleuvait.")["segment_id"]
