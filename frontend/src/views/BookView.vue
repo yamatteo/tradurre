@@ -4,6 +4,7 @@ import { booksApi, type Book, type BookBead, type BookExcludedBlock, type BookRu
 import BeadActions, { type Correction } from '@/components/BeadActions.vue'
 import BeadRow from '@/components/BeadRow.vue'
 import { selectionKey } from '@/selection'
+import { isProblem } from '@/review'
 
 const props = defineProps<{ id: string }>()
 
@@ -12,6 +13,8 @@ const book = shallowRef<Book | null>(null)
 const error = ref('')
 const status = ref('')
 const showExcluded = ref(false)
+// "Highlight multi-segment": beads with more than one segment on a side count as problems too.
+const showMulti = ref(false)
 // The latest import run (SPEC §3.1.5): fetched once on mount; corrections don't change it.
 const importRun = shallowRef<BookRun | null>(null)
 const showImportLog = ref(false)
@@ -33,6 +36,7 @@ watch(currentBeadId, (id, old) => {
 provide(selectionKey, { currentRow, currentBeadId, currentSide, currentSegmentId, editingSegmentId })
 
 const reviewedCount = computed(() => book.value?.beads.filter((b) => b.reviewed).length ?? 0)
+const problemCount = computed(() => book.value?.beads.filter((b) => isProblem(b, showMulti.value)).length ?? 0)
 const beadIndex = computed(() => new Map(book.value?.beads.map((b, i) => [b.id, i]) ?? []))
 const currentBead = computed<BookBead | null>(() => {
   const i = currentBeadId.value === null ? undefined : beadIndex.value.get(currentBeadId.value)
@@ -112,6 +116,21 @@ function nextUnreviewed() {
     }
   }
   say('Every bead is reviewed')
+}
+
+/** Jump to the next (delta 1) or previous (delta -1) problem bead, wrapping around like `n`. */
+function nextProblem(delta: 1 | -1) {
+  const beads = book.value?.beads
+  if (!beads?.length) return
+  const start = currentBeadId.value === null ? (delta > 0 ? -1 : 0) : beadIndex.value.get(currentBeadId.value)!
+  for (let k = 1; k <= beads.length; k++) {
+    const bead = beads[(((start + delta * k) % beads.length) + beads.length) % beads.length]!
+    if (isProblem(bead, showMulti.value)) {
+      select(bead.id, currentSide.value, null)
+      return
+    }
+  }
+  say('No problems left')
 }
 
 /** Reuse the old objects for unchanged beads and excluded blocks, so only changed rows re-render. */
@@ -270,6 +289,8 @@ function onKey(event: KeyboardEvent) {
     ArrowRight: () => currentBead.value && select(currentBead.value.id, 'target', null),
     Tab: () => moveSegment(event.shiftKey ? -1 : 1),
     n: nextUnreviewed,
+    p: () => nextProblem(1),
+    P: () => nextProblem(-1),
     m: () => runCorrection('merge'),
     s: () => runCorrection('split'),
     r: () => runCorrection('reviewed'),
@@ -343,10 +364,19 @@ onBeforeUnmount(() => {
               class="px-2 py-1 border rounded bg-white hover:bg-gray-100">
               {{ importLogLabel }}
             </button>
+            <button type="button" data-testid="next-problem" title="P" @click="nextProblem(1)"
+              class="px-2 py-1 border border-gray-300 rounded bg-white hover:bg-gray-100">
+              Next problem
+            </button>
             <label class="flex items-center gap-1 cursor-pointer">
               <input v-model="showExcluded" type="checkbox" data-testid="show-excluded" />
               Show excluded
             </label>
+            <label class="flex items-center gap-1 cursor-pointer">
+              <input v-model="showMulti" type="checkbox" data-testid="show-multi" />
+              Highlight multi-segment
+            </label>
+            <p data-testid="problem-count">problems {{ problemCount }}</p>
             <p data-testid="book-progress">reviewed {{ reviewedCount }} / {{ book.beads.length }}</p>
           </div>
         </div>
@@ -365,7 +395,7 @@ onBeforeUnmount(() => {
 
       <div class="bg-white border border-gray-200 rounded-lg divide-y divide-gray-100">
         <template v-for="item in items" :key="item.type === 'bead' ? `b${item.bead.id}` : `x${item.block.block_id}`">
-          <BeadRow v-if="item.type === 'bead'" :bead="item.bead"
+          <BeadRow v-if="item.type === 'bead'" :bead="item.bead" :multi="showMulti"
             @select="select" @edit="editSegment" @save="saveEdit" @cancel="cancelEdit"
             @split="splitEdit" />
           <div v-else :data-excluded-block-id="item.block.block_id" data-testid="excluded-row"

@@ -5,14 +5,16 @@
 import { computed, inject, watch } from 'vue'
 import type { BookBead, BookSegment, Side } from '@/api/client'
 import { selectionKey } from '@/selection'
+import { isProblem } from '@/review'
 
-const props = defineProps<{ bead: BookBead }>()
+const props = defineProps<{ bead: BookBead; multi: boolean }>()
 
 const selection = inject(selectionKey)!
 const current = computed(() => selection.currentRow[props.bead.id] === true)
 const currentSide = computed<Side | null>(() => (current.value ? selection.currentSide.value : null))
 const currentSegmentId = computed(() => (current.value ? selection.currentSegmentId.value : null))
 const editingSegmentId = computed(() => (current.value ? selection.editingSegmentId.value : null))
+const problem = computed(() => isProblem(props.bead, props.multi))
 
 const emit = defineEmits<{
   select: [beadId: number, side: Side, segmentId: number | null]
@@ -87,9 +89,9 @@ const cells = computed(() =>
 
 <template>
   <div :data-bead-id="bead.id" :data-current="current" :data-side="current ? currentSide : undefined"
-    :data-reviewed="bead.reviewed" data-testid="bead-row"
-    class="grid grid-cols-2 gap-4 px-4 py-2 text-sm border-l-4"
-    :class="[bead.reviewed ? 'border-green-500' : 'border-transparent', current ? 'outline outline-2 outline-blue-400 -outline-offset-2' : '']">
+    :data-reviewed="bead.reviewed" :data-problem="problem" data-testid="bead-row"
+    class="relative grid grid-cols-2 gap-4 px-4 py-2 text-sm border-l-4"
+    :class="[bead.reviewed ? 'border-green-500' : problem ? 'border-amber-400' : 'border-transparent', current ? 'outline outline-2 outline-blue-400 -outline-offset-2' : '']">
     <div v-for="cell in cells" :key="cell.side" :data-cell="cell.side"
       class="rounded px-1 cursor-text min-h-[1.5em]"
       :class="[
@@ -113,5 +115,10 @@ const cells = computed(() =>
         </template>
       </div>
     </div>
+    <!-- Absolutely positioned: reviewing a bead removes the badge without changing the row's height. -->
+    <span v-if="problem" data-testid="problem-badge"
+      class="absolute top-0 right-1 text-xs text-amber-700 pointer-events-none">
+      {{ bead.source.length }}:{{ bead.target.length }} · {{ bead.confidence.toFixed(2) }}
+    </span>
   </div>
 </template>
