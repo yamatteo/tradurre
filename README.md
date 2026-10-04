@@ -75,6 +75,13 @@ Notes:
 - The heavy alignment pipeline (`align` extra, `tradurre-align`) needs a GPU. Run it on e.g. Google Colab and
   import the resulting JSON in your local Tradurre.
 
+## Backups
+
+Each time it starts, Tradurre copies its database into `~/.tradurre/backups/` (on Windows:
+`%USERPROFILE%\.tradurre\backups`), keeping the last 10 copies, named by date and time. To go back to one, close
+Tradurre and copy it over `~/.tradurre/tradurre.db`. These copies are on the same disk: to protect your work against
+losing the computer, also copy `tradurre.db` (or download a book's bundle) somewhere else.
+
 ## Development
 
 You need [Git](https://git-scm.com/), [uv](https://docs.astral.sh/uv/) and [Node.js](https://nodejs.org/) 22+.

@@ -1,3 +1,4 @@
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -6,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from tradurre.backup import snapshot
 from tradurre.config import DB_PATH
 from tradurre.db import get_connection, init_db
 
@@ -16,6 +18,10 @@ FRONTEND_DIR = Path(__file__).parent / "static"
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    # Before init_db, so a migration that goes wrong can be undone from this snapshot. `--dev` takes none: its
+    # auto-reloads would rotate the real snapshots out.
+    if not os.environ.get("TRADURRE_DEV"):
+        snapshot(DB_PATH)
     conn = get_connection(DB_PATH)
     try:
         init_db(conn)

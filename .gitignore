@@ -9,3 +9,4 @@ colab_cell_blueprint.py
 library
 tradurre/static/
 .e2e.db*
+/backups/

@@ -1,4 +1,5 @@
 import argparse
+import os
 import socket
 import threading
 import time
@@ -59,6 +60,9 @@ def main():
         if not args.no_browser:
             threading.Thread(target=_open_browser_when_ready, args=(url, HOST, args.port), daemon=True).start()
 
+    if args.dev:
+        # The reload worker inherits it; the app then takes no database snapshots.
+        os.environ["TRADURRE_DEV"] = "1"
     uvicorn.run("tradurre.app:app", host=HOST, port=args.port, reload=args.dev)
 
 

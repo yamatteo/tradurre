@@ -34,8 +34,8 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
   here", range exclude/include in the "More" menu, edited sentences marked with their original on `o` and
   "Restore original", re-align of the selection (More menu), cut/copy/paste of whole sentences (Ctrl+X/C/V).
   Restyled to design variant A; smooth at 5,000 beads. Stages 4 and 6 done (search at `/search` and from the book; More → Export: edition .txt/.docx and the
-  project bundle; "Restore a bundle" on the library page). Stage 7: search grouped by book done; next the
-  library order fix, database snapshots, retire v1, a Windows checklist, then the v0.2 tag. On the reference book the problem flags catch
+  project bundle; "Restore a bundle" on the library page). Stage 7: search grouped by book and the library order
+  done; next database snapshots, retire v1, a Windows checklist, then the v0.2 tag. On the reference book the problem flags catch
   none of the 15 real errors: review is reading-first; better signals come after v0.2.
 - **Re-planned with the user (2026-10-04), SPEC changed accordingly:** review is one mode, problem-first: jump to
   the next likely problem, correct, mark one bead, a selected run, or everything up to here as reviewed. The
@@ -43,7 +43,7 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
   gold book scores below 0.95. A typical book is 1,000–5,000 sentences a side; performance targets are at 5,000
   beads. Order: Stage 6 → Stage 7 (v0.2), confirmed 2026-10-04. Then the translator reviews *Contrefeu* in v0.2 for a true
   gold (the current one was made by the user, the developer), and maybe a second book, to score the aligner again.
-- `uv run pytest`: 438 passed, also on a fresh clone (tests read only committed synthetic fixtures; `-m library`
+- `uv run pytest`: 439 passed, also on a fresh clone (tests read only committed synthetic fixtures; `-m library`
   tests run only where `library/contrefeu.*.pdf` exists, and assert counts only).
 - `npm run type-check` passes; releases build with `npm run build`. `npm run test:e2e` (70 tests; the three timing tests run last, alone, in project `scale`) runs on its own
   backend (:8001, throwaway `.e2e.db`) and Vite (:5174), never the user's database. Setup per machine: `npx
@@ -236,10 +236,11 @@ worked on first").
 Report: 2026-10-04 — `BOOK_ORDER` (updated_at DESC, title) shared by `GET /books` and the search; a restored bundle's `updated_at` is now, `created_at` kept; 3 new/changed tests, each failing on the old code; pytest 439, e2e 70.
 
 ### Database snapshots at start
-Status: todo
+Status: done
 **Done when:** `uv run pytest` passes with the new `tests/test_backup.py`; `npm run test:e2e` passes (its fresh
-database means no snapshot); starting `uv run tradurre --dev` twice on an existing database leaves two files in
-`~/.tradurre/backups/` (report their names and sizes).
+database means no snapshot). By hand, on a copy of a database in the scratchpad (`TRADURRE_DB=<copy>`): starting
+`uv run tradurre --no-browser` twice (stop it with Ctrl+C or a timeout) leaves two files in `backups/` next to the
+copy (report their names and sizes); starting `uv run tradurre --dev` adds none.
 
 SPEC §4 "Never lose work" (user, 2026-10-04). Protects against an app bug, a bad migration or a bad correction;
 not against losing the disk (the bundle and copying the file do that).
@@ -247,22 +248,28 @@ not against losing the disk (the bundle and copying the file do that).
   No file at `db_path` → None, nothing created. Otherwise copy it with the SQLite backup API
   (`sqlite3.connect(src).backup(dst)`, consistent under WAL) to `db_path.parent / "backups" /
   f"{db_path.stem}-{now:%Y%m%d-%H%M%S}.db"` (`now` defaults to UTC now; if that name exists, append `-2`, `-3`…),
-  then delete the oldest `"{stem}-*.db"` files in that folder beyond `keep` (sorted by name). Any `OSError` or
+  then delete the oldest `"{stem}-*.db"` files in that folder beyond `keep`, sorted by `Path.stem` (not the
+  full name: `"…-120000-2.db"` sorts before `"…-120000.db"`, but its stem sorts after). Any `OSError` or
   `sqlite3.Error` → print one line "Tradurre: database snapshot failed: <error>" and return None: a failed
   snapshot never stops the app.
 - `app.py` lifespan: `snapshot(DB_PATH)` **before** `init_db`, so a migration that goes wrong can be undone from
-  the snapshot taken just before it.
+  the snapshot taken just before it; skipped when the environment has `TRADURRE_DEV=1` (read at startup with
+  `os.environ.get`, not at import).
+- `--dev` takes no snapshots (user, 2026-10-04: every auto-reload re-runs the lifespan and would rotate the
+  developer's real snapshots out). `__main__.py`: when `args.dev`, set `os.environ["TRADURRE_DEV"] = "1"` before
+  `uvicorn.run`; the reload worker inherits it. End-user mode and the e2e server (plain `uvicorn`) don't set it.
 - `README.md`: a short "Backups" paragraph: where the snapshots are, how many, and that restoring one means
   closing Tradurre and copying it over `tradurre.db`.
 - `tests/test_backup.py`: no database → None and no `backups` folder; a database with a project row → the
   snapshot opens and holds the row; 12 snapshots with increasing `now` → the 10 newest names remain; two in the
   same second → two files; `backups` existing as a plain file → None, no exception; the app's startup on an
   existing database makes a snapshot (`TestClient(app)` with `DB_PATH` monkeypatched, as the API tests do; also
-  monkeypatch `tradurre.app.DB_PATH`, which `app.py` imported by name).
+  monkeypatch `tradurre.app.DB_PATH`, which `app.py` imported by name), and none with
+  `monkeypatch.setenv("TRADURRE_DEV", "1")`; sorting by stem: `-2` in the same second survives over the plain name
+  when `keep` cuts between them.
 - `.gitignore`: add `/backups/`. `TRADURRE_DB=./x.db` (a developer's throwaway database) puts the snapshots next
   to it, in the repo root; they hold book text and must never be committed.
-- Expected, not a bug: with `--dev`, every auto-reload re-runs the lifespan and takes a snapshot, so a session of
-  edits rotates the developer's older snapshots out. End-user mode never reloads. Don't add logic for it.
+Report: 2026-10-04 — `tradurre/backup.py` `snapshot` (backup API, keep 10 by stem, failures print and return None), called before `init_db` unless `TRADURRE_DEV` (set by `--dev`); README "Backups", `/backups/` ignored; manual: two `--no-browser` starts on a scratch copy → `t-20261004-182031.db`, `t-20261004-182039.db`, 143,360 bytes each, `--dev` (reached startup) added none; pytest 447 (8 new), e2e 70.
 
 ### Retire the old model
 Not ready (broken down after the two tasks above). Remove the `pairs` table (a migration dropping it, no export:
