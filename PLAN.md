@@ -734,8 +734,8 @@ SPEC §3.3: cut, copy and paste "as usual". Frontend only, `BookView.vue` (and t
   equals that selection's `toString()` and the status is not "Sentence copied".
 
 ### Scale check at 5,000 beads
-Status: done
-Report: 2026-10-04 — new e2e test "a 5,000-bead book: load, corrections and scrolling" in `book-view.spec.ts`, no app change; three runs: load 1515/1541/1535 ms, Alt+↓ 381/391/389, Ctrl+Z 299/305/304, m 191/199/195, Ctrl+Z 191/190/191 ms, scroll 0 long tasks in each (the wheel scrolls ~30,000 px; a 150 ms task injected through `setTimeout` is caught and fails the test, so the check is live); e2e 61 passed, pytest 404 passed, type-check clean.
+Status: blocked
+Report: 2026-10-04 — new e2e test "a 5,000-bead book: load, corrections and scrolling" in `book-view.spec.ts`, no app change. Alone (three runs): load 1515/1541/1535 ms, Alt+↓ 381/391/389, Ctrl+Z 299/305/304, m 191/199/195, Ctrl+Z 191/190/191 ms, scroll 0 long tasks (the wheel scrolls ~30,000 px; a 150 ms task injected through `setTimeout` is caught and fails the test, so the check is live). Blocked: in the full `npm run test:e2e` (default parallel workers, one shared backend) it fails in 3 of 3 runs: Alt+↓ 1466/1338/1375 ms, the first Ctrl+Z 466/580 ms, while the 10,000-bead tests import on the same server; with `--workers=1` all 61 pass (Alt+↓ 419 ms). Commit 80b097a first recorded this task as done with e2e 61 passed: wrong, corrected here. Decision needed: how to isolate the timing test (e.g. serial, its own project, or measured apart from the suite).
 **Done when:** the new test below passes three runs in a row (report each run's numbers); `npm run type-check`
 passes; the rest of `npm run test:e2e` and `uv run pytest` unchanged.
 
