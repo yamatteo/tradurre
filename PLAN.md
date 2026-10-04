@@ -28,8 +28,8 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
   alignment F1 0.995, exclusion P 1.000 R 0.902.
 - **Book screen** (Stages 2, 4): reading and keyboard navigation, `n` next unreviewed, `r` reviewed, "Show
   excluded", every SPEC §3.3 single-bead correction (keys and header buttons), inline segment editing, persistent
-  undo/redo, problem navigation (`p`/`P`). Being restyled to design variant A: frame, fonts and rows done; the two
-  bars, shortcuts panel, runs, ranges, original text and re-align to come (Stage 4).
+  undo/redo, problem navigation (`p`/`P`). Being restyled to design variant A: frame, fonts, rows and both bars done;
+  the shortcuts panel, runs, ranges, original text and re-align to come (Stage 4).
 - **Re-planned with the user (2026-10-04), SPEC changed accordingly:** review is one mode, problem-first: jump to
   the next likely problem, correct, mark one bead, a selected run, or everything up to here as reviewed. The
   timed scroll "skim review" is dropped. The Colab aligner is **parked** (SPEC §3.2, §5): it returns only if a
@@ -125,7 +125,9 @@ Decisions carried into this stage:
   such state is shown by a small child component that injects it (`BeadActions`, `BookPosition`), else every
   arrow key re-diffs all rows (it cost +1 s per 20 moves on 10,000 beads); (2) state changes inside a row are
   paint-only: recolour what is always there (a border, a mark), never add a background, border or shadow to an
-  inline element, nor change text outside a size-contained box, since either lays out the whole list again.
+  inline element, nor change text outside a size-contained box, since either lays out the whole list again;
+  (3) no font may load after the list has rendered (a late font relays out every row at once, ~0.5 s on 10,000):
+  hence the `latin` subsets only, and any new face or weight is imported in `main.ts` and used from the start.
 
 ### Problem navigation
 Status: done
@@ -243,6 +245,11 @@ frontend/src tradurre/static` finds nothing; the `Report:` names a screenshot of
 #### Layout: toolbars and import log
 Status: done
 Report: 2026-10-04 — A1's top bar (progress track, Import log button with pill and a 390 px popover closed by ×/Esc/its button) and second bar (problem navigation, Next unreviewed, review group, corrections with new Edit/Join actions, Undo/Redo icons), `BeadActions` split into `group` review/corrections, status message in new `BookStatus.vue` via `statusKey`; fonts latin subset only (latin-ext dropped: its per-subset files have no unicode-range and load late, a 0.5 s full relayout); new `e2e/book-layout.spec.ts`; e2e text changes as listed plus the import-log button text (`Import log 1`); pytest 391 passed, e2e 34 passed, type-check and build clean; 16 font files; screenshot `scratchpad/layout-bars-1366.png`; 20 ArrowDown on 10,000 beads 1.17–1.30 s alone (HEAD 1.22–1.39 s).
+Verified (Pauli, 2026-10-04): Done when holds (commit fd12249). Both deviations accepted: latin-ext dropped on
+measured evidence (latin covers French and Italian; rarer letters fall back to a system font, acceptable; recorded
+as render rule 3); the import-log button text follows the design. Measured from the screenshot, the second bar has
+~270 px free at 1366 between "Exclude" and Undo; "Up to here" and "More" need ~200: tight, so the run and range
+tasks carry a fallback.
 **Done when:** `npm run type-check` and `npm run test:e2e` pass (with the text changes listed below); a new e2e
 test at viewport 1366 × 768 checks that neither bar overflows (`scrollWidth <= clientWidth`) and that the bars are
 40 and 38 px high; the `Report:` names a screenshot at 1366 × 768 (scratchpad) with the import log open, the
@@ -281,23 +288,33 @@ The header becomes A1's two bars.
   need nothing else, and the wheel loses ~70 files.
 
 #### Layout: shortcuts panel
-Status: todo
+Status: done
+Report: 2026-10-04 — `keys.ts` (`SHORTCUTS`, 22 entries, `KeyedId`) drives BookView's plain-key map through `handlers: Record<KeyedId, …>`; new `KeysPanel.vue` (A4 modal, two columns) opened by `h` and a Keys button, closed by Esc/Close/scrim, keys ignored while open; import log date formatted; new e2e test in `book-layout.spec.ts`; pytest 391 passed, e2e 35 passed, type-check and build clean; screenshot `scratchpad/layout-keys-1366.png`; 20 ArrowDown on 10,000 beads 1.20–1.24 s alone.
 **Done when:** `npm run type-check` and `npm run test:e2e` pass with a new test: `h` opens the panel, it lists
 every entry of `SHORTCUTS`, Esc closes it, and the "Keys" button opens it too; while it is open, bead keys do
 nothing.
 
-- New `frontend/src/keys.ts`: `SHORTCUTS: { id: ShortcutId; group: 'Move around' | 'Review' | 'Corrections' |
-  'Editing a sentence' | 'History'; label: string; display: string[]; key?: string }[]` with every key the book
-  screen handles (A4's list, plus the correction keys). `key` is the `event.key` matched by the plain-key handler
-  (letters, Shift+letters as upper case, arrows, Tab, Enter); entries for Alt/Ctrl combinations and editor keys have
-  no `key` and stay handled where they are.
-- `BookView.vue` builds its plain-key `actions` map from `SHORTCUTS` entries with a `key` and a `handlers:
-  Record<ShortcutId, () => void>`, so the compiler refuses a shortcut without a handler.
+- New `frontend/src/keys.ts`: `interface Shortcut { id: string; group: 'Move around' | 'Review' | 'Corrections' |
+  'Editing a sentence' | 'History'; label: string; display: string[]; key?: string }` and `SHORTCUTS = [...] as
+  const satisfies readonly Shortcut[]`, with every key the book screen handles (A4's list, plus the correction
+  keys), one entry per `key`: e.g. "Previous bead" `↑` (`ArrowUp`) and "Next bead" `↓` (`ArrowDown`) are two
+  entries; "Next / previous sentence" `Tab`, `Shift+Tab` is one entry (`key: 'Tab'`, its handler reads
+  `event.shiftKey`). `key` is the `event.key` matched by the plain-key handler (letters, Shift+letters as upper
+  case, arrows, Tab, Enter). Entries for Alt/Ctrl combinations and for keys inside the editor (Esc, Ctrl+Enter,
+  Enter to save) have no `key` and stay handled where they are now.
+- Export `type KeyedId = Extract<(typeof SHORTCUTS)[number], { key: string }>['id']`. `BookView.vue` builds its
+  plain-key `actions` map from the entries with a `key` and a `handlers: Record<KeyedId, (event: KeyboardEvent) =>
+  void>`, so the compiler refuses a keyed shortcut without a handler (and a handler without a shortcut).
+- While the panel is open, `onKey` handles only Esc (closes it; it takes precedence over closing the import log)
+  and ignores every other key, Ctrl+Z/Y included.
 - The panel (A4): a modal dialog (`role="dialog"`, `aria-labelledby`, `data-testid="keys-panel"`) on a scrim,
   "Keyboard shortcuts", "Open this list any time with H or the Keys button.", Close (Esc); groups in two columns,
   each row the label and its key chips. Opened by `h` and by a "Keys" button with an `H` chip at the right end of
   the top bar (`data-testid="keys"`); closed by Esc, Close or a click on the scrim.
 - `h` is in `SHORTCUTS` as "Show this list", the last entry of Move around.
+- Small fix from the previous task: the import log shows its date formatted, `Imported 4 Oct 2026, 13:02 with
+  Tradurre 0.1.0` (`new Date(created_at).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })`),
+  not the raw ISO timestamp.
 
 ### Reviewed runs and "up to here"
 Status: todo
@@ -324,7 +341,10 @@ the top of the book to the current one. The skim review is gone from SPEC, so it
 - `R` (Shift+r, `event.key === 'R'`): mark every bead from the first to the current one reviewed (one request
   with the ids of the unreviewed ones among them; nothing to do → `say('Already reviewed up to here')`); the
   status line says `Reviewed up to here (N beads)`. A button "Up to here" with a `Shift+R` chip in the second
-  bar's review group, after "Reviewed" (`data-testid="reviewed-up-to-here"`), does the same.
+  bar's review group, after "Reviewed" (`data-testid="reviewed-up-to-here"`), does the same. If the second bar
+  then overflows at 1366 (`e2e/book-layout.spec.ts` fails), hide the key chips of the corrections group below
+  1440 px wide (`max-[1439px]:hidden` on their `<kbd>`; the keys stay in the titles and the shortcuts panel), and
+  nothing else.
 - Run style (A1): run rows on the run colour with a 3 px accent bar at their left edge; while a run is selected the
   bottom bar's message reads `{k} beads selected ({first}–{last}). R marks them all reviewed.`; Esc clears the
   run. Add the run keys to `SHORTCUTS` (Review group: "Extend the selection" `Shift+↑ ↓`, "Select up to a bead"
@@ -365,6 +385,8 @@ end". Agreed (user, 2026-10-04): one operation, one undo; range *include* skips 
   uppercase faint), four items "Exclude from the start up to here", "Include from the start up to here", "Exclude
   from here to the end", "Include from here to the end" (`data-testid="exclude-to-start"`, `include-to-start`,
   `exclude-to-end`, `include-to-end`), 30 px rows; closed by Esc, a click outside or choosing an item. No keys.
+  `e2e/book-layout.spec.ts` must still pass at 1366; if "More" makes the second bar overflow, apply the chip
+  fallback of "Reviewed runs" (if not applied yet), and nothing else.
   They act on the current bead and side; after
   success `say('Excluded N blocks (Ctrl+Z to undo)')` / `Included N blocks`, N = the difference in the book's
   excluded-block count.

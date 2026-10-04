@@ -5,6 +5,8 @@ import BeadActions, { type Correction } from '@/components/BeadActions.vue'
 import BeadRow from '@/components/BeadRow.vue'
 import BookPosition from '@/components/BookPosition.vue'
 import BookStatus from '@/components/BookStatus.vue'
+import KeysPanel from '@/components/KeysPanel.vue'
+import { SHORTCUTS, type KeyedId } from '@/keys'
 import { selectionKey, statusKey } from '@/selection'
 import { isProblem } from '@/review'
 
@@ -20,6 +22,7 @@ const showMulti = ref(false)
 // The latest import run (SPEC §3.1.5): fetched once on mount; corrections don't change it.
 const importRun = shallowRef<BookRun | null>(null)
 const showImportLog = ref(false)
+const showKeys = ref(false)
 const busy = ref(false)
 
 const currentBeadId = ref<number | null>(null)
@@ -270,8 +273,35 @@ function isTextEntry(target: HTMLElement | null): boolean {
   return target.tagName === 'INPUT' && !['checkbox', 'radio', 'button'].includes((target as HTMLInputElement).type)
 }
 
+// The plain-key handlers, one per keyed entry of SHORTCUTS (keys.ts): the compiler refuses a missing or extra one.
+const handlers: Record<KeyedId, (event: KeyboardEvent) => void> = {
+  'previous-bead': () => moveBead(-1),
+  'next-bead': () => moveBead(1),
+  'source-side': () => currentBead.value && select(currentBead.value.id, 'source', null),
+  'target-side': () => currentBead.value && select(currentBead.value.id, 'target', null),
+  'next-sentence': (event) => moveSegment(event.shiftKey ? -1 : 1),
+  'next-problem': () => nextProblem(1),
+  'previous-problem': () => nextProblem(-1),
+  'next-unreviewed': nextUnreviewed,
+  'show-keys': () => (showKeys.value = true),
+  reviewed: () => runCorrection('reviewed'),
+  merge: () => runCorrection('merge'),
+  split: () => runCorrection('split'),
+  exclude: () => runCorrection('exclude'),
+  edit: () => startEditing(),
+  join: joinNext,
+}
+const actions = new Map<string, (event: KeyboardEvent) => void>()
+for (const s of SHORTCUTS) if ('key' in s) actions.set(s.key, handlers[s.id])
+
 function onKey(event: KeyboardEvent) {
   if (isTextEntry(event.target as HTMLElement | null)) return
+  if (showKeys.value) {
+    // The panel is modal: only Esc, which closes it.
+    if (event.key === 'Escape') showKeys.value = false
+    event.preventDefault()
+    return
+  }
   if (event.key === 'Escape' && showImportLog.value) {
     event.preventDefault()
     showImportLog.value = false
@@ -290,26 +320,10 @@ function onKey(event: KeyboardEvent) {
     return
   }
   if (event.ctrlKey || event.metaKey || event.altKey) return
-  const actions: Record<string, () => void> = {
-    ArrowDown: () => moveBead(1),
-    ArrowUp: () => moveBead(-1),
-    ArrowLeft: () => currentBead.value && select(currentBead.value.id, 'source', null),
-    ArrowRight: () => currentBead.value && select(currentBead.value.id, 'target', null),
-    Tab: () => moveSegment(event.shiftKey ? -1 : 1),
-    n: nextUnreviewed,
-    p: () => nextProblem(1),
-    P: () => nextProblem(-1),
-    m: () => runCorrection('merge'),
-    s: () => runCorrection('split'),
-    r: () => runCorrection('reviewed'),
-    x: () => runCorrection('exclude'),
-    j: joinNext,
-    Enter: () => startEditing(),
-  }
-  const action = actions[event.key]
+  const action = actions.get(event.key)
   if (!action) return
   event.preventDefault()
-  action()
+  action(event)
 }
 
 function undo() {
@@ -404,11 +418,15 @@ onBeforeUnmount(() => {
                   {{ w.side ? `${w.side}: ` : '' }}{{ w.message }}
                 </li>
               </ul>
-              <p class="text-muted">Imported {{ importRun.created_at }} with Tradurre {{ importRun.app_version }}</p>
+              <p class="text-muted">Imported {{ new Date(importRun.created_at).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' }) }} with Tradurre {{ importRun.app_version }}</p>
               <pre data-testid="import-stats" class="mt-1.5 p-2 bg-ground rounded font-code text-[11px] overflow-auto">{{ JSON.stringify(importRun.stats, null, 2) }}</pre>
             </div>
           </div>
         </div>
+        <button type="button" data-testid="keys" title="Keyboard shortcuts (H)" @click="showKeys = true"
+          class="shrink-0 h-7 px-2 flex items-center gap-1.5 rounded text-ink hover:bg-hover">
+          Keys <kbd>H</kbd>
+        </button>
       </div>
 
       <!-- Second bar (A1): navigation | review | corrections | history. -->
@@ -485,6 +503,7 @@ onBeforeUnmount(() => {
         <BookStatus />
         <BookPosition :book="book" />
       </div>
+      <KeysPanel v-if="showKeys" @close="showKeys = false" />
     </template>
   </div>
 </template>

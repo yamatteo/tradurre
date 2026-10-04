@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test'
+import { SHORTCUTS } from '../src/keys'
 
 // The book screen's bars (PLAN.md, "Layout: toolbars and import log"), at the smallest laptop size SPEC §4 targets.
 test('at 1366 × 768 the two bars fit and have their heights; the import log opens and closes', async ({ page, request }) => {
@@ -32,4 +33,39 @@ test('at 1366 × 768 the two bars fit and have their heights; the import log ope
   await button.click()
   await button.click()
   await expect(page.getByTestId('import-log-panel')).toHaveCount(0)
+})
+
+test('h and the Keys button open the shortcuts panel; it lists every shortcut, holds the keys, and Esc closes it', async ({ page, request }) => {
+  const res = await request.post('/api/v2/books', {
+    multipart: {
+      source: { name: 'fr.txt', mimeType: 'text/plain', buffer: Buffer.from('Marie arriva.\n\nPaul partit.') },
+      target: { name: 'it.txt', mimeType: 'text/plain', buffer: Buffer.from('Marie arrivò.\n\nPaul partì.') },
+      title: 'Keys',
+    },
+  })
+  expect(res.status()).toBe(201)
+  await page.goto(`/book/${(await res.json()).id}`)
+  const current = page.locator('[data-testid="bead-row"][data-current="true"]')
+  const first = await current.getAttribute('data-bead-id')
+  const panel = page.getByTestId('keys-panel')
+
+  await page.keyboard.press('h')
+  await expect(panel).toBeVisible()
+  await expect(panel).toHaveAttribute('role', 'dialog')
+  await expect(panel.getByTestId('shortcut')).toHaveCount(SHORTCUTS.length)
+  for (const s of SHORTCUTS) await expect(panel.locator(`[data-shortcut="${s.id}"]`)).toContainText(s.label)
+  await page.keyboard.press('ArrowDown')
+  await page.keyboard.press('r')
+  await page.keyboard.press('Escape')
+  await expect(panel).toHaveCount(0)
+  await expect(current).toHaveAttribute('data-bead-id', first!)
+  await expect(current).toHaveAttribute('data-reviewed', 'false')
+
+  await page.getByTestId('keys').click()
+  await expect(panel).toBeVisible()
+  await page.mouse.click(5, 5)  // the scrim
+  await expect(panel).toHaveCount(0)
+  await page.getByTestId('keys').click()
+  await panel.getByRole('button', { name: /Close/ }).click()
+  await expect(panel).toHaveCount(0)
 })
