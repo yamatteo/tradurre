@@ -4,7 +4,8 @@ import { booksApi, type Book, type BookBead, type BookExcludedBlock, type BookRu
 import BeadActions, { type Correction } from '@/components/BeadActions.vue'
 import BeadRow from '@/components/BeadRow.vue'
 import BookPosition from '@/components/BookPosition.vue'
-import { selectionKey } from '@/selection'
+import BookStatus from '@/components/BookStatus.vue'
+import { selectionKey, statusKey } from '@/selection'
 import { isProblem } from '@/review'
 
 const props = defineProps<{ id: string }>()
@@ -19,10 +20,6 @@ const showMulti = ref(false)
 // The latest import run (SPEC §3.1.5): fetched once on mount; corrections don't change it.
 const importRun = shallowRef<BookRun | null>(null)
 const showImportLog = ref(false)
-const importLogLabel = computed(() => {
-  const n = importRun.value?.warnings.length ?? 0
-  return n === 0 ? 'Import log' : `Import log (${n} warning${n === 1 ? '' : 's'})`
-})
 const busy = ref(false)
 
 const currentBeadId = ref<number | null>(null)
@@ -35,6 +32,7 @@ watch(currentBeadId, (id, old) => {
   if (id !== null) currentRow[id] = true
 }, { flush: 'sync' })
 provide(selectionKey, { currentRow, currentBeadId, currentSide, currentSegmentId, editingSegmentId })
+provide(statusKey, status)
 
 const reviewedCount = computed(() => book.value?.beads.filter((b) => b.reviewed).length ?? 0)
 const problemCount = computed(() => book.value?.beads.filter((b) => isProblem(b, showMulti.value)).length ?? 0)
@@ -201,6 +199,10 @@ function runCorrection(action: Correction) {
         index + 1,
       )
     }
+    case 'edit':
+      return startEditing()
+    case 'join':
+      return joinNext()
     case 'reviewed':
       return correct((id) => booksApi.setReviewed(id, [bead.id], !bead.reviewed))
     case 'exclude': {
@@ -270,6 +272,11 @@ function isTextEntry(target: HTMLElement | null): boolean {
 
 function onKey(event: KeyboardEvent) {
   if (isTextEntry(event.target as HTMLElement | null)) return
+  if (event.key === 'Escape' && showImportLog.value) {
+    event.preventDefault()
+    showImportLog.value = false
+    return
+  }
   const key = event.key.toLowerCase()
   if (event.altKey && !event.ctrlKey && !event.metaKey && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
     event.preventDefault()
@@ -344,53 +351,96 @@ onBeforeUnmount(() => {
   <div class="h-screen flex flex-col bg-ground font-ui text-ink">
     <p v-if="error" class="p-6 text-red-600">{{ error }}</p>
     <template v-else-if="book">
-      <div class="shrink-0 border-b border-bar-rule px-4 py-2 text-[12.5px]">
-        <div class="flex items-center justify-between gap-4">
-          <div class="flex items-center gap-3">
-            <router-link to="/" class="text-muted hover:text-ink">&larr; Library</router-link>
-            <h1 class="text-[13.5px] font-semibold" data-testid="book-title">{{ book.title }}</h1>
-            <BeadActions :book="book" :disabled="busy || editingSegmentId !== null" @correct="runCorrection" />
-          </div>
-          <div class="flex items-center gap-4 text-muted">
-            <button type="button" data-testid="undo" title="Ctrl+Z" :disabled="!book.can_undo || busy || editingSegmentId !== null" @click="undo"
-              class="px-2 py-1 border border-outline rounded bg-white text-ink hover:bg-hover disabled:opacity-50 disabled:cursor-not-allowed">
-              Undo
-            </button>
-            <button type="button" data-testid="redo" title="Ctrl+Y" :disabled="!book.can_redo || busy || editingSegmentId !== null" @click="redo"
-              class="px-2 py-1 border border-outline rounded bg-white text-ink hover:bg-hover disabled:opacity-50 disabled:cursor-not-allowed">
-              Redo
-            </button>
-            <button v-if="importRun" type="button" data-testid="import-log" @click="showImportLog = !showImportLog"
-              :class="importRun.warnings.length ? 'text-problem border-problem-mark' : 'text-ink border-outline'"
-              class="px-2 py-1 border rounded bg-white hover:bg-hover">
-              {{ importLogLabel }}
-            </button>
-            <button type="button" data-testid="next-problem" title="P" @click="nextProblem(1)"
-              class="px-2 py-1 border border-outline rounded bg-white text-ink hover:bg-hover">
-              Next problem
-            </button>
-            <label class="flex items-center gap-1 cursor-pointer">
-              <input v-model="showExcluded" type="checkbox" data-testid="show-excluded" class="accent-accent" />
-              Show excluded
-            </label>
-            <label class="flex items-center gap-1 cursor-pointer">
-              <input v-model="showMulti" type="checkbox" data-testid="show-multi" class="accent-accent" />
-              Highlight multi-segment
-            </label>
-            <p data-testid="problem-count">problems {{ problemCount }}</p>
-            <p data-testid="book-progress">reviewed {{ reviewedCount }} / {{ book.beads.length }}</p>
+      <!-- Top bar (A1). -->
+      <div data-testid="top-bar" class="shrink-0 h-10 flex items-center gap-3 px-4 border-b border-bar-rule text-[12.5px]">
+        <router-link to="/" class="shrink-0 text-muted hover:text-ink">&larr; Library</router-link>
+        <span class="shrink-0 w-px h-4 bg-bar-rule" />
+        <h1 class="min-w-0 truncate text-[13.5px] font-semibold" data-testid="book-title">{{ book.title }}</h1>
+        <span class="flex-1" />
+        <label class="shrink-0 flex items-center gap-1.5 cursor-pointer text-muted">
+          <input v-model="showExcluded" type="checkbox" data-testid="show-excluded" class="accent-accent" />
+          Show excluded
+        </label>
+        <label class="shrink-0 flex items-center gap-1.5 cursor-pointer text-muted">
+          <input v-model="showMulti" type="checkbox" data-testid="show-multi" class="accent-accent" />
+          Highlight multi-segment
+        </label>
+        <span class="shrink-0 w-px h-4 bg-bar-rule" />
+        <div class="shrink-0 flex items-center gap-2 text-muted">
+          <span data-testid="book-progress">Reviewed {{ reviewedCount }} / {{ book.beads.length }}</span>
+          <span class="w-[84px] h-1 rounded-full bg-bar-rule overflow-hidden">
+            <span class="block h-full bg-progress" :style="{ width: `${book.beads.length ? (100 * reviewedCount) / book.beads.length : 0}%` }" />
+          </span>
+        </div>
+        <span class="shrink-0 w-px h-4 bg-bar-rule" />
+        <div v-if="importRun" class="shrink-0 relative">
+          <button type="button" data-testid="import-log" :aria-expanded="showImportLog"
+            :title="importRun.warnings.length ? `Import log: ${importRun.warnings.length} warning${importRun.warnings.length === 1 ? '' : 's'}` : 'Import log'"
+            @click="showImportLog = !showImportLog"
+            class="h-7 px-2 flex items-center gap-1.5 rounded text-ink hover:bg-hover"
+            :class="showImportLog ? 'bg-hover' : ''">
+            <svg v-if="importRun.warnings.length" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor"
+              stroke-width="1.4" stroke-linejoin="round" class="text-problem-mark" aria-hidden="true">
+              <path d="M7 1.5L13 12H1z" /><path d="M7 5.5v3M7 10v.2" stroke-linecap="round" />
+            </svg>
+            Import log
+            <span v-if="importRun.warnings.length" class="px-1.5 rounded-full bg-pill text-pill-ink font-code text-[10.5px] font-medium">{{ importRun.warnings.length }}</span>
+          </button>
+          <div v-if="showImportLog" data-testid="import-log-panel"
+            class="absolute right-0 top-full mt-1.5 z-30 w-[390px] max-h-[60vh] overflow-auto bg-white border border-bar-rule rounded-md shadow-lg">
+            <div class="flex items-center justify-between px-3 h-9 border-b border-row-rule">
+              <span class="font-semibold">Import log</span>
+              <button type="button" aria-label="Close" title="Close (Esc)" @click="showImportLog = false"
+                class="w-6 h-6 flex items-center justify-center rounded text-muted hover:bg-hover">
+                <svg width="10" height="10" viewBox="0 0 10 10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true">
+                  <path d="M1 1l8 8M9 1l-8 8" />
+                </svg>
+              </button>
+            </div>
+            <div class="p-3">
+              <p class="mb-1.5 text-[10.5px] uppercase tracking-wider text-faint">Warnings · {{ importRun.warnings.length }}</p>
+              <ul v-if="importRun.warnings.length" class="mb-3 space-y-1">
+                <li v-for="(w, i) in importRun.warnings" :key="i" data-testid="import-warning" class="text-problem">
+                  {{ w.side ? `${w.side}: ` : '' }}{{ w.message }}
+                </li>
+              </ul>
+              <p class="text-muted">Imported {{ importRun.created_at }} with Tradurre {{ importRun.app_version }}</p>
+              <pre data-testid="import-stats" class="mt-1.5 p-2 bg-ground rounded font-code text-[11px] overflow-auto">{{ JSON.stringify(importRun.stats, null, 2) }}</pre>
+            </div>
           </div>
         </div>
-        <div v-if="showImportLog && importRun" data-testid="import-log-panel"
-          class="mt-2 p-3 bg-white border border-bar-rule rounded max-h-80 overflow-auto">
-          <ul v-if="importRun.warnings.length" class="mb-2 list-disc pl-5 text-problem">
-            <li v-for="(w, i) in importRun.warnings" :key="i" data-testid="import-warning">
-              {{ w.side ? `${w.side}: ` : '' }}{{ w.message }}
-            </li>
-          </ul>
-          <p class="text-muted">Imported {{ importRun.created_at }} with Tradurre {{ importRun.app_version }}</p>
-          <pre data-testid="import-stats" class="mt-1 font-code text-[11px]">{{ JSON.stringify(importRun.stats, null, 2) }}</pre>
+      </div>
+
+      <!-- Second bar (A1): navigation | review | corrections | history. -->
+      <div data-testid="second-bar" class="shrink-0 h-[38px] flex items-center gap-2 px-3 bg-bar border-b border-bar-rule text-[12.5px]">
+        <div class="shrink-0 flex items-center gap-0.5">
+          <button type="button" aria-label="Previous problem" title="Previous problem (Shift+P)" @click="nextProblem(-1)"
+            class="w-7 h-7 flex items-center justify-center rounded text-ink hover:bg-hover">
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7.5 2.5L4 6l3.5 3.5" /></svg>
+          </button>
+          <span data-testid="problem-count" class="px-1 tabular-nums">{{ problemCount }} problem{{ problemCount === 1 ? '' : 's' }}</span>
+          <button type="button" data-testid="next-problem" aria-label="Next problem" title="Next problem (P)" @click="nextProblem(1)"
+            class="w-7 h-7 flex items-center justify-center rounded text-ink hover:bg-hover">
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 2.5L8 6 4.5 9.5" /></svg>
+          </button>
+          <button type="button" title="Next unreviewed (N)" @click="nextUnreviewed"
+            class="h-7 px-2 flex items-center gap-1.5 rounded text-ink hover:bg-hover">
+            Next unreviewed <kbd>N</kbd>
+          </button>
         </div>
+        <span class="shrink-0 w-px h-5 bg-bar-rule" />
+        <BeadActions class="shrink-0" group="review" :book="book" :disabled="busy || editingSegmentId !== null" @correct="runCorrection" />
+        <span class="shrink-0 w-px h-5 bg-bar-rule" />
+        <BeadActions class="shrink-0" group="corrections" :book="book" :disabled="busy || editingSegmentId !== null" @correct="runCorrection" />
+        <span class="flex-1" />
+        <button type="button" data-testid="undo" aria-label="Undo" title="Undo (Ctrl+Z)" :disabled="!book.can_undo || busy || editingSegmentId !== null" @click="undo"
+          class="shrink-0 w-7 h-7 flex items-center justify-center rounded text-ink hover:bg-hover disabled:opacity-40 disabled:hover:bg-transparent disabled:cursor-not-allowed">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 2.5L2 5l2.5 2.5" /><path d="M2 5h6.5a3.5 3.5 0 010 7H6" /></svg>
+        </button>
+        <button type="button" data-testid="redo" aria-label="Redo" title="Redo (Ctrl+Y)" :disabled="!book.can_redo || busy || editingSegmentId !== null" @click="redo"
+          class="shrink-0 w-7 h-7 flex items-center justify-center rounded text-ink hover:bg-hover disabled:opacity-40 disabled:hover:bg-transparent disabled:cursor-not-allowed">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.5 2.5L12 5 9.5 7.5" /><path d="M12 5H5.5a3.5 3.5 0 000 7H8" /></svg>
+        </button>
       </div>
 
       <!-- The bead list is the only scrolling element. -->
@@ -432,7 +482,7 @@ onBeforeUnmount(() => {
 
       <!-- Both texts sit in fixed, size-contained boxes: their changes are laid out alone, not with the bead list. -->
       <div class="shrink-0 relative h-[26px] border-t border-bar-rule text-[12px] text-muted">
-        <p data-testid="status" class="absolute left-4 right-[380px] inset-y-0 leading-[25px] truncate [contain:strict]">{{ status }}</p>
+        <BookStatus />
         <BookPosition :book="book" />
       </div>
     </template>

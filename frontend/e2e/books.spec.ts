@@ -39,7 +39,7 @@ test('importing through the form opens the book, which the project list then ope
   const bookId = page.url().split('/').pop()!
   await expect(page.getByTestId('book-title')).toHaveText('Bosco del form')
   await expect(page.getByTestId('bead-row')).toHaveCount(2)
-  await expect(page.getByTestId('book-progress')).toHaveText('reviewed 0 / 2')
+  await expect(page.getByTestId('book-progress')).toHaveText('Reviewed 0 / 2')
 
   await page.goto('/')
   const card = page.locator(`[data-project-id="${bookId}"]`)
@@ -85,7 +85,7 @@ test('the book view keeps the import log with its warnings and stats', async ({ 
   await page.goto(`/book/${id}`)
 
   const button = page.getByTestId('import-log')
-  await expect(button).toHaveText('Import log (1 warning)')
+  await expect(button).toHaveText(/^\s*Import log\s*1\s*$/)  // the count pill
   await expect(page.getByTestId('import-log-panel')).toHaveCount(0)
   await button.click()
   await expect(page.getByTestId('import-warning')).toHaveText(['target: The text file is not valid UTF-8; it was read as Latin-1.'])

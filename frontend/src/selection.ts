@@ -12,3 +12,7 @@ export interface Selection {
 }
 
 export const selectionKey: InjectionKey<Selection> = Symbol('selection')
+
+/** The bottom bar's status message, written by `BookView.vue`'s `say()` and shown by `BookStatus.vue`: kept out of
+ * the book view's template, so a message doesn't re-render the bead list (PLAN.md, Stage 4 render rule). */
+export const statusKey: InjectionKey<Readonly<Ref<string>>> = Symbol('status')

@@ -111,10 +111,10 @@ test('r toggles the reviewed mark', async ({ page, request }) => {
   const row = page.locator(`[data-bead-id="${book.beads[0].id}"]`)
   await page.keyboard.press('r')
   await expect(row).toHaveAttribute('data-reviewed', 'true')
-  await expect(page.getByTestId('book-progress')).toHaveText('reviewed 1 / 5')
+  await expect(page.getByTestId('book-progress')).toHaveText('Reviewed 1 / 5')
   await page.keyboard.press('r')
   await expect(row).toHaveAttribute('data-reviewed', 'false')
-  await expect(page.getByTestId('book-progress')).toHaveText('reviewed 0 / 5')
+  await expect(page.getByTestId('book-progress')).toHaveText('Reviewed 0 / 5')
 })
 
 test('x excludes a block and Include brings it back', async ({ page, request }) => {

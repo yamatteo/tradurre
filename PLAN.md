@@ -26,9 +26,10 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
   markers, French/Italian segmentation, the length aligner; the run's stats and warnings are stored and shown
   under "Import log". Reference book: ~5 s, 1232 beads, 2 one-sided, 9 below confidence 0.5; against the gold,
   alignment F1 0.995, exclusion P 1.000 R 0.902.
-- **Book screen** (Stage 2): reading and keyboard navigation, `n` next unreviewed, `r` reviewed, "Show excluded",
-  every SPEC §3.3 single-bead correction (keys and header buttons), inline segment editing, persistent undo/redo.
-  No problem highlighting, ranges, original text or re-align yet (Stage 4).
+- **Book screen** (Stages 2, 4): reading and keyboard navigation, `n` next unreviewed, `r` reviewed, "Show
+  excluded", every SPEC §3.3 single-bead correction (keys and header buttons), inline segment editing, persistent
+  undo/redo, problem navigation (`p`/`P`). Being restyled to design variant A: frame, fonts and rows done; the two
+  bars, shortcuts panel, runs, ranges, original text and re-align to come (Stage 4).
 - **Re-planned with the user (2026-10-04), SPEC changed accordingly:** review is one mode, problem-first: jump to
   the next likely problem, correct, mark one bead, a selected run, or everything up to here as reviewed. The
   timed scroll "skim review" is dropped. The Colab aligner is **parked** (SPEC §3.2, §5): it returns only if a
@@ -37,7 +38,7 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
   gold (the current one was made by the user, the developer), and maybe a second book, to score the aligner again.
 - `uv run pytest`: 391 passed, also on a fresh clone (tests read only committed synthetic fixtures; `-m library`
   tests run only where `library/contrefeu.*.pdf` exists, and assert counts only).
-- `npm run type-check` passes; releases build with `npm run build`. `npm run test:e2e` (29 tests) runs on its own
+- `npm run type-check` passes; releases build with `npm run build`. `npm run test:e2e` (33 tests) runs on its own
   backend (:8001, throwaway `.e2e.db`) and Vite (:5174), never the user's database. Setup per machine: `npx
   playwright install chromium` (on Ubuntu 26.04 with `PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=ubuntu24.04-x64`); tests
   use the full Chromium headless (`channel: 'chromium'`).
@@ -118,7 +119,13 @@ Decisions carried into this stage:
   neighbouring row is a bead-boundary move; any other paste is a text edit (original text kept, undoable). SPEC
   §3.3 gets a line for it when that step is planned (wording to agree with the user then).
 - Keys must work on an Italian Windows layout: letters, Shift+letters, arrows, Enter, Tab, Ctrl+Z/Y only (no `[`,
-  `]`, `/`, `\` and the like, which need AltGr or move around). Rare range commands get header buttons, no key.
+  `]`, `/`, `\` and the like, which need AltGr or move around). Rare range commands go in the "More" menu, no key.
+- (Pauli, 2026-10-04, measured in "Layout: frame, fonts and rows") **render rule** for the book screen, on top of
+  the Stage 2 scale rule: (1) `BookView.vue`'s template reads nothing that changes on a move or a status message:
+  such state is shown by a small child component that injects it (`BeadActions`, `BookPosition`), else every
+  arrow key re-diffs all rows (it cost +1 s per 20 moves on 10,000 beads); (2) state changes inside a row are
+  paint-only: recolour what is always there (a border, a mark), never add a background, border or shadow to an
+  inline element, nor change text outside a size-contained box, since either lays out the whole list again.
 
 ### Problem navigation
 Status: done
@@ -187,6 +194,13 @@ Visual tokens (from A1, the source of truth for all three tasks), in `frontend/s
 #### Layout: frame, fonts and rows
 Status: done
 Report: 2026-10-04 — bundled fonts and `@theme` tokens; full-height book screen without the global nav, sticky column header, bottom bar with status and `position` (new `BookPosition.vue`, so a move doesn't re-render the list); `BeadRow` on A1's grid with gutter marks, meta column (`problem-badge` only on problems), separators, *Not in this edition*; excluded rows per side with Include in the meta column; four class-based e2e assertions switched to `data-reviewed`/text/CSS; pytest 391 passed, e2e 33 passed, type-check and build clean (92 font files, no googleapis); screenshots `scratchpad/layout-frame-1366.png` and `layout-frame-1366-excluded.png`; 20 ArrowDown on 10,000 beads ~1.2–1.45 s (HEAD ~0.9 s, limit 2 s).
+Verified (Pauli, 2026-10-04): Done when holds (commit cc58788; the screenshots match A1 as amended). Deviations
+accepted: the e2e checks of bold/grey/green switched to computed style and text, not only data attributes (they
+still test what the user sees); Plex Sans 400 italic added for *Not in this edition*. Left over, folded into the
+next task: the status message still lives in `BookView`'s template (each `say()` re-diffs all rows, and the run
+message of "Reviewed runs" would do so on every Shift+arrow); 92 font files, mostly Cyrillic/Greek/Vietnamese
+subsets nobody needs. Navigation is ~40% slower than before but under the limit: the 5,000-bead scale check
+re-measures it.
 **Done when:** `npm run type-check` passes; `npm run test:e2e` passes unchanged (see the last bullet);
 `uv run pytest` unchanged; `npm run build` succeeds, its output holds the font files, and `grep -rn googleapis
 frontend/src tradurre/static` finds nothing; the `Report:` names a screenshot of the book screen at 1366 × 768
@@ -227,10 +241,13 @@ frontend/src tradurre/static` finds nothing; the `Report:` names a screenshot of
   attribute. Don't change keys, API or behaviour.
 
 #### Layout: toolbars and import log
-Status: todo
+Status: done
+Report: 2026-10-04 — A1's top bar (progress track, Import log button with pill and a 390 px popover closed by ×/Esc/its button) and second bar (problem navigation, Next unreviewed, review group, corrections with new Edit/Join actions, Undo/Redo icons), `BeadActions` split into `group` review/corrections, status message in new `BookStatus.vue` via `statusKey`; fonts latin subset only (latin-ext dropped: its per-subset files have no unicode-range and load late, a 0.5 s full relayout); new `e2e/book-layout.spec.ts`; e2e text changes as listed plus the import-log button text (`Import log 1`); pytest 391 passed, e2e 34 passed, type-check and build clean; 16 font files; screenshot `scratchpad/layout-bars-1366.png`; 20 ArrowDown on 10,000 beads 1.17–1.30 s alone (HEAD 1.22–1.39 s).
 **Done when:** `npm run type-check` and `npm run test:e2e` pass (with the text changes listed below); a new e2e
 test at viewport 1366 × 768 checks that neither bar overflows (`scrollWidth <= clientWidth`) and that the bars are
-40 and 38 px high; the `Report:` names a screenshot at 1366 × 768 (scratchpad) with the import log open.
+40 and 38 px high; the `Report:` names a screenshot at 1366 × 768 (scratchpad) with the import log open, the
+font file count in `tradurre/static/assets` (expected about 20), and the 10,000-bead "20 ArrowDown" time (not
+worse than the ~1.2–1.45 s of the previous task).
 
 The header becomes A1's two bars.
 - **Top bar** (40 px, ground): "← Library" link to `/`; a 1 px separator; the title (`data-testid="book-title"`,
@@ -254,6 +271,14 @@ The header becomes A1's two bars.
 - E2E text changes: `book-progress` `reviewed x / y` → `Reviewed x / y`; `problem-count` `problems n` → `{n}
   problem(s)`. Nothing else.
 - Leave room in the review group for "Up to here" (next task) and after the corrections for "More" (the range task).
+- Render rule (Stage 4 "Decisions carried in"): the bars' parts that change on a move (the review toggle's label,
+  disabled states) stay inside `BeadActions.vue` or another injecting child, never in `BookView`'s template. The
+  status message moves out too: `BookView` provides a `status` ref (new key in `selection.ts`, or a second
+  `InjectionKey` there) that `say()` writes, and a new `BookStatus.vue` shows it in the bottom bar's
+  size-contained box (`data-testid="status"` unchanged).
+- Fonts: import only the `latin` and `latin-ext` subsets (`@fontsource/<family>/latin-400.css`,
+  `latin-ext-400.css`, and so on for each weight already imported), not the all-subset files: French and Italian
+  need nothing else, and the wheel loses ~70 files.
 
 #### Layout: shortcuts panel
 Status: todo
