@@ -34,8 +34,8 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
   here", range exclude/include in the "More" menu, edited sentences marked with their original on `o` and
   "Restore original", re-align of the selection (More menu), cut/copy/paste of whole sentences (Ctrl+X/C/V).
   Restyled to design variant A; smooth at 5,000 beads. Stages 4 and 6 done (search at `/search` and from the book; More → Export: edition .txt/.docx and the
-  project bundle; "Restore a bundle" on the library page). Stage 7 next: search grouped by book, database
-  snapshots, retire v1, a Windows checklist, then the v0.2 tag. On the reference book the problem flags catch
+  project bundle; "Restore a bundle" on the library page). Stage 7: search grouped by book done; next the
+  library order fix, database snapshots, retire v1, a Windows checklist, then the v0.2 tag. On the reference book the problem flags catch
   none of the 15 real errors: review is reading-first; better signals come after v0.2.
 - **Re-planned with the user (2026-10-04), SPEC changed accordingly:** review is one mode, problem-first: jump to
   the next likely problem, correct, mark one bead, a selected run, or everything up to here as reviewed. The
@@ -43,9 +43,9 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
   gold book scores below 0.95. A typical book is 1,000–5,000 sentences a side; performance targets are at 5,000
   beads. Order: Stage 6 → Stage 7 (v0.2), confirmed 2026-10-04. Then the translator reviews *Contrefeu* in v0.2 for a true
   gold (the current one was made by the user, the developer), and maybe a second book, to score the aligner again.
-- `uv run pytest`: 435 passed, also on a fresh clone (tests read only committed synthetic fixtures; `-m library`
+- `uv run pytest`: 438 passed, also on a fresh clone (tests read only committed synthetic fixtures; `-m library`
   tests run only where `library/contrefeu.*.pdf` exists, and assert counts only).
-- `npm run type-check` passes; releases build with `npm run build`. `npm run test:e2e` (69 tests; the three timing tests run last, alone, in project `scale`) runs on its own
+- `npm run type-check` passes; releases build with `npm run build`. `npm run test:e2e` (70 tests; the three timing tests run last, alone, in project `scale`) runs on its own
   backend (:8001, throwaway `.e2e.db`) and Vite (:5174), never the user's database. Setup per machine: `npx
   playwright install chromium` (on Ubuntu 26.04 with `PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=ubuntu24.04-x64`); tests
   use the full Chromium headless (`channel: 'chromium'`).
@@ -214,6 +214,27 @@ each book. Relevance (`bm25`) is no longer used.
   books", two groups, the counts in their headers, each group's results in ascending bead number.
 Report: 2026-10-04 — search ordered by book (library order) then bead order; `count_beads` + `GET /search/books`; page shows the summary and a header per book (`result-title` gone); search_scale.py medians d 73.6, de 49.9, word 11.8, phrase 0.9, d source 47.5, d offset 200 74.6, one book 1.2, counts d 81.9, counts word 0.3 ms (worst 81.9); pytest 438, type-check clean, e2e 70.
 
+### Library order: a tie-break, and a restored book on top
+Status: done
+**Done when:** `uv run pytest` passes with the new tests; each new test fails on the code before the change
+(check it by restoring the old line); `npm run test:e2e` passes.
+
+Review of "Search results grouped by book": the library (`GET /books`, `api/books.py:202`) orders by
+`p.updated_at DESC` only, the search by `p.updated_at DESC, p.title` (`domain/search.py:92`); and a restored
+bundle keeps the bundle's `updated_at` (`services/bundle.py:139`), so a book restored today can land at the bottom
+of the library and of the search results, though restoring it is the latest work on it (SPEC §3.4 "most recently
+worked on first").
+- `domain/search.py`: rename `_BOOK_ORDER` to `BOOK_ORDER` (comment: the library order, shared by `GET /books`
+  and the search); `api/books.py` `list_books` uses `ORDER BY {BOOK_ORDER}`. Nothing else in the query changes.
+- `services/bundle.py` `import_bundle`: the new book's `updated_at` is now (UTC ISO, as `api/books.py` `_now`);
+  `created_at` is still the bundle's. Update the module docstring (one clause). The bundle format does not change.
+- Tests: `tests/test_bundle.py`: `_normal` also drops `book.updated_at`; in `test_round_trip`, the restored book's
+  `updated_at` is later than the original's `"2026-10-02"` and its `created_at` is `"2026-10-01"`.
+  `tests/test_books_export_api.py` `test_bundle_restore`: the restored book is first in `GET /books`.
+  `tests/test_books_search_api.py`: two books with the same `updated_at` (set with SQL on the app's database, as
+  the fixture's path allows) list in title order in `GET /books`, and `/search/books` gives the same order.
+Report: 2026-10-04 — `BOOK_ORDER` (updated_at DESC, title) shared by `GET /books` and the search; a restored bundle's `updated_at` is now, `created_at` kept; 3 new/changed tests, each failing on the old code; pytest 439, e2e 70.
+
 ### Database snapshots at start
 Status: todo
 **Done when:** `uv run pytest` passes with the new `tests/test_backup.py`; `npm run test:e2e` passes (its fresh
@@ -235,9 +256,13 @@ not against losing the disk (the bundle and copying the file do that).
   closing Tradurre and copying it over `tradurre.db`.
 - `tests/test_backup.py`: no database → None and no `backups` folder; a database with a project row → the
   snapshot opens and holds the row; 12 snapshots with increasing `now` → the 10 newest names remain; two in the
-  same second → two files; `backups` existing as a plain file → None, no exception; the app's startup with
-  `TRADURRE_DB` on an existing database makes a snapshot (`TestClient(app)` with `DB_PATH` monkeypatched, as the
-  API tests do).
+  same second → two files; `backups` existing as a plain file → None, no exception; the app's startup on an
+  existing database makes a snapshot (`TestClient(app)` with `DB_PATH` monkeypatched, as the API tests do; also
+  monkeypatch `tradurre.app.DB_PATH`, which `app.py` imported by name).
+- `.gitignore`: add `/backups/`. `TRADURRE_DB=./x.db` (a developer's throwaway database) puts the snapshots next
+  to it, in the repo root; they hold book text and must never be committed.
+- Expected, not a bug: with `--dev`, every auto-reload re-runs the lifespan and takes a snapshot, so a session of
+  edits rotates the developer's older snapshots out. End-user mode never reloads. Don't add logic for it.
 
 ### Retire the old model
 Not ready (broken down after the two tasks above). Remove the `pairs` table (a migration dropping it, no export:

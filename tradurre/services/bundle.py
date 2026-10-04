@@ -3,7 +3,8 @@
 A bundle is a zip holding one `bundle.json`. It stores no ids and no ords: order is list order, and a segment names
 its bead by its index in `beads`. The operation history is not included: a restored book starts with nothing to undo.
 Import always creates a new book, in one transaction, refused whole if the bundle is malformed or breaks an invariant;
-restored next to a book with the same title, it is titled "<title> (restored YYYY-MM-DD)".
+restored next to a book with the same title, it is titled "<title> (restored YYYY-MM-DD)"; it keeps its creation
+date, but counts as worked on now, so it tops the library.
 """
 
 import io
@@ -137,7 +138,8 @@ def import_bundle(conn: sqlite3.Connection, data: bytes) -> str:
                 "INSERT INTO projects (id, title, source_lang, target_lang, created_at, updated_at) "
                 "VALUES (?, ?, ?, ?, ?, ?)",
                 (book_id, title, *(_field(book, key, str, "book")
-                                   for key in ("source_lang", "target_lang", "created_at", "updated_at"))),
+                                   for key in ("source_lang", "target_lang", "created_at")),
+                 datetime.now(timezone.utc).isoformat()),
             )
             bead_ids = []
             for k, bead in enumerate(beads):

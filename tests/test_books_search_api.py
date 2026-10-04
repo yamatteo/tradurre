@@ -1,5 +1,7 @@
 """Tests for the books search API (/api/v2/search)."""
 
+import sqlite3
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -12,10 +14,14 @@ TARGET_2 = "Un ozioso passava."
 
 
 @pytest.fixture()
-def client(tmp_path, monkeypatch):
-    path = tmp_path / "test.db"
-    monkeypatch.setattr("tradurre.config.DB_PATH", path)
-    monkeypatch.setattr("tradurre.app.DB_PATH", path)
+def db_path(tmp_path):
+    return tmp_path / "test.db"
+
+
+@pytest.fixture()
+def client(db_path, monkeypatch):
+    monkeypatch.setattr("tradurre.config.DB_PATH", db_path)
+    monkeypatch.setattr("tradurre.app.DB_PATH", db_path)
     with TestClient(app) as c:
         yield c
 
@@ -108,3 +114,15 @@ def test_counts_per_book(client, books):
     assert client.get("/api/v2/search/books", params={"q": "ozio", "side": "source"}).json() == []
     assert client.get("/api/v2/search/books", params={"q": ""}).json() == []
     assert client.get("/api/v2/search/books", params={"q": "mot", "book": "nope"}).status_code == 404
+
+
+def test_same_updated_at_lists_in_title_order(client, db_path):
+    # Imported in reverse title order, then given the same time: the title breaks the tie.
+    zeta = _import(client, "Zeta", "Un mot.", "Una parola.")
+    alpha = _import(client, "Alpha", "Un mot.", "Una parola.")
+    conn = sqlite3.connect(db_path)
+    with conn:
+        conn.execute("UPDATE projects SET updated_at = '2026-10-01T00:00:00+00:00'")
+    conn.close()
+    assert [b["id"] for b in client.get("/api/v2/books").json()] == [alpha, zeta]
+    assert [c["book_id"] for c in client.get("/api/v2/search/books", params={"q": "mot"}).json()] == [alpha, zeta]

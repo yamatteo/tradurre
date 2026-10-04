@@ -25,7 +25,7 @@ from tradurre.domain.beads import merge_with_next, move_first_to_previous, move_
 from tradurre.domain.blocks import exclude_block, exclude_range, include_block, include_range
 from tradurre.domain.history import transaction
 from tradurre.domain.invariants import check_project
-from tradurre.domain.search import END, START, _bead_text, count_beads, search_beads
+from tradurre.domain.search import BOOK_ORDER, END, START, _bead_text, count_beads, search_beads
 from tradurre.domain.segments import edit_text, join_with_next, restore_original, split_segment
 from tradurre.models import (
     BookEditRequest,
@@ -193,13 +193,13 @@ async def import_book(
 @router.get("/books", response_model=list[BookSummary])
 def list_books(db: sqlite3.Connection = Depends(get_db)):
     rows = db.execute(
-        """
+        f"""
         SELECT p.id, p.title, p.source_lang, p.target_lang,
                (SELECT COUNT(*) FROM beads b WHERE b.project_id = p.id) AS bead_count,
                (SELECT COUNT(*) FROM beads b WHERE b.project_id = p.id AND b.reviewed = 1) AS reviewed_count
         FROM projects p
         WHERE EXISTS (SELECT 1 FROM documents d WHERE d.project_id = p.id)
-        ORDER BY p.updated_at DESC
+        ORDER BY {BOOK_ORDER}
         """
     ).fetchall()
     return [dict(r) for r in rows]

@@ -74,6 +74,7 @@ def _normal(data: bytes) -> dict:
     bundle = _json(data)
     del bundle["exported_at"]
     del bundle["book"]["title"]
+    del bundle["book"]["updated_at"]
     return bundle
 
 
@@ -88,8 +89,13 @@ def test_round_trip(conn):
     assert _normal(export_bundle(conn, book_id)) == _normal(data)
     # Restored next to the original: the title says so.
     today = datetime.now(timezone.utc).date().isoformat()
-    title = conn.execute("SELECT title FROM projects WHERE id = ?", (book_id,)).fetchone()[0]
+    title, created_at, updated_at = conn.execute(
+        "SELECT title, created_at, updated_at FROM projects WHERE id = ?", (book_id,)
+    ).fetchone()
     assert title == f"Livre (restored {today})"
+    # Restoring is the latest work on the book: it goes to the top of the library.
+    assert created_at == "2026-10-01"
+    assert updated_at > "2026-10-02"
     assert check_project(conn, book_id) == []
     assert {hit["project_id"] for hit in search_beads(conn, "marchait")} == {"p1", book_id}
 

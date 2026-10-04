@@ -88,8 +88,8 @@ def _bead_text(conn: sqlite3.Connection, bead_id: int) -> dict[str, str]:
     return {side: " ".join(texts) for side, texts in parts.items()}
 
 
-# Library order, as `GET /books` lists the books.
-_BOOK_ORDER = "p.updated_at DESC, p.title"
+# The library order, shared by `GET /books` and the search.
+BOOK_ORDER = "p.updated_at DESC, p.title"
 
 
 def count_beads(conn: sqlite3.Connection, text: str, side: str = "either", project_id: str | None = None) -> list[dict]:
@@ -106,7 +106,7 @@ def count_beads(conn: sqlite3.Connection, text: str, side: str = "either", proje
     if project_id is not None:
         sql += " AND bead_index.project_id = ?"
         params.append(project_id)
-    sql += f" GROUP BY b.project_id ORDER BY {_BOOK_ORDER}"
+    sql += f" GROUP BY b.project_id ORDER BY {BOOK_ORDER}"
     return [{"project_id": pid, "title": title, "count": count} for pid, title, count in conn.execute(sql, params)]
 
 
@@ -132,7 +132,7 @@ def search_beads(
     if project_id is not None:
         sql += " AND bead_index.project_id = ?"
         params.append(project_id)
-    sql += f" ORDER BY {_BOOK_ORDER}, b.ord LIMIT ? OFFSET ?"
+    sql += f" ORDER BY {BOOK_ORDER}, b.ord LIMIT ? OFFSET ?"
     params += [limit, offset]
 
     results = []

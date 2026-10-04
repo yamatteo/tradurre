@@ -86,7 +86,9 @@ def test_bundle_restore(client):
     assert restored["id"] != book
     assert restored["title"].startswith("Contre (restored ")
     assert restored["warnings"] == []
-    books = {b["id"]: b for b in client.get("/api/v2/books").json()}
+    listed = client.get("/api/v2/books").json()
+    assert listed[0]["id"] == restored["id"]
+    books = {b["id"]: b for b in listed}
     assert restored["bead_count"] == books[book]["bead_count"] == books[restored["id"]]["bead_count"]
 
 
