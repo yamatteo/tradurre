@@ -34,7 +34,7 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
   here", range exclude/include in the "More" menu, edited sentences marked with their original on `o` and
   "Restore original", re-align of the selection (More menu), cut/copy/paste of whole sentences (Ctrl+X/C/V).
   Restyled to design variant A; smooth at 5,000 beads. Stage 4 done. Stage 6: search done (`/search`, `BookSearch.vue`; "Search" in the book's top bar), edition export done (More →
-  Export, .txt/.docx); the project bundle next. On the reference book the problem flags catch
+  Export, .txt/.docx); project bundle: service done (`services/bundle.py`), API and app next. On the reference book the problem flags catch
   none of the 15 real errors: review is reading-first; better signals come after v0.2.
 - **Re-planned with the user (2026-10-04), SPEC changed accordingly:** review is one mode, problem-first: jump to
   the next likely problem, correct, mark one bead, a selected run, or everything up to here as reviewed. The
@@ -42,7 +42,7 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
   gold book scores below 0.95. A typical book is 1,000–5,000 sentences a side; performance targets are at 5,000
   beads. Order: Stage 6 → Stage 7 (v0.2), confirmed 2026-10-04. Then the translator reviews *Contrefeu* in v0.2 for a true
   gold (the current one was made by the user, the developer), and maybe a second book, to score the aligner again.
-- `uv run pytest`: 422 passed, also on a fresh clone (tests read only committed synthetic fixtures; `-m library`
+- `uv run pytest`: 431 passed, also on a fresh clone (tests read only committed synthetic fixtures; `-m library`
   tests run only where `library/contrefeu.*.pdf` exists, and assert counts only).
 - `npm run type-check` passes; releases build with `npm run build`. `npm run test:e2e` (68 tests; the three timing tests run last, alone, in project `scale`) runs on its own
   backend (:8001, throwaway `.e2e.db`) and Vite (:5174), never the user's database. Setup per machine: `npx
@@ -436,9 +436,14 @@ Report: 2026-10-04 — new `services/bundle.py` (`export_bundle`, `import_bundle
 invariants hold, the restored book searchable), contents, and refusals (not a zip, no `bundle.json`, wrong format,
 version 2, bead index 99, a bead without segments, I1, a missing key, a wrong type, a value the schema refuses), each
 leaving `projects` unchanged. pytest 431 passed (422 before).
+Verified (Pauli, 2026-10-04): Done when holds (commit 8477704; `test_bundle.py` rerun, 9 passed). Order is list
+order, segments name beads by index, the history stays out (agreed by the user, 2026-10-04); a refusal of any kind
+(missing key, type, range, schema CHECK, deferred foreign key at commit, invariant) rolls the whole restore back.
+The extra `IntegrityError` → `BundleError` is right: the API needs a 400, not a 500. Braun's point on a restore
+next to its original (two books, same title and dates) is taken: next task renames on a title clash.
 
 ##### Bundle in the API and the app
-Status: todo
+Status: done
 **Done when:** `uv run pytest` passes with the new API tests; `npm run type-check` passes; `npm run test:e2e`
 passes with the new test.
 
@@ -446,17 +451,29 @@ passes with the new test.
   `<title>.tradurre.zip` built exactly as the edition export's (move that code into a `_disposition(name)` helper
   both use; the edition tests must pass unchanged). `POST /books/bundle` (multipart field `bundle`) → 201
   `BookImportResponse` (`id`, `title`, `bead_count`, `warnings: []`); `BundleError` → 400 with its message.
+- `services/bundle.py`, `import_bundle`: if another book already has the bundle's title, the restored book's title
+  is `<title> (restored YYYY-MM-DD)` (today's UTC date), set in the same transaction; the bundle's dates are kept.
+  `tests/test_bundle.py`: the round trip's restored title becomes `Livre (restored <today>)` (compare the exports
+  without `book.title`); a restore into a database without the original keeps `Livre` (a second connection on a
+  fresh `init_db` database).
 - `client.ts`: `booksApi.bundleUrl(id)` and `booksApi.importBundle(file)`.
 - Book screen, `MoreMenu.vue`, under "Export": a fifth item "Project bundle (.zip)" (`data-testid=
   "export-bundle"`), the same kind of `<a download>` link.
 - Library (`ProjectList.vue`): next to the import button, "Restore a bundle" (`data-testid="restore-bundle"`)
   opening a hidden `<input type="file" accept=".zip">`; on a file → `importBundle` → navigate to `/book/<id>`; an
-  error shows the server's message where the page shows its errors.
+  error shows the server's message in a new `<p data-testid="restore-error" class="mb-4 text-red-600">` under the
+  page header (the page has no error area yet), cleared on the next attempt.
 - Tests: `tests/test_books_export_api.py`: the bundle's content type and filename, 404; `POST /books/bundle` with
   an exported bundle → 201 and a second book with the same `bead_count`; with garbage → 400 "Not a Tradurre
   bundle". e2e (`book-layout.spec.ts`): More → "Project bundle (.zip)" downloads `<title>.tradurre.zip`; then on
   `/`, "Restore a bundle" with that file (`setInputFiles`) lands on `/book/<new id>` showing the same number of
-  bead rows and the same title.
+  bead rows and the title `<title> (restored <today, UTC>)`; then a garbage file shows "Not a Tradurre bundle" in
+  `restore-error`.
+Report: 2026-10-04 — `GET …/export/bundle`, `POST /books/bundle` (400 on `BundleError`), `_disposition` shared with the
+edition export; `import_bundle` titles a clash with a book `<title> (restored <UTC date>)`; `booksApi.bundleUrl`,
+`importBundle`; More → Export → "Project bundle (.zip)"; library "Restore a bundle" with `restore-error`. Tests:
+`test_bundle.py` 10 (title on clash, kept elsewhere), `test_books_export_api.py` +3, e2e download → restore through
+the file chooser → garbage refused. pytest 435 passed (431 before), type-check clean, e2e 69 passed.
 
 ---
 

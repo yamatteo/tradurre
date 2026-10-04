@@ -10,6 +10,8 @@ const showCreate = ref(false)
 const newTitle = ref('')
 const newSourceLang = ref('it')
 const newTargetLang = ref('en')
+const restoreError = ref('')
+const bundleInput = ref<HTMLInputElement | null>(null)
 
 async function load() {
   const [allProjects, allBooks] = await Promise.all([api.listProjects(), booksApi.listBooks()])
@@ -32,6 +34,21 @@ async function create() {
   router.push({ name: 'editor', params: { id: proj.id } })
 }
 
+/** Restore a project bundle (SPEC §3.5) as a new book and open it. */
+async function restoreBundle(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''  // the same file can be chosen again after an error
+  if (!file) return
+  restoreError.value = ''
+  try {
+    const book = await booksApi.importBundle(file)
+    router.push({ name: 'book', params: { id: book.id } })
+  } catch (e) {
+    restoreError.value = (e as Error).message
+  }
+}
+
 async function remove(id: string) {
   if (!confirm('Delete this project and all its translations?')) return
   await api.deleteProject(id)
@@ -50,12 +67,19 @@ onMounted(load)
           class="px-4 py-2 bg-white border border-blue-600 text-blue-700 rounded-lg hover:bg-blue-50 text-sm">
           Import a book (txt/docx/pdf)
         </button>
+        <button data-testid="restore-bundle" @click="bundleInput?.click()"
+          class="px-4 py-2 bg-white border border-blue-600 text-blue-700 rounded-lg hover:bg-blue-50 text-sm">
+          Restore a bundle
+        </button>
+        <input ref="bundleInput" type="file" accept=".zip" data-testid="restore-bundle-file" class="hidden"
+          @change="restoreBundle" />
         <button @click="showCreate = !showCreate"
           class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm">
           New Project
         </button>
       </div>
     </div>
+    <p v-if="restoreError" data-testid="restore-error" class="mb-4 text-red-600">{{ restoreError }}</p>
 
     <div v-if="showCreate" class="bg-white rounded-lg border border-gray-200 p-4 mb-6">
       <div class="flex gap-3 items-end">

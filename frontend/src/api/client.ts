@@ -376,6 +376,16 @@ export const booksApi = {
   editionUrl: (id: string, side: Side, format: 'txt' | 'docx') =>
     `${BOOKS_BASE}/books/${id}/export/edition?side=${side}&format=${format}`,
 
+  /** The project bundle's URL, for a download link: the book's text layer and alignment as a backup. */
+  bundleUrl: (id: string) => `${BOOKS_BASE}/books/${id}/export/bundle`,
+
+  /** Restore a bundle as a new book (titled "… (restored <date>)" next to a book with the same title). */
+  importBundle: (bundle: File) => {
+    const form = new FormData()
+    form.append('bundle', bundle)
+    return booksRequest<BookImportResponse>('/books/bundle', { method: 'POST', body: form })
+  },
+
   /** The bead and up to `around` beads on each side of it. */
   context: (id: string, beadId: number, around = 2) =>
     booksRequest<ContextBead[]>(`/books/${id}/beads/${beadId}/context?around=${around}`),

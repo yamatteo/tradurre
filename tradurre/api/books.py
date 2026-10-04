@@ -44,6 +44,7 @@ from tradurre.models import (
     ContextBead,
 )
 from tradurre.services.build import PreparedBook, prepare_book, write_book
+from tradurre.services.bundle import BundleError, export_bundle, import_bundle
 from tradurre.services.edition import edition_blocks, edition_docx, edition_txt
 from tradurre.services.extract import EXCLUDED_KINDS, Extraction, extract
 from tradurre.services.realign import realign as realign_beads
@@ -328,6 +329,14 @@ _DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document
 _UNSAFE = re.compile(r'[/\\:*?"<>|]')
 
 
+def _disposition(name: str) -> str:
+    """An attachment named `name`: an ASCII `filename` (other characters as `_`), plus `filename*` when needed."""
+    disposition = f'attachment; filename="{name.encode("ascii", "replace").decode().replace("?", "_")}"'
+    if not name.isascii():
+        disposition += f"; filename*=UTF-8''{quote(name)}"
+    return disposition
+
+
 @router.get("/books/{book_id}/export/edition")
 def export_edition(
     book_id: str,
@@ -339,14 +348,32 @@ def export_edition(
     book = _book_row(db, book_id)
     blocks = edition_blocks(db, book_id, side)
     lang = book["source_lang" if side == "source" else "target_lang"].upper()
-    name = f"{_UNSAFE.sub('_', book['title'])} ({lang}).{format}"
-    disposition = f'attachment; filename="{name.encode("ascii", "replace").decode().replace("?", "_")}"'
-    if not name.isascii():
-        disposition += f"; filename*=UTF-8''{quote(name)}"
+    disposition = _disposition(f"{_UNSAFE.sub('_', book['title'])} ({lang}).{format}")
     if format == "txt":
         return Response(edition_txt(blocks), media_type="text/plain; charset=utf-8",
                         headers={"Content-Disposition": disposition})
     return Response(edition_docx(blocks), media_type=_DOCX, headers={"Content-Disposition": disposition})
+
+
+@router.get("/books/{book_id}/export/bundle")
+def export_book_bundle(book_id: str, db: sqlite3.Connection = Depends(get_db)):
+    """The book's text layer and alignment as a backup (SPEC §3.5; PLAN.md, "Project bundle")."""
+    book = _book_row(db, book_id)
+    return Response(export_bundle(db, book_id), media_type="application/zip",
+                    headers={"Content-Disposition": _disposition(f"{_UNSAFE.sub('_', book['title'])}.tradurre.zip")})
+
+
+@router.post("/books/bundle", response_model=BookImportResponse, status_code=201)
+async def restore_bundle(bundle: UploadFile, db: sqlite3.Connection = Depends(get_db)):
+    """Restore a bundle as a new book."""
+    data = await bundle.read()
+    try:
+        book_id = await run_in_threadpool(import_bundle, db, data)
+    except BundleError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    book = _book_row(db, book_id)
+    bead_count = db.execute("SELECT COUNT(*) FROM beads WHERE project_id = ?", (book_id,)).fetchone()[0]
+    return {"id": book_id, "title": book["title"], "bead_count": bead_count, "warnings": []}
 
 
 @router.get("/books/{book_id}/check", response_model=list[str])

@@ -73,6 +73,11 @@ const EXPORTS = [
         class="w-full h-[30px] px-3 flex items-center text-left text-ink hover:bg-hover">
         {{ item.label }}
       </a>
+      <a role="menuitem" data-testid="export-bundle" :href="booksApi.bundleUrl(selection.book.value?.id ?? '')" download
+        @click="emit('toggle')"
+        class="w-full h-[30px] px-3 flex items-center text-left text-ink hover:bg-hover">
+        Project bundle (.zip)
+      </a>
     </div>
   </div>
 </template>

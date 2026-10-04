@@ -2,7 +2,8 @@
 
 A bundle is a zip holding one `bundle.json`. It stores no ids and no ords: order is list order, and a segment names
 its bead by its index in `beads`. The operation history is not included: a restored book starts with nothing to undo.
-Import always creates a new book, in one transaction, refused whole if the bundle is malformed or breaks an invariant.
+Import always creates a new book, in one transaction, refused whole if the bundle is malformed or breaks an invariant;
+restored next to a book with the same title, it is titled "<title> (restored YYYY-MM-DD)".
 """
 
 import io
@@ -125,11 +126,18 @@ def import_bundle(conn: sqlite3.Connection, data: bytes) -> str:
     book_id = str(uuid.uuid4())
     try:
         with transaction(conn):
+            title = _field(book, "title", str, "book")
+            if conn.execute(
+                "SELECT 1 FROM projects p WHERE p.title = ? "
+                "AND EXISTS (SELECT 1 FROM documents d WHERE d.project_id = p.id)",
+                (title,),
+            ).fetchone():
+                title = f"{title} (restored {datetime.now(timezone.utc).date().isoformat()})"
             conn.execute(
                 "INSERT INTO projects (id, title, source_lang, target_lang, created_at, updated_at) "
                 "VALUES (?, ?, ?, ?, ?, ?)",
-                (book_id, *(_field(book, key, str, "book")
-                            for key in ("title", "source_lang", "target_lang", "created_at", "updated_at"))),
+                (book_id, title, *(_field(book, key, str, "book")
+                                   for key in ("source_lang", "target_lang", "created_at", "updated_at"))),
             )
             bead_ids = []
             for k, bead in enumerate(beads):

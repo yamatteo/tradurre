@@ -66,3 +66,31 @@ def test_errors(client):
     assert _export(client, "nope", "target", "txt").status_code == 404
     assert _export(client, book, "both", "txt").status_code == 422
     assert _export(client, book, "target", "pdf").status_code == 422
+
+
+def test_bundle_export(client):
+    book = _import(client, "Contre")
+    resp = client.get(f"/api/v2/books/{book}/export/bundle")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "application/zip"
+    assert resp.headers["content-disposition"] == 'attachment; filename="Contre.tradurre.zip"'
+    assert client.get("/api/v2/books/nope/export/bundle").status_code == 404
+
+
+def test_bundle_restore(client):
+    book = _import(client, "Contre")
+    data = client.get(f"/api/v2/books/{book}/export/bundle").content
+    resp = client.post("/api/v2/books/bundle", files={"bundle": ("Contre.tradurre.zip", data)})
+    assert resp.status_code == 201
+    restored = resp.json()
+    assert restored["id"] != book
+    assert restored["title"].startswith("Contre (restored ")
+    assert restored["warnings"] == []
+    books = {b["id"]: b for b in client.get("/api/v2/books").json()}
+    assert restored["bead_count"] == books[book]["bead_count"] == books[restored["id"]]["bead_count"]
+
+
+def test_bundle_restore_refused(client):
+    resp = client.post("/api/v2/books/bundle", files={"bundle": ("x.zip", b"garbage")})
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "Not a Tradurre bundle"

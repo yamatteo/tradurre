@@ -99,3 +99,42 @@ test('More → Target text (.txt) downloads the target edition, named after the 
   expect(content).toBe('﻿Maria arrivò.\n\nPaolo partì.\n')
   await expect(page.getByTestId('more-menu')).toHaveCount(0)
 })
+
+test('More → Project bundle downloads a backup; Restore a bundle opens it as a new book', async ({ page, request }) => {
+  const res = await request.post('/api/v2/books', {
+    multipart: {
+      source: { name: 'fr.txt', mimeType: 'text/plain', buffer: Buffer.from('Marie arriva.\n\nPaul partit.\n\nFin.') },
+      target: { name: 'it.txt', mimeType: 'text/plain', buffer: Buffer.from('Maria arrivò.\n\nPaolo partì.\n\nFine.') },
+      title: 'Backup',
+    },
+  })
+  expect(res.status()).toBe(201)
+  const id: string = (await res.json()).id
+  await page.goto(`/book/${id}`)
+  const rows = page.getByTestId('bead-row')
+  await expect(rows.first()).toBeVisible()
+  const count = await rows.count()
+
+  await page.getByTestId('more').click()
+  const downloaded = page.waitForEvent('download')
+  await page.getByTestId('export-bundle').click()
+  const download = await downloaded
+  expect(download.suggestedFilename()).toBe('Backup.tradurre.zip')
+  const file = await download.path()
+
+  await page.goto('/')
+  let chooser = page.waitForEvent('filechooser')
+  await page.getByTestId('restore-bundle').click()
+  await (await chooser).setFiles(file)
+  await expect(page).toHaveURL(/\/book\/[0-9a-f-]+$/)
+  expect(page.url()).not.toContain(id)  // a new book, not the original
+  const today = new Date().toISOString().slice(0, 10)
+  await expect(page.getByTestId('book-title')).toHaveText(`Backup (restored ${today})`)
+  await expect(rows).toHaveCount(count)
+
+  await page.goto('/')
+  chooser = page.waitForEvent('filechooser')
+  await page.getByTestId('restore-bundle').click()
+  await (await chooser).setFiles({ name: 'x.zip', mimeType: 'application/zip', buffer: Buffer.from('garbage') })
+  await expect(page.getByTestId('restore-error')).toHaveText('Not a Tradurre bundle')
+})

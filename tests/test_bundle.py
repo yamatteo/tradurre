@@ -3,6 +3,7 @@
 import io
 import json
 import zipfile
+from datetime import datetime, timezone
 
 import pytest
 
@@ -72,6 +73,7 @@ def _zip(bundle: dict, name: str = "bundle.json") -> bytes:
 def _normal(data: bytes) -> dict:
     bundle = _json(data)
     del bundle["exported_at"]
+    del bundle["book"]["title"]
     return bundle
 
 
@@ -84,6 +86,10 @@ def test_round_trip(conn):
     book_id = import_bundle(conn, data)
     assert book_id != "p1"
     assert _normal(export_bundle(conn, book_id)) == _normal(data)
+    # Restored next to the original: the title says so.
+    today = datetime.now(timezone.utc).date().isoformat()
+    title = conn.execute("SELECT title FROM projects WHERE id = ?", (book_id,)).fetchone()[0]
+    assert title == f"Livre (restored {today})"
     assert check_project(conn, book_id) == []
     assert {hit["project_id"] for hit in search_beads(conn, "marchait")} == {"p1", book_id}
 
@@ -106,6 +112,17 @@ def test_contents(conn):
     assert [b["reviewed"] for b in bundle["beads"]] == [False, True, False, False, False]
     assert bundle["runs"] == [{"kind": "import", "created_at": "2026-10-01", "app_version": "0.1.0",
                                "stats": {"beads": 5}, "warnings": [{"side": "source", "message": "A warning."}]}]
+
+
+def test_restore_elsewhere_keeps_the_title(conn, tmp_path):
+    data = export_bundle(conn, "p1")
+    other = get_connection(tmp_path / "other.db")
+    init_db(other)
+    try:
+        book_id = import_bundle(other, data)
+        assert other.execute("SELECT title FROM projects WHERE id = ?", (book_id,)).fetchone()[0] == "Livre"
+    finally:
+        other.close()
 
 
 def _refused(conn, data: bytes, message: str):
