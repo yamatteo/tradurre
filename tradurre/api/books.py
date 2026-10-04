@@ -4,6 +4,7 @@ Writes go through `transaction` (`tradurre.domain.history`), which defers foreig
 """
 
 import json
+import re
 import sqlite3
 import time
 import uuid
@@ -13,8 +14,9 @@ from pathlib import PurePath
 
 from collections.abc import Callable
 from typing import Literal
+from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Response, UploadFile
 from starlette.concurrency import run_in_threadpool
 
 from tradurre.db import get_db
@@ -42,6 +44,7 @@ from tradurre.models import (
     ContextBead,
 )
 from tradurre.services.build import PreparedBook, prepare_book, write_book
+from tradurre.services.edition import edition_blocks, edition_docx, edition_txt
 from tradurre.services.extract import EXCLUDED_KINDS, Extraction, extract
 from tradurre.services.realign import realign as realign_beads
 
@@ -318,6 +321,32 @@ def bead_context(
         out.append(ContextBead(bead_id=bead["id"], position=first + k, source=texts["source"],
                                target=texts["target"], reviewed=bool(bead["reviewed"])))
     return out
+
+
+_DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+# Characters Windows refuses in a file name.
+_UNSAFE = re.compile(r'[/\\:*?"<>|]')
+
+
+@router.get("/books/{book_id}/export/edition")
+def export_edition(
+    book_id: str,
+    side: Literal["source", "target"],
+    format: Literal["txt", "docx"],
+    db: sqlite3.Connection = Depends(get_db),
+):
+    """One side's text as reviewed, as a download (SPEC §3.5; PLAN.md, "Edition export")."""
+    book = _book_row(db, book_id)
+    blocks = edition_blocks(db, book_id, side)
+    lang = book["source_lang" if side == "source" else "target_lang"].upper()
+    name = f"{_UNSAFE.sub('_', book['title'])} ({lang}).{format}"
+    disposition = f'attachment; filename="{name.encode("ascii", "replace").decode().replace("?", "_")}"'
+    if not name.isascii():
+        disposition += f"; filename*=UTF-8''{quote(name)}"
+    if format == "txt":
+        return Response(edition_txt(blocks), media_type="text/plain; charset=utf-8",
+                        headers={"Content-Disposition": disposition})
+    return Response(edition_docx(blocks), media_type=_DOCX, headers={"Content-Disposition": disposition})
 
 
 @router.get("/books/{book_id}/check", response_model=list[str])

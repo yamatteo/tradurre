@@ -372,6 +372,10 @@ export const booksApi = {
     return booksRequest<BookSearchResult[]>(`/search?${params}`)
   },
 
+  /** The edition export's URL, for a download link: one side's text as reviewed (the server names the file). */
+  editionUrl: (id: string, side: Side, format: 'txt' | 'docx') =>
+    `${BOOKS_BASE}/books/${id}/export/edition?side=${side}&format=${format}`,
+
   /** The bead and up to `around` beads on each side of it. */
   context: (id: string, beadId: number, around = 2) =>
     booksRequest<ContextBead[]>(`/books/${id}/beads/${beadId}/context?around=${around}`),

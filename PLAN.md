@@ -33,7 +33,7 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
   undo/redo, problem navigation (`p`/`P`), selected runs (Shift+↑/↓, Shift+click) marked with `r`, and `R` "up to
   here", range exclude/include in the "More" menu, edited sentences marked with their original on `o` and
   "Restore original", re-align of the selection (More menu), cut/copy/paste of whole sentences (Ctrl+X/C/V).
-  Restyled to design variant A; smooth at 5,000 beads. Stage 4 done; Stage 6 (search, then export) next. On the reference book the problem flags catch
+  Restyled to design variant A; smooth at 5,000 beads. Stage 4 done. Stage 6: search done (`/search`, `BookSearch.vue`; "Search" in the book's top bar); edition export next. On the reference book the problem flags catch
   none of the 15 real errors: review is reading-first; better signals come after v0.2.
 - **Re-planned with the user (2026-10-04), SPEC changed accordingly:** review is one mode, problem-first: jump to
   the next likely problem, correct, mark one bead, a selected run, or everything up to here as reviewed. The
@@ -43,7 +43,7 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
   gold (the current one was made by the user, the developer), and maybe a second book, to score the aligner again.
 - `uv run pytest`: 414 passed, also on a fresh clone (tests read only committed synthetic fixtures; `-m library`
   tests run only where `library/contrefeu.*.pdf` exists, and assert counts only).
-- `npm run type-check` passes; releases build with `npm run build`. `npm run test:e2e` (62 tests; the three timing tests run last, alone, in project `scale`) runs on its own
+- `npm run type-check` passes; releases build with `npm run build`. `npm run test:e2e` (67 tests; the three timing tests run last, alone, in project `scale`) runs on its own
   backend (:8001, throwaway `.e2e.db`) and Vite (:5174), never the user's database. Setup per machine: `npx
   playwright install chromium` (on Ubuntu 26.04 with `PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=ubuntu24.04-x64`); tests
   use the full Chromium headless (`channel: 'chromium'`).
@@ -329,6 +329,10 @@ with × ; results with marked spans, "Not reviewed" pill, Context (`around=2`, o
 by offset; No results); "Search" link in the book top bar; new `e2e/search.spec.ts`, 5 tests (each with its own
 random-tagged words: the e2e database is shared). Matches use the global `mark` style in `main.css` (unlayered, it
 overrides Tailwind classes). type-check clean; e2e 67 passed; pytest 414 passed.
+Verified (Pauli, 2026-10-04): Done when holds (commit 44246fd; type-check rerun, clean). SPEC §3.4 is met end to end:
+one query, three sides, word beginnings and phrases, bead results with highlight, title and position, context on
+demand, open at the bead, unreviewed marked, excluded never indexed. The yellow `mark` is the v1 rule in `main.css`;
+Stage 7 restyles it with the A tokens when v1 goes.
 
 ### Export
 Decided (user, 2026-10-04): the translator uses no translation software and won't open spreadsheets; in-app
@@ -336,7 +340,7 @@ search is how they use the corpus. So corpus export (TMX/TSV) moved to SPEC §5 
 is due with v0.2. The project bundle stays in SPEC §3.5.
 
 #### Edition export
-Status: todo
+Status: done
 **Done when:** `uv run pytest` passes with the new tests; `npm run type-check` passes; `npm run test:e2e` passes
 with the new test.
 
@@ -355,7 +359,8 @@ excluded footnotes and excluded matter are left out (an included block is export
   `_`; RFC 5987 `filename*` for non-ASCII). 404 for an unknown book; `side`/`format` as `Literal` (422 otherwise).
 - Book screen, `MoreMenu.vue`: a fourth heading "Export" with four items, "Source text (.txt)", "Source text
   (.docx)", "Target text (.txt)", "Target text (.docx)" (`data-testid="export-source-txt"` etc.), plain `<a
-  href download>` links to that URL; always enabled; clicking one closes the menu.
+  href download>` links to that URL; always enabled; clicking one closes the menu (`emit('toggle')`). The book id
+  comes from the injected `selection.book` (`MoreMenu.vue` already injects `selectionKey`): no new prop.
 - Tests: `tests/test_edition.py` on a synthetic book (as `tests/test_domain_blocks.py` builds one): a heading, two
   paragraphs, an excluded running head and an excluded footnote, one segment edited → txt is BOM + heading +
   blank line + paragraph 1 (segments joined by a space, the edited text) + blank line + paragraph 2 + newline,
@@ -365,6 +370,11 @@ excluded footnotes and excluded matter are left out (an included block is export
   "Target text (.txt)" → a download (`page.waitForEvent('download')`) named `<title> (IT).txt` whose content
   holds the target text.
 - The v1 export (`api/export.py`) is untouched (Stage 7).
+Report: 2026-10-04 — new `services/edition.py` (`edition_blocks`, `edition_txt`, `edition_docx`); `GET
+/books/{id}/export/edition` (ASCII `filename` with non-ASCII as `_`, plus `filename*` when the name isn't ASCII);
+`booksApi.editionUrl`; `MoreMenu.vue` "Export" with the four links. Tests: `test_edition.py` 4, new
+`test_books_export_api.py` 4, e2e download test in `book-layout.spec.ts`. pytest 422 passed (414 before), type-check
+clean, e2e 68 passed.
 
 #### Project bundle
 Not ready. SPEC §3.5: export/import of one project's text layer and alignment as a full backup. To decide when
@@ -378,6 +388,9 @@ as a new book (never over an existing one).
 
 Remove the `pairs` table and its API, the old import wizard, `resplit`, the TipTap per-pair editor, the
 old artifact format and `services/importer.py` (unused since "Repo hygiene"); update `CLAUDE.md`, `README.md` and the e2e tests. Release v0.2.0.
+Also: the global `mark` rule in `main.css` (v1, yellow `#fef08a`, unlayered so it beats Tailwind classes) becomes
+the A tokens (`--color-current-segment`) for the search page; the old nav in `App.vue` ("Projects", "Import") points
+to the new screens.
 
 ---
 

@@ -73,3 +73,29 @@ test('h and the Keys button open the shortcuts panel; it lists every shortcut, h
   await panel.getByRole('button', { name: /Close/ }).click()
   await expect(panel).toHaveCount(0)
 })
+
+test('More → Target text (.txt) downloads the target edition, named after the book', async ({ page, request }) => {
+  const res = await request.post('/api/v2/books', {
+    multipart: {
+      source: { name: 'fr.txt', mimeType: 'text/plain', buffer: Buffer.from('Marie arriva.\n\nPaul partit.') },
+      target: { name: 'it.txt', mimeType: 'text/plain', buffer: Buffer.from('Maria arrivò.\n\nPaolo partì.') },
+      title: 'Edition',
+      source_lang: 'fr',
+      target_lang: 'it',
+    },
+  })
+  expect(res.status()).toBe(201)
+  await page.goto(`/book/${(await res.json()).id}`)
+  await expect(page.locator('[data-testid="bead-row"][data-current="true"]')).toBeVisible()
+
+  await page.getByTestId('more').click()
+  const downloaded = page.waitForEvent('download')
+  await page.getByTestId('export-target-txt').click()
+  const download = await downloaded
+  expect(download.suggestedFilename()).toBe('Edition (IT).txt')
+  const text = (await download.createReadStream()).setEncoding('utf8')
+  let content = ''
+  for await (const chunk of text) content += chunk
+  expect(content).toBe('﻿Maria arrivò.\n\nPaolo partì.\n')
+  await expect(page.getByTestId('more-menu')).toHaveCount(0)
+})
