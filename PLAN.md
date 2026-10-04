@@ -47,6 +47,8 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
   backend (:8001, throwaway `.e2e.db`) and Vite (:5174), never the user's database. Setup per machine: `npx
   playwright install chromium` (on Ubuntu 26.04 with `PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=ubuntu24.04-x64`); tests
   use the full Chromium headless (`channel: 'chromium'`).
+- `.gitignore` ignores every `*.json` (book-derived data must never be committed; `tests/fixtures/**` excepted):
+  a new config JSON is tracked with `git add -f`.
 - Python 3.14 only; AGPL-3.0-only (`LICENSE`, so PyMuPDF is a core dependency); `uv.lock` tracked, `pytest`/`httpx`
   in the `dev` group; the Windows launcher's `uv tool install` resolves from PyPI and never reads the lock.
 - No user data needs migrating: the new model can start from an empty database.
@@ -294,9 +296,12 @@ to an e2e file: `type-check` fails; then removed); `npm run test:e2e` passes; `u
 Report: 2026-10-04 — new `frontend/tsconfig.e2e.json` (node24 base, Bundler, DOM + DOM.Iterable), referenced from
 `tsconfig.json`; no spec file needed a fix. `const n: number = 'x'` in `scale.spec.ts` → `type-check` fails (TS2322),
 removed → passes; e2e 62 passed; pytest 414 passed.
+Verified (Pauli, 2026-10-04): Done when holds (commit 4986cd0; `type-check` rerun here, clean). The `*.json` rule in
+`.gitignore` stays: it is the safety net that keeps book-derived JSON (golds, extractions) out of a public repo; a new
+config JSON is added with `git add -f`, as the tsconfigs were (noted under Current state). Next: Search page.
 
 #### Search page
-Status: todo
+Status: done
 **Done when:** `npm run type-check` passes; `npm run test:e2e` passes with the new `e2e/search.spec.ts`;
 `uv run pytest` unchanged.
 
@@ -319,6 +324,11 @@ SPEC §3.4, from a global page and from inside a book.
   widens; "Context" shows the neighbours; "Open" lands on that bead (current), and Back returns to the same
   results; a bead marked reviewed through the API shows no pill; 60 matching beads in one book → 50, then "More
   results" → 60.
+Report: 2026-10-04 — new `BookSearch.vue` at `/search` (state in the URL, `router.replace`; side select; book chip
+with × ; results with marked spans, "Not reviewed" pill, Context (`around=2`, own bead tinted) and Open; More results
+by offset; No results); "Search" link in the book top bar; new `e2e/search.spec.ts`, 5 tests (each with its own
+random-tagged words: the e2e database is shared). Matches use the global `mark` style in `main.css` (unlayered, it
+overrides Tailwind classes). type-check clean; e2e 67 passed; pytest 414 passed.
 
 ### Export
 Decided (user, 2026-10-04): the translator uses no translation software and won't open spreadsheets; in-app

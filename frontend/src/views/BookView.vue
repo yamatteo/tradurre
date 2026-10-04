@@ -686,6 +686,8 @@ onBeforeUnmount(() => {
             </div>
           </div>
         </div>
+        <router-link :to="`/search?book=${book.id}`" data-testid="search-link"
+          class="shrink-0 h-7 px-2 flex items-center rounded text-ink hover:bg-hover">Search</router-link>
         <button type="button" data-testid="keys" title="Keyboard shortcuts (H)" @click="showKeys = true"
           class="shrink-0 h-7 px-2 flex items-center gap-1.5 rounded text-ink hover:bg-hover">
           Keys <kbd>H</kbd>
