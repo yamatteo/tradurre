@@ -37,7 +37,8 @@ How to get from the current state (v0.1.0) to what `SPEC.md` describes. Maintain
   book; More → Export: edition .txt/.docx and the project bundle; "Restore a bundle" on the library page).
   Stage 7: search grouped by book, the library order, database snapshots (local-time names) and the v1
   retirement (code and docs) done; next the release (fixtures, smoke script, local restore dates, the Windows checklist
-  done): the candidate wheel and folder, the Windows run, then v0.2.0. On the reference book the problem flags catch
+  done; rc1 run on Windows: PDF runtime and uv upgrade problems): a clear PDF message, the launcher's
+  VC++ runtime and upgrade retry, rc2, a second Windows run, then v0.2.0. On the reference book the problem flags catch
   none of the 15 real errors: review is reading-first; better signals come after v0.2.
 - **Re-planned with the user (2026-10-04), SPEC changed accordingly:** review is one mode, problem-first: jump to
   the next likely problem, correct, mark one bead, a selected run, or everything up to here as reviewed. The
@@ -584,8 +585,95 @@ checklist from its review.
 - `README.md` "Releasing": one line on the candidate (`make_rc.py` and the checklist). No tag, no GitHub release:
   the candidate travels by hand.
 
-#### Run on Windows, then v0.2.0
-Not ready. The developer runs the checklist; its results come back into this plan as fixes; then
+#### First Windows run (0.2.0rc1)
+Status: done
+Report: 2026-10-04 — run by the Windows agent on **Windows 10 Pro 22H2** (not 11), PowerShell 5.1, uv 0.12.22,
+Defender on; results in the developer's `RESULTS.md` (not committed). Steps 1, 2, 5, 6 PASS; v0.1 → rc1 upgrade,
+snapshot and undo across a restart all good. Two failures, both reaching any user who runs the launcher:
+1. **PDF import answers a bare 500**: the machine has no Visual C++ 2015–2022 Redistributable, `pymupdf`'s
+   `_extra.pyd` needs `MSVCP140.dll` (Python brings only `vcruntime140*.dll`): `ImportError: DLL load failed while
+   importing _extra`. Known PyMuPDF issue; the fix is the redistributable.
+2. **uv can't replace an existing tool environment** (`failed to remove directory …\uv\tools\tradurre\Lib`, os
+   error 32, every time, nothing running; deleting the folder by hand works; likely Defender scanning while uv
+   deletes). The launcher then falls back to the half-deleted old install, which crashes (`cannot import name
+   'Doc' from 'annotated_doc'`): the user is left with a broken Tradurre and no hint. The same error broke `uv run
+   --with playwright` (greenlet's `.data` folder); the agent ran `smoke.py` from a plain venv instead, and it failed
+   at the PDF import (issue 1), so 9 smoke steps didn't run. Step 7 (keys, by hand) not reached.
+Checklist nits: v0.1.0 installs 2 executables (`tradurre`, `tradurre-align`), not 1. The browser tab says
+"Vite App" (`frontend/index.html:7`).
+
+Decided (user, 2026-10-04): the launcher **installs the VC++ Redistributable** when `MSVCP140.dll` is missing
+(Windows asks once for administrator rights; on failure Tradurre starts anyway and prints the link), and the
+server answers a missing PDF runtime with a clear message. On a failed install the launcher **deletes Tradurre's uv
+tool folder and retries once**, and never falls back to an install that doesn't run.
+
+#### PDF support that can't load: a clear message
+Status: done
+Report: 2026-10-04 — `extract.py`: `PDF_RUNTIME_MISSING` and `import pymupdf` wrapped so an `ImportError` becomes that `ValueError` (400, nothing written); `test_pdf_runtime_missing_is_explained_and_writes_nothing` failed on the old import (`ModuleNotFoundError` raised through the request) and passes; pytest 387 passed.
+**Done when:** the new test fails on the current code (check by restoring it) and passes after; `uv run pytest`
+passes.
+
+- `services/extract.py` `_extract_pdf`: `import pymupdf` inside `try`/`except ImportError` → `raise
+  ValueError(PDF_RUNTIME_MISSING)`, a module constant: "PDF support can't load on this computer. Install the
+  Microsoft Visual C++ Redistributable (https://aka.ms/vs/17/release/vc_redist.x64.exe), then restart Tradurre.
+  Text and Word files still work." The existing `ValueError` path of the import (`api/books.py:66`) answers 400 with
+  it, and writes nothing. Nothing else changes (`glyph_resolver`'s `import fitz` runs only after this import).
+- `tests/test_books_api.py`: `monkeypatch.setitem(sys.modules, "pymupdf", None)` (makes the import raise
+  `ImportError`), import a .pdf + .txt pair → 400, `detail` is the constant, `GET /books` is `[]`; a .txt pair
+  still imports (201).
+
+#### Launcher: the VC++ runtime and a sturdier upgrade
+Status: todo
+**Done when:** `git ls-files --eol packaging/start-tradurre.bat` still says `w/crlf`; the release workflow's
+substitution still works (run its two `sed` expressions from `.github/workflows/release.yml` on a copy and its
+placeholder `grep` finds nothing); `uv run python scripts/make_rc.py` still builds the folder (after a wheel
+build); the report quotes the final `:run`, `:install_tradurre` and new labels. cmd can't run here: the real
+check is the next Windows run, so keep every new line simple and commented, in the file's style.
+
+`packaging/start-tradurre.bat`:
+- **VC++ runtime**, every start, just before `tradurre.exe %*` at `:run`: if `EXTRAS` contains `pdf` and
+  `%SystemRoot%\System32\msvcp140.dll` doesn't exist, `call :ensure_vcredist`. It prints what it does and that
+  Windows will ask for permission; downloads `https://aka.ms/vs/17/release/vc_redist.x64.exe` to `%TEMP%` with
+  `curl.exe -fsSL`; runs it `/install /passive /norestart`; deletes it; exit codes `0`, `3010` (restart
+  suggested) and `1638` (a newer one is installed) are success; anything else, or a failed download, prints that PDF
+  import won't work until it's installed by hand, with the link, and Tradurre starts anyway (`exit /b 0`). (This
+  is the patch the Windows agent dry-ran in `RESULTS.md`; x64 only, which is what uv's Python is.)
+- **Upgrade**: when `uv.exe tool install` fails, find uv's tool folder (`for /f "delims=" %%d in ('uv.exe tool dir
+  2^>nul')`), `rmdir /s /q` its `tradurre` subfolder (uv's environment only; the books are in
+  `%USERPROFILE%\.tradurre`), print that it is retrying, and run the same install once more.
+- **No broken fallback**: if the retry fails too, check `tradurre.exe --version` (errorlevel 0) before
+  `:fail_update`'s "Starting the installed version instead"; if it doesn't run, a new label prints that Tradurre
+  couldn't be installed, that the books are safe in `%USERPROFILE%\.tradurre`, to close any Tradurre window and run
+  the file again (and the uv and Tradurre install links), then `pause` and `exit /b 1`.
+- The header comment mentions the runtime and the retry.
+
+#### Checklist fixes and candidate rc2
+Status: todo
+**Done when:** as for "Release candidate wheel" above, with `0.2.0rc2`: the folder's wheel installed into
+scratch tool folders answers `tradurre 0.2.0rc2`, the folder's `smoke.py` passes against it, the browser tab of
+the built SPA reads "Tradurre"; `uv run pytest` passes.
+
+- `frontend/index.html`: `<title>Tradurre</title>`.
+- `packaging/WINDOWS-CHECKLIST.md`:
+  - "Windows 10 or 11" wherever it says Windows 11.
+  - Step 1 also records `Test-Path "$env:SystemRoot\System32\msvcp140.dll"`. If `False`, the **developer must be
+    at the machine for step 3**: the launcher (hidden) installs the runtime and Windows' permission prompt waits
+    for a click. The agent tells the developer before step 3, records whether it was installed and the launcher's
+    lines about it; step 3 then also expects `msvcp140.dll` to exist.
+  - Step 2 expects `Installed 2 executables: tradurre, tradurre-align`.
+  - Step 3's log check also greps `Retrying` (the uv retry) and records whether it happened.
+  - Step 4: if `uv run --with playwright` fails with os error 32, the fallback the agent used: `uv run
+    --no-project --python 3.14 python -m venv "$RC\pw"`, `& "$RC\pw\Scripts\python.exe" -m pip install
+    playwright`, then run `smoke.py` with that Python; record which way it ran.
+  - Step 6: if `uv tool uninstall` fails with os error 32, delete uv's `tradurre` tool folder (`uv tool dir`) and any
+    `tradurre*.exe` left in `%USERPROFILE%\.local\bin` that step 1 didn't find.
+  - A new step between 5 and 6, **a pdf import through the API** (`curl.exe -F` with `easy.source.docx` +
+    `easy.target.pdf`) → 201, 28 beads, then delete it: the runtime check without a browser.
+- `version = "0.2.0rc2"`, `uv lock`, build, `uv build --wheel`, `uv run python scripts/make_rc.py`.
+
+#### Second Windows run, then v0.2.0
+Not ready. The developer runs the rc2 folder's checklist (now on Windows 10, the machine without the runtime: the
+real test of the launcher's install and retry), including step 7 by hand; its results come back here. Then
 `version = "0.2.0"`, tag `v0.2.0` (pushed by the developer), and the published launcher is tried once.
 
 ---

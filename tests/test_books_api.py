@@ -1,5 +1,6 @@
 """Tests for the books API (/api/v2): import into the new model and read back."""
 
+import sys
 from io import BytesIO
 
 import pytest
@@ -10,6 +11,7 @@ from tradurre.app import app
 from tradurre.db import get_connection
 from tradurre.domain.blocks import exclude_block
 from tradurre.domain.history import transaction
+from tradurre.services.extract import PDF_RUNTIME_MISSING
 
 SOURCE = "Marie arriva.\n\nIl pleuvait.\n\nPaul partit. Il ne dit rien."
 TARGET = "Marie arrivò.\n\nPaul partì. Non disse niente."
@@ -208,6 +210,16 @@ def test_unreadable_pdf_is_refused_and_writes_nothing(client):
     assert resp.status_code == 400
     assert resp.json()["detail"] == "The file is not a readable PDF"
     assert client.get("/api/v2/books").json() == []
+
+
+def test_pdf_runtime_missing_is_explained_and_writes_nothing(client, monkeypatch):
+    # As on a Windows without the Visual C++ Redistributable: pymupdf's DLL doesn't load.
+    monkeypatch.setitem(sys.modules, "pymupdf", None)
+    resp = _import(client, target=("libro.pdf", b"%PDF-1.4"))
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == PDF_RUNTIME_MISSING
+    assert client.get("/api/v2/books").json() == []
+    assert _import(client).status_code == 201  # text files still import
 
 
 def test_empty_txt_is_refused_and_writes_nothing(client, db_path):

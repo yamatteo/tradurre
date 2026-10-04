@@ -35,6 +35,13 @@ def normalize_ocr_artifacts(text: str) -> str:
     return text
 
 
+# PDF support (pymupdf) failed to load, as on a Windows without the runtime its DLL needs (PLAN.md, "PDF support that
+# can't load: a clear message").
+PDF_RUNTIME_MISSING = (
+    "PDF support can't load on this computer. Install the Microsoft Visual C++ Redistributable "
+    "(https://aka.ms/vs/17/release/vc_redist.x64.exe), then restart Tradurre. Text and Word files still work."
+)
+
 # Block kinds the import excludes by default (SPEC §2: not aligned, not searched, revealable).
 EXCLUDED_KINDS = {"running_head", "page_number", "footnote", "front_matter", "back_matter"}
 
@@ -228,7 +235,10 @@ def _join_lines(texts: list[str]) -> str:
 
 
 def _extract_pdf(content: bytes) -> Extraction:
-    import pymupdf
+    try:
+        import pymupdf
+    except ImportError:
+        raise ValueError(PDF_RUNTIME_MISSING) from None
 
     from tradurre.services.glyph_resolver import apply_resolution, resolve_pua_glyphs
 
