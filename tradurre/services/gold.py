@@ -5,19 +5,24 @@ A layer is every segment of both editions in document order, as (original text, 
 excluded), plus each bead's reviewed mark. Original text, not edited text, so a text edit for extraction damage
 doesn't change the gold. Scores are per non-whitespace character, so segmentation and whitespace don't matter:
 - exclusion: precision/recall of the excluded characters;
-- alignment: precision/recall/F1 of bead boundaries, counted on the characters both layers include.
+- alignment: precision/recall/F1 of bead boundaries, counted on the characters both layers include; since a gold
+  may be coarser than the pipeline (sentences grouped into beads), a predicted boundary inside a gold bead is
+  counted apart (`inside_gold`), and `coarse_precision` accepts it.
+Characters are compared without whitespace, hyphens and soft hyphens.
 A layer read from a corrected bundle also carries the corrected texts; `score_ligatures` then measures how many of
 the ligature gaps (a space the PDF leaves after f/fi/fl/Th) the import closes, and how many real spaces it keeps.
 """
 
 import re
 import sqlite3
-from dataclasses import dataclass
+from bisect import bisect_right
+from dataclasses import dataclass, field
 
 from tradurre.services.bundle import _read as _read_bundle
 
 SIDES = ("source", "target")
 _SPACE = re.compile(r"\s+")
+_HYPHENS = str.maketrans("", "", "-\u00ad")  # the comparison ignores hyphens and soft hyphens
 # A whitespace run (group 1) right after f/fi/fl/Th and before a letter or hyphen: a candidate ligature slip.
 LIGATURE_GAP = re.compile(r"(?:(?i:f[il]?)|Th)(\s+)(?=[^\W\d_]|-)")
 
@@ -100,14 +105,19 @@ class Score:
     exclusion_f1: float
     excluded_chars: dict[str, tuple[int, int]]  # side -> (gold, predicted)
     missed: list[tuple[int, int]]  # runs of gold bead indices (first, last) whose boundary isn't predicted
+    on_gold: int = 0  # predicted boundaries equal to a gold boundary
+    inside_gold: int = 0  # ... not a gold boundary, but strictly inside a gold bead (a finer split)
+    elsewhere: int = 0  # ... all the others
+    coarse_precision: float = 1.0  # (on_gold + inside_gold) / predicted_boundaries
+    exclusion_by_side: dict[str, tuple[float, float]] = field(default_factory=dict)  # side -> (precision, recall)
 
 
 def _chars(segments: list[tuple[str, int | None]]) -> tuple[str, list[int | None]]:
-    """The side's text without whitespace, and the bead (or None) of each of its characters."""
+    """The side's text without whitespace and hyphens, and the bead (or None) of each of its characters."""
     texts: list[str] = []
     beads: list[int | None] = []
     for text, bead in segments:
-        text = _SPACE.sub("", text)
+        text = _SPACE.sub("", text).translate(_HYPHENS)
         texts.append(text)
         beads.extend([bead] * len(text))
     return "".join(texts), beads
@@ -151,12 +161,16 @@ def score(gold: Layer, predicted: Layer) -> Score:
     common_predicted: dict[str, list[int]] = {}
     excluded_chars: dict[str, tuple[int, int]] = {}
     excluded_both = 0
+    exclusion_by_side: dict[str, tuple[float, float]] = {}
     _check_same_text(gold, predicted)
     for side in SIDES:
         _, gold_beads = _chars(gold.side(side))
         _, predicted_beads = _chars(predicted.side(side))
         excluded_chars[side] = (gold_beads.count(None), predicted_beads.count(None))
-        excluded_both += sum(g is None and p is None for g, p in zip(gold_beads, predicted_beads))
+        both_excluded = sum(g is None and p is None for g, p in zip(gold_beads, predicted_beads))
+        excluded_both += both_excluded
+        exclusion_by_side[side] = (_ratio(both_excluded, excluded_chars[side][1], excluded_chars[side][0]),
+                                   _ratio(both_excluded, excluded_chars[side][0], excluded_chars[side][1]))
         both = [(g, p) for g, p in zip(gold_beads, predicted_beads) if g is not None and p is not None]
         common_gold[side] = [g for g, _ in both]
         common_predicted[side] = [p for _, p in both]
@@ -175,6 +189,19 @@ def score(gold: Layer, predicted: Layer) -> Score:
     alignment_precision = _ratio(hits, len(predicted_set), len(gold_set))
     alignment_recall = _ratio(hits, len(gold_set), len(predicted_set))
 
+    coarse = sorted(set(gold_ends) | edges)
+    on_gold = inside_gold = 0
+    for s, t in predicted_set:
+        if (s, t) in gold_set:
+            on_gold += 1
+            continue
+        k = bisect_right(coarse, (s, t))
+        if 0 < k < len(coarse):
+            (a_s, a_t), (b_s, b_t) = coarse[k - 1], coarse[k]
+            inside_gold += a_s <= s <= b_s and a_t <= t <= b_t
+    elsewhere = len(predicted_set) - on_gold - inside_gold
+    coarse_precision = _ratio(on_gold + inside_gold, len(predicted_set), len(gold_set))
+
     runs: list[tuple[int, int]] = []
     for k, end in enumerate(gold_ends):
         if end in edges or end in predicted_set:
@@ -190,6 +217,7 @@ def score(gold: Layer, predicted: Layer) -> Score:
         len(gold_set), len(predicted_set),
         exclusion_precision, exclusion_recall, _f1(exclusion_precision, exclusion_recall),
         excluded_chars, runs,
+        on_gold, inside_gold, elsewhere, coarse_precision, exclusion_by_side,
     )
 
 

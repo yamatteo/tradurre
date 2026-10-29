@@ -166,8 +166,9 @@ def test_score_script_with_a_bundle_gold(client, db_path, tmp_path, capsys):  # 
     out = capsys.readouterr().out
     assert "ligatures, source: slips 1 (closed 0, open 1), real 0 (kept 0, joined 0), skipped segments 0" in out
     assert "ligatures, total: slips 1" in out
-    assert "alignment and exclusion are not scored" in out
-    assert "alignment:" not in out
+    assert "alignment and exclusion are not scored" not in out
+    assert "alignment, coarse:" in out
+    assert "exclusion, source:" in out
 
 
 # --- The real book ---
