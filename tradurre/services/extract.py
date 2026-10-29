@@ -115,13 +115,47 @@ class _Line:
     size: float  # the largest span size in the line
 
 
+# Some PDF producers write a ligature glyph as its letters plus extra space characters placed inside the glyph, so
+# the text comes out as "fi lm" or "Th omas". Such a space starts more than a point before the origin of the glyph
+# it follows; a real word space starts at or after that origin. Only the f/fi/fl (also ff, ffi, ffl) and capital Th
+# families are repaired; other stray spaces (other letters, kerning) are left alone.
+_STRAY_BELOW = -1.0
+_LIGATURE_END = re.compile(r"(?:(?i:f[il]?)|Th)$")
+
+
+def _stray_space_indexes(chars: list[tuple[str, float, float]]) -> set[int]:
+    """Which characters of a span to drop: the stray spaces after a ligature glyph. `chars` are the span's
+    characters as (character, origin x, bbox x0). A space is dropped when it starts more than a point before the
+    origin of the last glyph before it and the letters up to that glyph end in f, fi, fl or Th. In a run of spaces
+    after one glyph each is judged on its own, so a real space after a ligature at a word end stays."""
+    drop: set[int] = set()
+    glyph = -1  # index of the last non-space character
+    for i, (c, _, x0) in enumerate(chars):
+        if not c.isspace():
+            glyph = i
+        elif glyph >= 0 and x0 - chars[glyph][1] < _STRAY_BELOW:
+            tail = "".join(_LIGATURES.get(ch, ch) for ch, _, _ in chars[max(0, glyph - 1) : glyph + 1])
+            if _LIGATURE_END.search(tail):
+                drop.add(i)
+    return drop
+
+
+def _span_text(span) -> str:
+    """The text of a `rawdict` span, without the stray spaces inside ligature glyphs."""
+    chars = span["chars"]
+    if not any(c["c"].isspace() for c in chars):
+        return "".join(c["c"] for c in chars)
+    drop = _stray_space_indexes([(c["c"], c["origin"][0], c["bbox"][0]) for c in chars])
+    return "".join(c["c"] for i, c in enumerate(chars) if i not in drop)
+
+
 def _page_lines(page) -> list[_Line]:
     """The page's non-blank lines, in PyMuPDF's order, with `page` still unset (0)."""
     lines: list[_Line] = []
-    for block in page.get_text("dict")["blocks"]:
+    for block in page.get_text("rawdict")["blocks"]:
         for line in block.get("lines", []):
             spans = line["spans"]
-            text = "".join(span["text"] for span in spans)
+            text = "".join(_span_text(span) for span in spans)
             if not text.strip():
                 continue
             x0, y0, x1, y1 = line["bbox"]
