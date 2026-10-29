@@ -6,14 +6,20 @@ excluded), plus each bead's reviewed mark. Original text, not edited text, so a 
 doesn't change the gold. Scores are per non-whitespace character, so segmentation and whitespace don't matter:
 - exclusion: precision/recall of the excluded characters;
 - alignment: precision/recall/F1 of bead boundaries, counted on the characters both layers include.
+A layer read from a corrected bundle also carries the corrected texts; `score_ligatures` then measures how many of
+the ligature gaps (a space the PDF leaves after f/fi/fl/Th) the import closes, and how many real spaces it keeps.
 """
 
 import re
 import sqlite3
 from dataclasses import dataclass
 
+from tradurre.services.bundle import _read as _read_bundle
+
 SIDES = ("source", "target")
 _SPACE = re.compile(r"\s+")
+# A whitespace run (group 1) right after f/fi/fl/Th and before a letter or hyphen: a candidate ligature slip.
+LIGATURE_GAP = re.compile(r"(?:(?i:f[il]?)|Th)(\s+)(?=[^\W\d_]|-)")
 
 
 @dataclass
@@ -21,6 +27,7 @@ class Layer:
     source: list[tuple[str, int | None]]
     target: list[tuple[str, int | None]]
     reviewed: list[bool]
+    corrected: dict[str, list[str]] | None = None  # per side, the current texts, parallel to source/target
 
     def side(self, side: str) -> list[tuple[str, int | None]]:
         return self.source if side == "source" else self.target
@@ -67,6 +74,20 @@ def layer_from_json(data: dict) -> Layer:
     )
 
 
+def layer_from_bundle(data: bytes) -> Layer:
+    """The layer of a bundle (zip bytes): original texts, beads, reviewed marks and the current (corrected) texts."""
+    bundle = _read_bundle(data)
+    sides: dict[str, list[tuple[str, int | None]]] = {side: [] for side in SIDES}
+    corrected: dict[str, list[str]] = {side: [] for side in SIDES}
+    for document in bundle["documents"]:
+        side = document["side"]
+        for block in document["blocks"]:
+            for segment in block["segments"]:
+                sides[side].append((segment["original_text"], segment["bead"]))
+                corrected[side].append(segment["text"])
+    return Layer(sides["source"], sides["target"], [bool(b["reviewed"]) for b in bundle["beads"]], corrected)
+
+
 @dataclass
 class Score:
     alignment_precision: float
@@ -90,6 +111,13 @@ def _chars(segments: list[tuple[str, int | None]]) -> tuple[str, list[int | None
         texts.append(text)
         beads.extend([bead] * len(text))
     return "".join(texts), beads
+
+
+def _check_same_text(gold: Layer, predicted: Layer) -> None:
+    """Raise if a side's text without whitespace differs between the two layers."""
+    for side in SIDES:
+        if _chars(gold.side(side))[0] != _chars(predicted.side(side))[0]:
+            raise ValueError(f"the gold doesn't match the current extraction ({side})")
 
 
 def _ratio(hits: int, total: int, other: int) -> float:
@@ -123,11 +151,10 @@ def score(gold: Layer, predicted: Layer) -> Score:
     common_predicted: dict[str, list[int]] = {}
     excluded_chars: dict[str, tuple[int, int]] = {}
     excluded_both = 0
+    _check_same_text(gold, predicted)
     for side in SIDES:
-        gold_text, gold_beads = _chars(gold.side(side))
-        predicted_text, predicted_beads = _chars(predicted.side(side))
-        if gold_text != predicted_text:
-            raise ValueError(f"the gold doesn't match the current extraction ({side})")
+        _, gold_beads = _chars(gold.side(side))
+        _, predicted_beads = _chars(predicted.side(side))
         excluded_chars[side] = (gold_beads.count(None), predicted_beads.count(None))
         excluded_both += sum(g is None and p is None for g, p in zip(gold_beads, predicted_beads))
         both = [(g, p) for g, p in zip(gold_beads, predicted_beads) if g is not None and p is not None]
@@ -164,3 +191,87 @@ def score(gold: Layer, predicted: Layer) -> Score:
         exclusion_precision, exclusion_recall, _f1(exclusion_precision, exclusion_recall),
         excluded_chars, runs,
     )
+
+
+@dataclass
+class LigatureCounts:
+    slips: int = 0  # gold gaps that were ligature slips (closed in the corrected text)
+    slips_closed: int = 0  # ... that the predicted layer closes
+    slips_open: int = 0
+    real: int = 0  # gold gaps that are real spaces
+    real_kept: int = 0
+    real_joined: int = 0  # real spaces the predicted layer closes
+    skipped_segments: int = 0  # segments edited beyond whitespace, not examined
+
+    @property
+    def slip_recall(self) -> float:
+        return _ratio(self.slips_closed, self.slips, 0)
+
+    @property
+    def keep_rate(self) -> float:
+        return _ratio(self.real_kept, self.real, 0)
+
+
+@dataclass
+class LigatureScore:
+    sides: dict[str, LigatureCounts]
+    total: LigatureCounts
+
+
+def ligature_positions(gold: Layer) -> dict[str, tuple[list[int], list[int], int]]:
+    """Per side: the positions (in the side's non-whitespace character stream) of the gold's ligature slips and of
+    its real spaces, and the number of skipped segments. Needs corrected texts."""
+    if gold.corrected is None:
+        raise ValueError("the gold has no corrected texts, so it has no ligature metric")
+    result: dict[str, tuple[list[int], list[int], int]] = {}
+    for side in SIDES:
+        slips: list[int] = []
+        real: list[int] = []
+        skipped = 0
+        offset = 0
+        for (original, _), text in zip(gold.side(side), gold.corrected[side]):
+            size = len(_SPACE.sub("", original))
+            if _SPACE.sub("", text) != _SPACE.sub("", original):
+                skipped += 1
+            else:
+                kept = {offset + n for n in _whitespace_runs(text)}
+                for m in LIGATURE_GAP.finditer(original):
+                    pos = offset + len(_SPACE.sub("", original[: m.start(1)]))
+                    (real if pos in kept else slips).append(pos)
+            offset += size
+        result[side] = (slips, real, skipped)
+    return result
+
+
+def _whitespace_runs(text: str) -> list[int]:
+    """For each whitespace run of `text`, the number of non-whitespace characters before it."""
+    return [len(_SPACE.sub("", text[: m.start()])) for m in _SPACE.finditer(text)]
+
+
+def _open_positions(segments: list[tuple[str, int | None]]) -> set[int]:
+    """Where a side has whitespace or a segment boundary, in its non-whitespace character stream."""
+    positions: set[int] = set()
+    offset = 0
+    for text, _ in segments:
+        positions.add(offset)
+        positions.update(offset + n for n in _whitespace_runs(text))
+        offset += len(_SPACE.sub("", text))
+    return positions
+
+
+def score_ligatures(gold: Layer, predicted: Layer) -> LigatureScore:
+    """How well `predicted` (a fresh import) closes the gold's ligature slips and keeps its real spaces."""
+    gold_positions = ligature_positions(gold)
+    _check_same_text(gold, predicted)
+    sides: dict[str, LigatureCounts] = {}
+    total = LigatureCounts()
+    for side in SIDES:
+        slips, real, skipped = gold_positions[side]
+        open_ = _open_positions(predicted.side(side))
+        closed = sum(p not in open_ for p in slips)
+        joined = sum(p not in open_ for p in real)
+        counts = LigatureCounts(len(slips), closed, len(slips) - closed, len(real), len(real) - joined, joined, skipped)
+        sides[side] = counts
+        for field in counts.__dataclass_fields__:
+            setattr(total, field, getattr(total, field) + getattr(counts, field))
+    return LigatureScore(sides, total)

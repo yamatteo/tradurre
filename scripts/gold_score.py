@@ -20,7 +20,9 @@ from tradurre.db import get_connection, init_db
 from tradurre.domain.history import transaction
 from tradurre.services.build import build_book
 from tradurre.services.extract import extract
-from tradurre.services.gold import SIDES, Layer, layer_from_json, read_layer, score
+from tradurre.services.gold import (
+    SIDES, Layer, LigatureCounts, layer_from_bundle, layer_from_json, read_layer, score, score_ligatures,
+)
 
 LIBRARY = Path(__file__).resolve().parent.parent / "library"
 
@@ -61,6 +63,12 @@ def _shapes(layer: Layer) -> Counter:
     return Counter((s, t) for s, t in counts)
 
 
+def _ligature_line(name: str, c: LigatureCounts) -> str:
+    return (f"ligatures, {name}: slips {c.slips} (closed {c.slips_closed}, open {c.slips_open}), "
+            f"real {c.real} (kept {c.real_kept}, joined {c.real_joined}), skipped segments {c.skipped_segments}; "
+            f"slip recall {c.slip_recall:.3f}  real keep rate {c.keep_rate:.3f}")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Score the current import against the gold book.")
     parser.add_argument("--gold", type=Path, default=LIBRARY / "contrefeu.gold.json")
@@ -72,8 +80,23 @@ def main(argv: list[str] | None = None) -> int:
             print(f"not found: {path}", file=sys.stderr)
             return 1
 
-    gold = layer_from_json(json.loads(args.gold.read_text(encoding="utf-8")))
+    if args.gold.suffix.lower() == ".zip":
+        gold = layer_from_bundle(args.gold.read_bytes())
+    else:
+        gold = layer_from_json(json.loads(args.gold.read_text(encoding="utf-8")))
     predicted, extract_s, build_s = _build(args.source, args.target)
+    if gold.corrected is not None:
+        try:
+            ligatures = score_ligatures(gold, predicted)
+        except ValueError as e:
+            print(e, file=sys.stderr)
+            return 1
+        print(f"extraction {extract_s:.1f} s, build {build_s:.1f} s; "
+              f"beads: {len(gold.reviewed)} gold, {len(predicted.reviewed)} predicted")
+        for name, counts in (*ligatures.sides.items(), ("total", ligatures.total)):
+            print(_ligature_line(name, counts))
+        print("alignment and exclusion are not scored against a bundle yet")
+        return 0
     try:
         result = score(gold, predicted)
     except ValueError as e:

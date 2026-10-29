@@ -35,6 +35,8 @@ from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
+from tradurre.services.gold import LIGATURE_GAP
+
 LIBRARY = Path(__file__).resolve().parent.parent / "library"
 BUNDLE = LIBRARY / "femur.bundle.zip"
 GOLD = LIBRARY / "femur.gold.zip"
@@ -51,7 +53,7 @@ CLASS_VALUES = ("translator", "pdf", "context")
 
 # A gap: whitespace right after f / fi / fl (so after any of f, fi, fl, ff, ffi, ffl; any case) or after a capital
 # Th (case-sensitive), and before a letter.
-GAP = re.compile(r"(?:(?i:f[il]?)|Th)(\s+)(?=[^\W\d_]|-)")
+GAP = LIGATURE_GAP
 LETTER = re.compile(r"[^\W\d_]")
 LIGATURE_CHARS = {"ﬀ": "ff", "ﬁ": "fi", "ﬂ": "fl", "ﬃ": "ffi", "ﬄ": "ffl"}
 
