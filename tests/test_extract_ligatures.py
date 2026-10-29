@@ -114,9 +114,12 @@ def test_femur_ligature_gaps_are_closed():
             pytest.skip(f"{path.name} is not present")
     from tradurre.services.gold import layer_from_bundle, score_ligatures
 
+    gold_rebase = _script("gold_rebase")
     gold_score = _script("gold_score")
+    texts, kinds = gold_rebase.extraction_blocks(source, target)
+    rebased, _ = gold_rebase.rebase(gold_rebase.read_bundle(gold_path), texts, kinds)
     predicted, _, _ = gold_score._build(source, target)
-    counts = score_ligatures(layer_from_bundle(gold_path.read_bytes()), predicted).total
+    counts = score_ligatures(layer_from_bundle(gold_rebase.bundle_bytes(rebased)), predicted).total
     assert counts.slips > 0
     assert counts.real_joined == 0
     assert counts.slips_closed == counts.slips

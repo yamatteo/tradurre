@@ -130,6 +130,53 @@ def test_rare_top_number_is_a_heading_not_a_page_number():
     assert [text for kind, text in kinds if kind == "page_number"] == [str(k + 1) for k in range(10)]
 
 
+def _mid_page_numbers(n_pages, numbered, size=10, y=560):
+    """Pages with one body line and a number-only line at y/792 (≈ 0.71, outside the 15% bands) on `numbered` pages."""
+    pages = []
+    for k in range(n_pages):
+        lines = _body(60, 300, [f"Ligne de texte de la page {k}, assez longue pour être le corps."])
+        if k in numbered:
+            lines.append((210, y, str(k + 1), size))
+        pages.append((PORTRAIT, lines))
+    return pages
+
+
+def test_repeated_number_outside_the_band_is_a_page_number_and_the_paragraph_continues():
+    page1 = _body(74, 500, ["La phrase commence"]) + _body(60, 514, ["en bas de page"]) + [(210, 560, "7", 10)]
+    page2 = _body(60, 80, ["et finit en haut."]) + [(210, 560, "8", 10)]
+    blocks = extract("livre.pdf", _pdf([(PORTRAIT, page1), (PORTRAIT, page2)])).blocks
+    assert [(b.kind, b.text) for b in blocks] == [
+        ("paragraph", "La phrase commence en bas de page et finit en haut."),
+        ("page_number", "7"),
+        ("page_number", "8"),
+    ]
+
+
+def test_number_at_a_position_that_does_not_repeat_stays_a_heading():
+    pages = _mid_page_numbers(10, {2})
+    kinds = [(kind, text) for kind, text in _blocks(pages) if kind != "paragraph"]
+    assert kinds == [("heading", "3")]
+
+
+def test_larger_number_at_the_repeated_position_stays_a_heading():
+    pages = _mid_page_numbers(8, set(range(8)))
+    pages[3][1].append((210, 560, "4", 14))  # a chapter number, larger than the body
+    del pages[3][1][-2]  # in place of that page's own number
+    kinds = [(kind, text) for kind, text in _blocks(pages) if kind != "paragraph"]
+    assert ("heading", "4") in kinds
+    assert [text for kind, text in kinds if kind == "page_number"] == ["1", "2", "3", "5", "6", "7", "8"]
+
+
+def test_running_text_in_the_repeated_slot_protects_it():
+    # Number-only lines at the same height as body lines on every page: the slot is mostly running text.
+    pages = []
+    for k in range(8):
+        lines = _body(60, 300, [f"Texte de la page {k}"]) + _body(60, 480, ["Un long texte du corps ici"] * 1)
+        lines += [(210, 481, str(k + 1), BODY)] if k < 4 else []
+        pages.append((PORTRAIT, lines))
+    assert not [b for b in extract("livre.pdf", _pdf(pages)).blocks if b.kind == "page_number"]
+
+
 def test_soft_and_hard_hyphens_at_line_ends():
     lines = _body(74, 100, ["Le commen­", "cement de la porte-", "fenêtre."])
     assert _blocks([(PORTRAIT, lines)]) == [("paragraph", "Le commencement de la porte-fenêtre.")]

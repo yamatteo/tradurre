@@ -90,6 +90,8 @@ def main(argv: list[str] | None = None) -> int:
             ligatures = score_ligatures(gold, predicted)
         except ValueError as e:
             print(e, file=sys.stderr)
+            print("hint: if the extraction changed how blocks are cut, re-express the gold with "
+                  "scripts/gold_rebase.py", file=sys.stderr)
             return 1
         print(f"extraction {extract_s:.1f} s, build {build_s:.1f} s; "
               f"beads: {len(gold.reviewed)} gold, {len(predicted.reviewed)} predicted")
@@ -101,6 +103,8 @@ def main(argv: list[str] | None = None) -> int:
         result = score(gold, predicted)
     except ValueError as e:
         print(e, file=sys.stderr)
+        print("hint: if the extraction changed how blocks are cut, re-express the gold with "
+              "scripts/gold_rebase.py", file=sys.stderr)
         return 1
 
     print(f"extraction {extract_s:.1f} s, build {build_s:.1f} s; "

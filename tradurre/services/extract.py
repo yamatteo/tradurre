@@ -207,6 +207,7 @@ _PAGE_NUMBER = re.compile(r"^\s*([0-9]+|[ivxlcdm]+)\s*$", re.IGNORECASE)
 _CHAPTER_NUMBER = re.compile(r"^\s*([0-9]+|[IVXLC]+)\s*$")
 _BAND = 0.15  # top/bottom band, as a share of the page height, measured on the line's vertical centre
 _FREQUENT_SLOT = 0.25  # page numbers sit in the same (band, size) slot on at least this share of logical pages
+_SLOT_STEP = 0.01  # vertical resolution for page numbers outside the band, as a share of the page height
 
 
 def _band(line: _Line, height: float) -> str | None:
@@ -228,6 +229,26 @@ def _classify(lines: list[_Line], sizes: list[tuple[float, float]], body_size: f
             slots[(band, round(line.size))].add(line.page)
     frequent = {slot for slot, pages in slots.items() if len(pages) >= _FREQUENT_SLOT * len(sizes)}
 
+    # Page numbers set above the footer band (a printed page number can sit at 84% of the page height): a
+    # number-only line whose vertical slot repeats on enough pages. To keep running text out, the slot must be
+    # (almost) only such numbers: at least 80% of the lines in it, of that size, are number-only.
+    def vslot(line: _Line) -> tuple[int, int]:
+        return round((line.y0 + line.y1) / 2 / sizes[line.page][1] / _SLOT_STEP), round(line.size)
+
+    in_slot: Counter[tuple[int, int]] = Counter()
+    numeric_pages: dict[tuple[int, int], set[int]] = defaultdict(set)
+    numeric_lines: Counter[tuple[int, int]] = Counter()
+    for line, band in zip(lines, bands):
+        in_slot[vslot(line)] += 1
+        if not band and line.size <= body_size + 0.5 and _PAGE_NUMBER.match(line.text):
+            numeric_pages[vslot(line)].add(line.page)
+            numeric_lines[vslot(line)] += 1
+    mid_page = {
+        slot
+        for slot, pages in numeric_pages.items()
+        if len(pages) >= _FREQUENT_SLOT * len(sizes) and numeric_lines[slot] >= 0.8 * in_slot[slot]
+    }
+
     def head_key(line: _Line) -> str:
         return re.sub(r"\d", "", line.text).casefold().strip()
 
@@ -240,6 +261,8 @@ def _classify(lines: list[_Line], sizes: list[tuple[float, float]], body_size: f
     for line, band in zip(lines, bands):
         height = sizes[line.page][1]
         if band and (band, round(line.size)) in frequent and _PAGE_NUMBER.match(line.text):
+            kinds.append("page_number")
+        elif not band and line.size <= body_size + 0.5 and _PAGE_NUMBER.match(line.text) and vslot(line) in mid_page:
             kinds.append("page_number")
         elif band == "top" and head_key(line) and len(head_pages[head_key(line)]) >= 3:
             kinds.append("running_head")
