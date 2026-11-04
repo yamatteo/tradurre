@@ -250,3 +250,152 @@ def test_bundle_round_trip_is_deterministic(tmp_path):
     assert path.read_bytes() == tool.bundle_bytes(b)
     with zipfile.ZipFile(path) as z:
         assert json.loads(z.read("bundle.json")) == b
+
+
+# --- Splitting a gold block where the extraction starts a new block ---
+
+
+def two_blocks(texts_source: list[str], source: list[dict], n_beads: int = 3):
+    b = bundle(source, [blk("paragraph", False, ("zoru", 0)), blk("paragraph", False, ("tuvo", 1))], n_beads)
+    texts = {"source": texts_source, "target": ["zoru", "tuvo"]}
+    return b, texts, {"source": ["paragraph"] * len(texts_source), "target": ["paragraph"] * 2}
+
+
+def test_a_block_is_split_at_a_segment_boundary():
+    b, texts, kinds = two_blocks(["kolo mira", "senu tora."], [
+        blk("heading", False, ("kolo mira", 0), ("senu tora.", 1), page=4), blk("paragraph", False, ("luma", 2))])
+    texts["source"].append("luma")
+    kinds["source"] = ["heading", "heading", "paragraph"]
+    after, stats, counts = run(b, texts, kinds)
+    blocks = after["documents"][0]["blocks"]
+    assert [[s["text"] for s in x["segments"]] for x in blocks] == [["kolo mira"], ["senu tora."], ["luma"]]
+    assert [(x["kind"], x["excluded"], x["page"]) for x in blocks] == [("heading", False, 4)] * 2 + [
+        ("paragraph", False, 1)]
+    assert stats["source"]["split"] == 1 and stats["source"]["blocks_in"] == 2 and stats["source"]["blocks_out"] == 3
+    assert stats["target"]["split"] == 0
+    assert flat(after) == [("kolo mira", 0, False), ("senu tora.", 1, False), ("luma", 2, False)]
+    assert counts["source segments"] == 3
+
+
+def test_a_split_remainder_then_merges_across_an_interleaved_block():
+    # the gold block holds three segments; the extraction cuts after the first, and the remainder continues
+    # in the next extracted block together with the part after an excluded note
+    source = [blk("paragraph", False, ("kolo", 0), ("mira", 1)), blk("footnote", True, ("note", None)),
+              blk("paragraph", False, ("senu", 1)), blk("paragraph", False, ("luma", 2))]
+    b, texts, _ = two_blocks(["kolo", "mirasenu", "note", "luma"], source)
+    kinds = {"source": ["paragraph", "paragraph", "footnote", "paragraph"], "target": ["paragraph"] * 2}
+    after, stats, _ = run(b, texts, kinds)
+    blocks = after["documents"][0]["blocks"]
+    assert [[s["text"] for s in x["segments"]] for x in blocks] == [["kolo"], ["mira", "senu"], ["note"], ["luma"]]
+    assert stats["source"]["split"] == 1 and stats["source"]["merged"] == 1 and stats["source"]["moved"] == 1
+
+
+def test_a_block_can_be_split_more_than_once_and_keeps_excluded():
+    source = [blk("paragraph", True, ("kolo", None), ("mira", None), ("senu", None)), blk("paragraph", False, ("luma", 0))]
+    b = bundle(source, [blk("paragraph", False, ("zoru", 0))], 1)
+    texts = {"source": ["kolo", "mira", "senu", "luma"], "target": ["zoru"]}
+    kinds = {"source": ["paragraph"] * 4, "target": ["paragraph"]}
+    after, stats, _ = run(b, texts, kinds)
+    blocks = after["documents"][0]["blocks"]
+    assert [x["excluded"] for x in blocks] == [True, True, True, False]
+    assert stats["source"]["split"] == 2
+
+
+def test_a_cut_inside_an_edited_segment_fails_without_quoting_text():
+    seg = blk("paragraph", False, ("kolomira", 0), ("senu", 1))
+    seg["segments"][0]["original_text"] = "kolo  mira"
+    b, texts, kinds = two_blocks(["kolo", "mirasenu", "luma"], [seg, blk("paragraph", False, ("luma", 2))])
+    with pytest.raises(tool.RebaseError, match="cut inside an edited segment") as e:
+        tool.rebase(b, texts, kinds)
+    assert "kolo" not in str(e.value) and "mira" not in str(e.value)
+
+
+def test_a_second_run_after_a_split_changes_nothing_and_the_bundle_restores(tmp_path):
+    from tradurre.db import get_connection, init_db
+    from tradurre.domain.invariants import check_project
+    from tradurre.services.bundle import import_bundle
+
+    b, texts, kinds = two_blocks(["kolo", "mira", "luma"], [
+        blk("paragraph", False, ("kolo", 0), ("mira", 1)), blk("paragraph", False, ("luma", 2))])
+    once, _, _ = run(b, texts, kinds)
+    twice, stats, _ = run(once, texts, kinds)
+    assert twice == once and stats["source"]["split"] == 0
+    conn = get_connection(tmp_path / "t.db")
+    init_db(conn)
+    try:
+        assert check_project(conn, import_bundle(conn, tool.bundle_bytes(once))) == []
+    finally:
+        conn.close()
+
+
+# --- Cutting inside an excluded, bead-less segment ---
+
+
+def front_matter(excluded: bool = True, bead: int | None = None, original: str | None = None) -> dict:
+    seg = {"text": "kolo mira senu", "original_text": original or "kolo mira senu", "bead": bead}
+    return {"kind": "front_matter", "excluded": excluded, "page": 1, "segments": [seg]}
+
+
+def cut_case(block: dict):
+    b = bundle([block, blk("paragraph", False, ("luma", 0))], [blk("paragraph", False, ("zoru", 0))], 1)
+    texts = {"source": ["kolo", "mira", "senu", "luma"], "target": ["zoru"]}
+    kinds = {"source": ["front_matter"] * 3 + ["paragraph"], "target": ["paragraph"]}
+    return b, texts, kinds
+
+
+def test_an_excluded_bead_less_segment_is_cut_in_two_and_the_pieces_concatenate():
+    b, texts, kinds = cut_case(front_matter())
+    after, stats, _ = run(b, texts, kinds)
+    blocks = after["documents"][0]["blocks"]
+    pieces = [s["original_text"] for x in blocks for s in x["segments"]]
+    assert "".join(pieces[:3]) == "kolo mira senu" and len(blocks) == 4
+    assert all(s["text"] == s["original_text"] and s["bead"] is None for x in blocks[:3] for s in x["segments"])
+    assert [x["excluded"] for x in blocks] == [True, True, True, False]
+    assert stats["source"]["segment_split"] == 2 and stats["source"]["split"] == 2
+    assert stats["target"]["segment_split"] == 0
+    again, stats2, _ = run(after, texts, kinds)
+    assert again == after and stats2["source"]["segment_split"] == 0
+
+
+def test_an_included_bead_bearing_segment_is_cut_in_two_and_both_parts_keep_the_bead(tmp_path):
+    from tradurre.db import get_connection, init_db
+    from tradurre.domain.invariants import check_project
+    from tradurre.services.bundle import import_bundle
+
+    b, texts, kinds = cut_case(front_matter(excluded=False, bead=0))
+    b["documents"][0]["blocks"][1]["segments"][0]["bead"] = 0
+    after, stats, _ = run(b, texts, kinds)
+    blocks = after["documents"][0]["blocks"]
+    segments = [s for x in blocks for s in x["segments"]]
+    assert [s["bead"] for s in segments] == [0, 0, 0, 0] and len(blocks) == 4
+    assert "".join(s["text"] for s in segments[:3]) == "kolo mira senu"
+    assert stats["source"]["segment_split"] == 2
+    assert [(c[0], c[1], c[3]) for c in stats["source"]["cuts"]] == [("source", 0, True), ("source", 1, True)]
+    again, stats2, _ = run(after, texts, kinds)
+    assert again == after and stats2["source"]["segment_split"] == 0
+    conn = get_connection(tmp_path / "t.db")
+    init_db(conn)
+    try:
+        assert check_project(conn, import_bundle(conn, tool.bundle_bytes(after))) == []
+    finally:
+        conn.close()
+
+
+def test_a_cut_inside_an_excluded_segment_with_a_bead_is_recorded_as_such():
+    b, texts, kinds = cut_case(front_matter(bead=0))
+    _, stats = tool.rebase(b, texts, kinds)
+    assert [c[3] for c in stats["source"]["cuts"]] == [True, True]
+
+
+def test_the_check_rejects_a_change_in_a_beads_text():
+    b, texts, kinds = cut_case(front_matter(excluded=False, bead=0))
+    after, stats = tool.rebase(b, texts, kinds)
+    after["documents"][0]["blocks"][0]["segments"][0]["text"] = "x"
+    with pytest.raises(AssertionError):
+        tool.check(b, after, texts, stats)
+
+
+def test_a_cut_inside_an_edited_segment_fails():
+    b, texts, kinds = cut_case(front_matter(original="kolo  mira senu"))
+    with pytest.raises(tool.RebaseError, match="cut inside an edited segment"):
+        tool.rebase(b, texts, kinds)

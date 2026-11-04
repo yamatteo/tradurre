@@ -13,12 +13,27 @@ walks the extraction's blocks and re-orders / merges the gold's blocks to follow
     puts elsewhere) is emitted as one merged block: `kind`, `excluded` and `page` of its first part, the parts'
     segments in order, each segment untouched. The interleaved blocks are deferred and emitted where the
     extraction has them;
+  - a gold block whose text starts with the next extracted block's and is longer is split there: the leading
+    segments form one block, the remaining ones stay at the head of the gold and are matched against the
+    following extracted blocks. Both parts keep the block's `kind`, `excluded` and `page`. The cut is normally on
+    a segment boundary; a cut *inside* a segment is allowed when its `text` equals its `original_text` (the gold
+    holds as one segment what the extraction cuts into several blocks); the segment is then cut right after the
+    last non-white-space character before the cut, so the white space at the cut starts the second part and the
+    two parts' texts concatenate to the original exactly. Both parts keep the segment's bead. A cut inside an
+    edited segment fails. Every such cut is recorded and printed (side, block, page, bead or not). Counted as `split` (blocks) and `segment_split`.
+    The rest of a split block may wait while the extraction puts other blocks (a footer, a note) in between, and
+    continue later, like a deferred block;
   - a gold block that is included, has segments in beads, is made of digits only (at most 3 characters, white
     space ignored) and whose extracted block is excluded by the extraction is a page number the translator left
     in a bead: it is *neutralised*. The block becomes excluded and its segments leave their beads (their text is
     untouched, the beads keep their other segments). "Excluded by the extraction" is the pipeline's own notion
     (`build.py`: the block's kind is in `extract.EXCLUDED_KINDS`). A moved page number left in place would also
     break the order invariant. A merged block is never neutralised.
+
+The checks: for the segments that are in beads, each bead's segments concatenate to the same `text` and
+`original_text` as before and the beads come in the same order; the number of segments grows only through the
+recorded cuts. The bead-less segments of excluded blocks: those not cut keep their order, and the pieces of the cut ones hold
+exactly the characters of the segments they replace (the extraction may put other blocks between the pieces).
 
 Deterministic and idempotent; the input gold is never modified. Prints counts only (the gold is copyrighted text).
 """
@@ -86,6 +101,18 @@ def _gold_text(block: dict) -> str:
     return _strip("".join(s["original_text"] for s in block["segments"]))
 
 
+def _cut(text: str, n: int) -> tuple[str, str]:
+    """`text` cut after its first `n` non-white-space characters (and no later): the white space that follows
+    them starts the second part."""
+    seen = 0
+    for i, c in enumerate(text):
+        if not c.isspace():
+            seen += 1
+            if seen == n:
+                return text[:i + 1], text[i + 1:]
+    raise RebaseError("a cut beyond the end of a segment")
+
+
 def _is_page_number(text: str) -> bool:
     return 0 < len(text) <= MAX_PAGE_NUMBER_CHARS and text.isascii() and text.isdigit()
 
@@ -94,12 +121,16 @@ def rebase_blocks(side: str, gold: list[dict], texts: list[str],
                   kinds: list[str] | None = None) -> tuple[list[dict], dict]:
     """The gold's blocks of one side re-expressed in the blocks of the extraction (`texts` and `kinds`, one per
     block; without `kinds` nothing is neutralised)."""
+    blocks_in = len(gold)
+    gold = list(gold)
     gs = [_gold_text(b) for b in gold]
     ns = [_strip(t) for t in texts]
     out: list[dict] = []
     deferred: list[int] = []
+    leftovers: set[int] = set()  # gold blocks that are the rest of a split
     neutralised: list[tuple[str, str, int | None, bool]] = []
-    merged = moved = neutralised_blocks = neutralised_moved = 0
+    merged = moved = split = segment_split = neutralised_blocks = neutralised_moved = 0
+    cuts: list[tuple[str, int, int | None, bool]] = []  # in-segment cuts: side, extraction block, page, had a bead
     p = 0
 
     def fail(j: int, why: str) -> RebaseError:
@@ -116,6 +147,41 @@ def rebase_blocks(side: str, gold: list[dict], texts: list[str],
         neutralised_moved += was_moved
         return {**block, "excluded": True, "segments": [{**s, "bead": None} for s in block["segments"]]}
 
+    def cut(idx: int, want: str, j: int) -> dict:
+        """Split the head of gold block `idx` off (its text is `want`) and return it as a block; the rest stays
+        in `gold[idx]`. A cut inside a segment is allowed only in an unedited one; both parts keep its bead."""
+        nonlocal segment_split
+        head, acc, k = [], "", 0
+        rest = gold[idx]["segments"]
+        while acc != want:
+            if k >= len(rest):
+                raise fail(j, "a split would cut inside a segment")
+            seg = rest[k]
+            piece = _strip(seg["original_text"])
+            if not want.startswith(acc):
+                raise fail(j, "a split would cut inside a segment")
+            if want.startswith(acc + piece):
+                acc += piece
+                head.append(seg)
+                k += 1
+                continue
+            # the cut falls inside this segment
+            if not piece.startswith(want[len(acc):]):
+                raise fail(j, "a split would cut inside a segment")
+            if seg["text"] != seg["original_text"]:
+                raise fail(j, "a split would cut inside an edited segment")
+            first, second = _cut(seg["original_text"], len(want) - len(acc))
+            head.append({**seg, "text": first, "original_text": first})
+            rest = rest[:k] + [{**seg, "text": second, "original_text": second}] + rest[k + 1:]
+            acc = want
+            segment_split += 1
+            cuts.append((side, j, gold[idx].get("page"), seg["bead"] is not None))
+        block = neutralise({**gold[idx], "segments": head}, j, False)
+        gold[idx] = {**gold[idx], "segments": rest[k:]}
+        gs[idx] = gs[idx][len(want):]
+        leftovers.add(idx)
+        return block
+
     for j, want in enumerate(ns):
         if not want:
             raise fail(j, "empty extracted block")
@@ -123,6 +189,15 @@ def rebase_blocks(side: str, gold: list[dict], texts: list[str],
             moved += 1
             out.append(neutralise(gold[deferred.pop(0)], j, True))
             continue
+        if deferred and deferred[0] in leftovers and gs[deferred[0]].startswith(want):
+            # the leftover of an earlier split continues here, after blocks that the extraction put in between
+            out.append(cut(deferred[0], want, j))
+            split += 1
+            continue
+        # the leftover of an earlier split that the extraction continues further on waits in `deferred`
+        while p in leftovers and gs[p] != want and not gs[p].startswith(want) and not want.startswith(gs[p]):
+            deferred.append(p)
+            p += 1
         if p >= len(gold):
             raise fail(j, "gold exhausted")
         if not gs[p]:
@@ -130,6 +205,12 @@ def rebase_blocks(side: str, gold: list[dict], texts: list[str],
         if gs[p] == want:
             out.append(neutralise(gold[p], j, False))
             p += 1
+            continue
+        if gs[p].startswith(want):
+            # the extraction cuts this gold block: the leading segments that make up `want` are one block, the
+            # rest stays at the pointer (and may match, be split again or start a merge)
+            out.append(cut(p, want, j))
+            split += 1
             continue
         if not want.startswith(gs[p]):
             raise fail(j, "text differs")
@@ -157,7 +238,7 @@ def rebase_blocks(side: str, gold: list[dict], texts: list[str],
     if deferred or p != len(gold):
         raise RebaseError(f"{side}: {len(deferred)} deferred and {len(gold) - p} unread gold blocks left over "
                           f"after {len(ns)} extracted blocks")
-    return out, {"merged": merged, "blocks_in": len(gold), "blocks_out": len(out), "moved": moved,
+    return out, {"merged": merged, "split": split, "segment_split": segment_split, "cuts": cuts, "blocks_in": blocks_in, "blocks_out": len(out), "moved": moved,
                       "neutralised": neutralised_blocks, "neutralised_moved": neutralised_moved, "neutralised_segments": neutralised}
 
 
@@ -188,6 +269,29 @@ def _flat(bundle: dict, side: str) -> list[tuple[str, str, int | None, bool]]:
     ]
 
 
+def _without(items: list, drop: Counter) -> list:
+    """`items` without the first `drop[x]` occurrences of each `x`."""
+    drop, out = Counter(drop), []
+    for x in items:
+        if drop[x] > 0:
+            drop[x] -= 1
+        else:
+            out.append(x)
+    return out
+
+
+def _per_bead(flat: list[tuple[str, str, int | None, bool]]) -> list[tuple[int | None, str, str]]:
+    """The beads in order of appearance, each with its segments' `text` and `original_text` concatenated."""
+    out: list[list] = []
+    for text, original, bead, _ in flat:
+        if out and out[-1][0] == bead:
+            out[-1][1] += text
+            out[-1][2] += original
+        else:
+            out.append([bead, text, original])
+    return [tuple(x) for x in out]
+
+
 def check(before: dict, after: dict, texts: dict[str, list[str]], stats: dict[str, dict]) -> dict[str, int]:
     """Raise AssertionError if the guarantees do not hold; return counts."""
     counts = {}
@@ -200,14 +304,35 @@ def check(before: dict, after: dict, texts: dict[str, list[str]], stats: dict[st
         gone = Counter(stats[side]["neutralised_segments"])
         became = Counter((t, o, None, True) for t, o, _, _ in stats[side]["neutralised_segments"])
         assert not gone - Counter(old), f"{side}: neutralised segments are not in the input"
-        assert Counter(old) - gone + became == Counter(new), f"{side}: segments changed"
+
+        def loose(t):  # bead-less segments of excluded blocks
+            return t[2] is None and t[3]
+
+        old_loose, new_loose, left = [t for t in old if loose(t)], [], Counter(became)
+        for t in new:
+            if loose(t):
+                if left[t] > 0:
+                    left[t] -= 1
+                else:
+                    new_loose.append(t)
+        assert not +left, f"{side}: neutralised segments are missing"
+        # a segment cut in pieces may have other blocks put between its pieces: the segments that were not cut
+        # keep their order, and the pieces hold exactly the characters of the segments they replace
+        removed, added = Counter(old_loose) - Counter(new_loose), Counter(new_loose) - Counter(old_loose)
+        assert _without(old_loose, removed) == _without(new_loose, added), f"{side}: excluded bead-less order changed"
+        for k in (0, 1):
+            assert (Counter("".join(t[k] for t in removed.elements()))
+                    == Counter("".join(t[k] for t in added.elements()))), f"{side}: excluded bead-less text changed"
         old_included = []
         for t in old:
             if gone[t] > 0:
                 gone[t] -= 1
             elif not t[3]:
                 old_included.append(t)
-        assert old_included == [t for t in new if not t[3]], f"{side}: included order or beads changed"
+        new_included = [t for t in new if not t[3]]
+        assert len(new_included) == len(old_included) + sum(c[3] for c in stats[side]["cuts"]), \
+            f"{side}: segment count changed other than by recorded cuts"
+        assert _per_bead(old_included) == _per_bead(new_included), f"{side}: included order, beads or text changed"
         counts[f"{side} segments"] = len(new)
     for key in ("format", "version", "app_version", "exported_at", "book", "beads", "runs"):
         assert before.get(key) == after.get(key), f"{key} changed"
@@ -253,8 +378,11 @@ def main(argv: list[str] | None = None) -> int:
     for side in SIDES:
         s = stats[side]
         print(f"{side}: blocks {s['blocks_in']} -> {s['blocks_out']}, merged {s['merged']}, "
-              f"moved {s['moved']}, neutralised {s['neutralised']} "
+              f"block splits {s['split']}, segment splits {s['segment_split']}, moved {s['moved']}, neutralised {s['neutralised']} "
               f"(of moved blocks {s['neutralised_moved']}), segments {counts[f'{side} segments']}")
+        for _, j, page, had_bead in s["cuts"]:
+            print(f"  in-segment cut: {side}, extraction block {j}, page {page}, "
+                  f"{'with' if had_bead else 'without'} a bead")
     total = sum(stats[side]["neutralised"] for side in SIDES)
     moved = sum(stats[side]["neutralised_moved"] for side in SIDES)
     print(f"neutralised {total} included page-number blocks (excluded, segments out of their beads): "

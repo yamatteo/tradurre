@@ -103,6 +103,21 @@ def test_indented_lines_start_paragraphs():
     ]
 
 
+def test_dialogue_dense_page_keeps_its_margin():
+    # Most lines are the indented first lines of one-line paragraphs: the most common x0 is the indent, but the
+    # margin is the smallest x0 that recurs.
+    lines = _body(74, 100, ["Alpha dit oui.", "Beta dit non.", "Gamma se tait.", "Delta part et revient"])
+    lines += _body(60, 156, ["sans un mot."]) + _body(74, 170, ["Epsilon rit encore et encore"])
+    lines += _body(60, 184, ["jusqu'au soir."])
+    assert _blocks([(PORTRAIT, lines)]) == [
+        ("paragraph", "Alpha dit oui."),
+        ("paragraph", "Beta dit non."),
+        ("paragraph", "Gamma se tait."),
+        ("paragraph", "Delta part et revient sans un mot."),
+        ("paragraph", "Epsilon rit encore et encore jusqu'au soir."),
+    ]
+
+
 def test_paragraph_continues_over_a_page_break_and_page_numbers_at_87_percent():
     # FR-like: the page number's baseline at 576 puts the line at y0/h ≈ 0.87.
     page1 = _body(74, 500, ["La phrase commence"]) + _body(60, 514, ["en bas de page"]) + [(210, 576, "7", 10)]

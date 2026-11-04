@@ -318,7 +318,9 @@ def _extract_pdf(content: bytes) -> Extraction:
         if abs(line.size - body_size) <= 0.5:
             body_x[line.page][round(line.x0)] += 1
     default_left = sum(body_x.values(), Counter()).most_common(1)[0][0] if body_x else 0
-    left = {page: xs.most_common(1)[0][0] for page, xs in body_x.items()}
+    # A page's margin is its smallest x0 that recurs: on a dialogue-dense page the most common x0 is the indent
+    # of the many short paragraphs, not the margin.
+    left = {page: min((x for x, n in xs.items() if n >= 2), default=default_left) for page, xs in body_x.items()}
 
     kinds = _classify(lines, sizes, body_size)
     body = [line for line, kind in zip(lines, kinds) if kind == "paragraph"]
