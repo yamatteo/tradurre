@@ -5,7 +5,8 @@ import pytest
 from tradurre.db import get_connection, init_db
 from tradurre.domain.history import transaction
 from tradurre.domain.invariants import check_project
-from tradurre.services.build import build_book
+from tradurre.services import align
+from tradurre.services.build import _headings_open, build_book
 from tradurre.services.extract import ExtractedBlock, Extraction
 
 
@@ -95,3 +96,64 @@ def test_block_without_sentence_boundary_is_one_segment(conn):
     _build(conn, [ExtractedBlock("paragraph", "sans point final")], [ExtractedBlock("paragraph", "senza punto")])
     assert check_project(conn, "p1") == []
     assert _beads(conn) == [(["sans point final"], ["senza punto"], 1.0, "length")]
+
+
+def _bead(source, target, confidence=0.9):
+    return align.Bead(source, target, confidence)
+
+
+def test_heading_ending_a_source_side_opens_the_next_bead():
+    kinds = ["paragraph", "heading", "paragraph"]
+    beads = _headings_open([_bead([0, 1], [0]), _bead([2], [1])], kinds, ["paragraph"] * 2)
+    assert [(b.source, b.target, b.confidence) for b in beads] == [([0], [0], 0.9), ([1, 2], [1], 0.9)]
+
+
+def test_heading_ending_a_target_side_opens_the_next_bead():
+    kinds = ["paragraph", "heading", "paragraph"]
+    beads = _headings_open([_bead([0], [0, 1]), _bead([1], [2])], ["paragraph"] * 2, kinds)
+    assert [(b.source, b.target) for b in beads] == [([0], [0]), ([1], [1, 2])]
+
+
+def test_heading_alone_on_its_side_stays():
+    beads = _headings_open([_bead([0], [0, 1]), _bead([1], [2])], ["heading", "paragraph"], ["paragraph"] * 3)
+    assert [(b.source, b.target) for b in beads] == [([0], [0, 1]), ([1], [2])]
+
+
+def test_last_bead_and_other_kinds_are_untouched():
+    kinds = ["paragraph", "heading", "quote", "heading"]
+    beads = _headings_open([_bead([0, 1], [0]), _bead([2], [1]), _bead([3], [2])], kinds, ["paragraph"] * 3)
+    assert [b.source for b in beads] == [[0], [1, 2], [3]]
+    last = _headings_open([_bead([0], [0]), _bead([1, 2], [1])], ["paragraph", "paragraph", "heading"], ["paragraph"] * 2)
+    assert [b.source for b in last] == [[0], [1, 2]]
+    other = _headings_open([_bead([0, 1], [0]), _bead([2], [1])], ["paragraph", "quote", "paragraph"], ["paragraph"] * 2)
+    assert [b.source for b in other] == [[0, 1], [2]]
+
+
+def test_a_moved_heading_stays_in_document_order_and_does_not_move_twice():
+    kinds = ["heading", "heading", "paragraph"]
+    beads = _headings_open([_bead([0, 1], [0]), _bead([2], [1])], kinds, ["paragraph"] * 2)
+    assert [b.source for b in beads] == [[0], [1, 2]]
+    chain = _headings_open([_bead([0, 1], [0]), _bead([2], [1]), _bead([3], [2])], ["paragraph", "heading", "heading", "paragraph"],
+                           ["paragraph"] * 3)
+    assert [b.source for b in chain] == [[0], [1, 2], [3]]
+
+
+def test_a_heading_moved_in_does_not_move_on():
+    kinds = ["heading", "heading", "paragraph"]
+    beads = _headings_open([_bead([0, 1], [0]), _bead([2], [1])], kinds, ["paragraph"] * 2)
+    assert [b.source for b in beads] == [[0], [1, 2]]
+    kinds = ["heading", "heading", "paragraph", "paragraph"]
+    beads = _headings_open([_bead([0, 1], [0]), _bead([2], [1]), _bead([3], [2])], kinds, ["paragraph"] * 3)
+    assert [b.source for b in beads] == [[0], [1, 2], [3]]
+
+
+def test_build_moves_a_chapter_number_to_its_chapter(conn):
+    _build(
+        conn,
+        [ExtractedBlock("paragraph", "Marie arriva. Il pleuvait."), ExtractedBlock("heading", "6"),
+         ExtractedBlock("paragraph", "Paul partit.")],
+        [ExtractedBlock("paragraph", "Marie arrivò. Pioveva."), ExtractedBlock("paragraph", "Paul partì.")],
+    )
+    assert check_project(conn, "p1") == []
+    for source, _, _, _ in _beads(conn):
+        assert "6" not in source[1:]

@@ -34,6 +34,20 @@ def _included(blocks: list[NewBlock], segment_ids: list[list[int]]) -> list[tupl
     ]
 
 
+def _headings_open(beads: list[align.Bead], source_kinds: list[str], target_kinds: list[str]) -> list[align.Bead]:
+    """A heading that ends a multi-segment side of a bead opens the next bead instead: a chapter number belongs to
+    its chapter. `*_kinds` are the block kinds of the included segments, parallel to the aligner's inputs. The
+    last bead is left alone; a side with a single segment is never emptied; a heading moved into a bead
+    stays there. Returns new beads."""
+    moved = [align.Bead(list(b.source), list(b.target), b.confidence) for b in beads]
+    for k in range(len(moved) - 1):
+        for side, kinds in (("source", source_kinds), ("target", target_kinds)):
+            original = getattr(beads[k], side)  # a heading moved into this bead does not count: it never moves twice
+            if len(original) >= 2 and kinds[original[-1]] == "heading":
+                getattr(moved[k + 1], side).insert(0, getattr(moved[k], side).pop())
+    return moved
+
+
 @dataclass
 class PreparedBook:
     """Both editions segmented and aligned, ready to write: everything that needs no database."""
@@ -47,7 +61,9 @@ def prepare_book(source: tuple[str, str, Extraction], target: tuple[str, str, Ex
     import runs it before taking the database's write lock."""
     sides = [(filename, format, _blocks(extraction)) for filename, format, extraction in (source, target)]
     texts = [[text for block in blocks if not block.excluded for text in block.segments] for _, _, blocks in sides]
-    return PreparedBook(sides[0], sides[1], align.align(texts[0], texts[1]))
+    kinds = [[block.kind for block in blocks if not block.excluded for _ in block.segments] for _, _, blocks in sides]
+    beads = _headings_open(align.align(texts[0], texts[1]), kinds[0], kinds[1])
+    return PreparedBook(sides[0], sides[1], beads)
 
 
 def write_book(conn: sqlite3.Connection, project_id: str, prepared: PreparedBook) -> None:
