@@ -80,7 +80,7 @@ def test_long_colophon_does_not_end_the_back_region():
 
 
 def test_headings_in_a_colophon_region_never_change():
-    blocks = [_h("The Title", 1), _p(COLOPHON, 1), _h("1", 2), _p(LONG, 2), _p("The end.", 3), _h("Notes", 4),
+    blocks = [_h("The Title", 1), _p(COLOPHON, 1), _h("1", 2), _p(LONG, 2), _p("The end.", 3), _h("Glossary", 4),
               _p(COLOPHON, 4)]
     assert _kinds(blocks) == ["heading", "front_matter", "heading", "paragraph", "paragraph", "heading",
                               "back_matter"]
@@ -93,7 +93,7 @@ def test_the_same_marker_twice_is_not_two_markers():
 
 def test_other_kinds_are_never_rekinded():
     blocks = [ExtractedBlock("footnote", "© 2020", 1), _p("x", 1), _h("1", 2), _p(LONG, 2),
-              ExtractedBlock("page_number", "ISBN", 3), _h("Notes", 3)]
+              ExtractedBlock("page_number", "ISBN", 3), _h("Glossary", 3)]
     assert _kinds(blocks) == ["footnote", "front_matter", "heading", "paragraph", "page_number", "heading"]
 
 
@@ -116,3 +116,40 @@ def test_extract_applies_the_rule_to_docx():
     buffer = BytesIO()
     doc.save(buffer)
     assert [b.kind for b in extract("livre.docx", buffer.getvalue()).blocks] == ["front_matter", "paragraph"]
+
+
+def test_notes_heading_after_the_body_opens_the_back_matter():
+    blocks = [_h("1", 1), _p(LONG, 1), _p("the last line", 2), _h("Notes", 2), _p("a note", 2), _p("another", 3)]
+    assert _kinds(blocks) == ["heading", "paragraph", "paragraph", "back_matter", "back_matter", "back_matter"]
+
+
+def test_notes_region_does_not_reach_back_over_its_page():
+    blocks = [_h("1", 1), _p(LONG, 1), _p("body line one", 2), _p("body line two", 2), _h("Note", 2), _p("a note", 2)]
+    assert _kinds(blocks) == ["heading", "paragraph", "paragraph", "paragraph", "back_matter", "back_matter"]
+
+
+def test_notes_heading_before_the_body_end_does_nothing():
+    blocks = [_p("Author", 1), _h("Notes", 1), _p("a note", 1), _h("1", 2), _p(LONG, 2), _h("Notes", 3),
+              _p(LONG, 3), _p("the end", 4)]
+    assert _kinds(blocks) == [b.kind for b in blocks]
+
+
+def test_notes_heading_forms():
+    def kinds_for(heading: str) -> list[str]:
+        return _kinds([_p(LONG, 1), _h(heading, 2), _p("a note", 2)])
+
+    assert kinds_for("Notes") == ["paragraph", "back_matter", "back_matter"]
+    assert kinds_for("Nota della traduttrice") == ["paragraph", "back_matter", "back_matter"]
+    assert kinds_for("Notevole storia") == ["paragraph", "heading", "paragraph"]
+    assert kinds_for("Note one two three four five six") == ["paragraph", "heading", "paragraph"]
+
+
+def test_other_headings_in_the_back_region_are_unchanged():
+    blocks = [_p(LONG, 1), _h("Notes", 2), _p("a note", 2), _h("Glossary", 3), _p("a word", 3)]
+    assert _kinds(blocks) == ["paragraph", "back_matter", "back_matter", "heading", "back_matter"]
+
+
+def test_publishing_marker_after_a_notes_heading():
+    blocks = [_p(LONG, 1), _p("last line", 2), _h("Notes", 3), _p("a note", 3), _p("Finito di stampare", 4),
+              _p("Printer", 4)]
+    assert _kinds(blocks) == ["paragraph", "paragraph", "back_matter", "back_matter", "back_matter", "back_matter"]
