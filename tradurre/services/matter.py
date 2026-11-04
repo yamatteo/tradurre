@@ -25,6 +25,15 @@ def _long_paragraph(block: ExtractedBlock) -> bool:
     return block.kind == "paragraph" and len(block.text.split()) >= _LONG
 
 
+def _colophon(block: ExtractedBlock) -> bool:
+    """A paragraph carrying at least two distinct publishing markers: a colophon, however long."""
+    return block.kind == "paragraph" and sum(marker in block.text for marker in MARKERS) >= 2
+
+
+def _body_paragraph(block: ExtractedBlock) -> bool:
+    return _long_paragraph(block) and not _colophon(block)
+
+
 def _chapter_number(block: ExtractedBlock) -> bool:
     return block.kind == "heading" and bool(_CHAPTER_NUMBER.match(block.text))
 
@@ -34,7 +43,7 @@ def mark_matter(blocks: list[ExtractedBlock]) -> list[ExtractedBlock]:
     `back_matter`. Other kinds, headings included, never change."""
     kinds = [block.kind for block in blocks]
 
-    body_start = next((k for k, b in enumerate(blocks) if _chapter_number(b) or _long_paragraph(b)), None)
+    body_start = next((k for k, b in enumerate(blocks) if _chapter_number(b) or _body_paragraph(b)), None)
     if body_start is not None:
         last_mark = max((k for k in range(body_start) if _marked(blocks[k])), default=None)
         if last_mark is not None:
@@ -46,7 +55,7 @@ def mark_matter(blocks: list[ExtractedBlock]) -> list[ExtractedBlock]:
                 if kinds[k] == "paragraph":
                     kinds[k] = "front_matter"
 
-    body_end = max((k for k, b in enumerate(blocks) if _long_paragraph(b)), default=None)
+    body_end = max((k for k, b in enumerate(blocks) if _body_paragraph(b)), default=None)
     if body_end is not None:
         first_mark = next((k for k in range(body_end + 1, len(blocks)) if _marked(blocks[k])), None)
         if first_mark is not None:

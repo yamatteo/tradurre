@@ -8,6 +8,7 @@ from tradurre.services.extract import ExtractedBlock, extract
 from tradurre.services.matter import mark_matter
 
 LONG = " ".join(["parole"] * 70)  # a long paragraph: body text
+COLOPHON = "Copyright Editore " + LONG  # long, but two distinct markers: a colophon
 
 
 def _p(text: str, page: int | None = None) -> ExtractedBlock:
@@ -59,6 +60,35 @@ def test_marker_inside_the_body_changes_nothing():
 def test_without_pages_regions_go_by_index():
     blocks = [_p("Titolo originale"), _p("an epigraph"), _p(LONG), _p("Last."), _p("Editore"), _p("Printer")]
     assert _kinds(blocks) == ["front_matter", "paragraph", "paragraph", "paragraph", "back_matter", "back_matter"]
+
+
+def test_long_colophon_does_not_end_the_front_region():
+    blocks = [_p("Author", 1), _p("© 2020", 2), _p("a short line", 2), _p(COLOPHON, 2), _p("after it", 2),
+              _p("an epigraph", 3), _h("1", 4), _p(LONG, 4)]
+    assert _kinds(blocks) == ["front_matter", "front_matter", "front_matter", "front_matter", "front_matter",
+                              "paragraph", "heading", "paragraph"]
+
+
+def test_long_paragraph_with_one_marker_is_still_body():
+    blocks = [_p("ISBN 978", 1), _p("same page", 1), _p(LONG + " Editore", 2), _p("short", 2)]
+    assert _kinds(blocks) == ["front_matter", "front_matter", "paragraph", "paragraph"]
+
+
+def test_long_colophon_does_not_end_the_back_region():
+    blocks = [_h("1", 1), _p(LONG, 1), _p("The end.", 2), _p("a short line", 3), _p(COLOPHON, 3), _p("Printer", 4)]
+    assert _kinds(blocks) == ["heading", "paragraph", "paragraph", "back_matter", "back_matter", "back_matter"]
+
+
+def test_headings_in_a_colophon_region_never_change():
+    blocks = [_h("The Title", 1), _p(COLOPHON, 1), _h("1", 2), _p(LONG, 2), _p("The end.", 3), _h("Notes", 4),
+              _p(COLOPHON, 4)]
+    assert _kinds(blocks) == ["heading", "front_matter", "heading", "paragraph", "paragraph", "heading",
+                              "back_matter"]
+
+
+def test_the_same_marker_twice_is_not_two_markers():
+    blocks = [_p("ISBN 978", 1), _p(LONG + " Editore Editore", 2), _p("short", 2)]
+    assert _kinds(blocks) == ["front_matter", "paragraph", "paragraph"]
 
 
 def test_other_kinds_are_never_rekinded():
