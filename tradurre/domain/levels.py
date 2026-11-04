@@ -41,8 +41,10 @@ def compute_unit_ends(
     `bead_ids` are the book's beads in order; `segments` are the included source segments in document order, as
     (bead id, block id, text). With p the number of source segments up to and including the bead, the boundary
     lies between segments p-1 and p: a paragraph ends there iff they are in different blocks; a turn ends there
-    iff a paragraph does or their block is not a speech paragraph. The last bead ends both; a bead before any
-    source segment (p = 0), or after the last one, ends neither: a source-empty bead joins the unit it sits in.
+    iff a paragraph does or their block is not a speech paragraph. The start and the end of the book count as
+    paragraph breaks (so as turn breaks): the last bead ends both, and so does a bead with p = 0 (before any
+    source segment) or with p at or past the last source segment. A source-empty bead there is a unit of its own,
+    as at any paragraph break; inside a paragraph it joins the unit it sits in.
     """
     position = {bead_id: k for k, bead_id in enumerate(bead_ids)}
     per_bead = [0] * len(bead_ids)
@@ -59,7 +61,7 @@ def compute_unit_ends(
         if k == len(bead_ids) - 1:
             ends[bead_id] = (True, True)
         elif p == 0 or p >= len(blocks):
-            ends[bead_id] = (False, False)
+            ends[bead_id] = (True, True)
         else:
             paragraph_end = blocks[p - 1] != blocks[p]
             ends[bead_id] = (paragraph_end or not speech.get(blocks[p - 1], False), paragraph_end)

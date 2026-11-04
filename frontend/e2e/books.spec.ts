@@ -43,7 +43,7 @@ test('importing through the form opens the book, which the library then opens', 
 
   await page.goto('/')
   const card = page.locator(`[data-book-id="${bookId}"]`)
-  await expect(card).toContainText('2 beads, 0 reviewed')
+  await expect(card).toContainText('2 turns, 0 reviewed')
   await card.click()
   await expect(page).toHaveURL(new RegExp(`/book/${bookId}$`))
   await expect(page.getByTestId('bead-row')).toHaveCount(2)

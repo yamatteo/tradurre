@@ -118,7 +118,7 @@ test('Shift+↓ selects a run, r marks it in one undo step', async ({ page, requ
   await page.keyboard.press('Shift+ArrowDown')
   await page.keyboard.press('Shift+ArrowDown')
   await expect.poll(() => inRun(page)).toEqual(['true', 'true', 'true'])
-  await expect(page.getByTestId('status')).toHaveText('3 beads selected (1–3). R marks them all reviewed.')
+  await expect(page.getByTestId('status')).toHaveText('3 turns selected (1–3). R marks them all reviewed.')
   await page.keyboard.press('r')
   await expect.poll(() => reviewed(page)).toEqual(['true', 'true', 'true'])
   await expect.poll(() => inRun(page)).toEqual(['true', 'true', 'true'])
@@ -163,13 +163,13 @@ test('R marks everything up to here reviewed', async ({ page, request }) => {
   await page.keyboard.press('ArrowDown')
   await page.keyboard.press('Shift+R')
   await expect.poll(() => reviewed(page)).toEqual(['true', 'true', 'false'])
-  await expect(page.getByTestId('status')).toHaveText('Reviewed up to here (2 beads)')
+  await expect(page.getByTestId('status')).toHaveText('Reviewed up to here (2 turns)')
   await page.keyboard.press('Shift+R')
   await expect(page.getByTestId('status')).toHaveText('Already reviewed up to here')
   await page.keyboard.press('ArrowDown')
   await page.getByTestId('reviewed-up-to-here').click()
   await expect.poll(() => reviewed(page)).toEqual(['true', 'true', 'true'])
-  await expect(page.getByTestId('status')).toHaveText('Reviewed up to here (1 bead)')
+  await expect(page.getByTestId('status')).toHaveText('Reviewed up to here (1 turn)')
 })
 
 test('Caps Lock R is r: it marks only the current bead', async ({ page, request }) => {
@@ -255,7 +255,7 @@ test('the run summary says R clears them when all are reviewed', async ({ page, 
   await page.keyboard.press('Shift+ArrowDown')
   await page.keyboard.press('r')
   await expect.poll(() => reviewed(page)).toEqual(['true', 'true', 'false'])
-  await expect(page.getByTestId('status')).toHaveText('2 beads selected (1–2). R clears them all.')
+  await expect(page.getByTestId('status')).toHaveText('2 turns selected (1–2). R clears them all.')
 })
 
 test('Re-align the selection replaces the run with unreviewed beads, in one undo step', async ({ page, request }) => {

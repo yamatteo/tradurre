@@ -77,7 +77,7 @@ onMounted(load)
           <h2 class="font-medium text-gray-900">{{ b.title }}</h2>
           <p class="text-sm text-gray-500">
             {{ b.source_lang.toUpperCase() }} &rarr; {{ b.target_lang.toUpperCase() }} &middot;
-            {{ b.bead_count }} beads, {{ b.reviewed_count }} reviewed
+            {{ b.turn_count }} turns, {{ b.turn_reviewed_count }} reviewed
           </p>
         </div>
         <button data-testid="delete-book" @click.stop="remove(b)" class="text-gray-400 hover:text-red-500 text-sm px-2">

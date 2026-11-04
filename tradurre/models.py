@@ -21,6 +21,8 @@ class BookSummary(BaseModel):
     target_lang: str
     bead_count: int
     reviewed_count: int
+    turn_count: int
+    turn_reviewed_count: int
 
 
 class BookSegment(BaseModel):

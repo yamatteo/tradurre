@@ -119,7 +119,7 @@ test('n jumps to the next unreviewed bead', async ({ page, request }) => {
   await page.reload()
   await expect(current(page)).toHaveAttribute('data-bead-id', String(ids[0]))
   await page.keyboard.press('n')
-  await expect(page.getByTestId('status')).toHaveText('Every bead is reviewed')
+  await expect(page.getByTestId('status')).toHaveText('Every turn is reviewed')
 })
 
 test('show excluded reveals an excluded block in place', async ({ page, request }) => {

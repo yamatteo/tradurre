@@ -139,8 +139,39 @@ def test_list_only_books_with_counts(client, db_path):
     book_id = _import(client).json()["id"]
     assert client.get("/api/v2/books").json() == [{
         "id": book_id, "title": "contrefeu", "source_lang": "fr", "target_lang": "it",
-        "bead_count": 3, "reviewed_count": 0,
+        "bead_count": 3, "reviewed_count": 0, "turn_count": 3, "turn_reviewed_count": 0,
     }]
+
+
+def test_list_counts_turns(client):
+    source = "Marie arriva.\n\n— Zut alors. Il pleut.\n\nPaul partit."
+    target = "Maria arrivò.\n\n— Accidenti. Piove.\n\nPaolo partì."
+    resp = client.post("/api/v2/books", files={"source": ("fr.txt", source.encode()), "target": ("it.txt", target.encode())},
+                       data={"title": "speech"})
+    assert resp.status_code == 201
+    book_id = resp.json()["id"]
+    beads = client.get(f"/api/v2/books/{book_id}").json()["beads"]
+    assert [(len(b["source"]), len(b["target"])) for b in beads] == [(1, 1), (1, 1), (1, 1), (1, 1)]
+
+    def counts():
+        (row,) = client.get("/api/v2/books").json()
+        return row["bead_count"], row["reviewed_count"], row["turn_count"], row["turn_reviewed_count"]
+
+    def review(ids, level, reviewed=True):
+        r = client.post(f"/api/v2/books/{book_id}/reviewed", json={"bead_ids": ids, "reviewed": reviewed, "level": level})
+        assert r.status_code == 200
+
+    ids = [b["id"] for b in beads]
+    speech = ids[1:3]
+    assert counts() == (4, 0, 3, 0)
+    review([speech[0]], "sentence")  # one sentence of the speech turn: the turn is not reviewed
+    assert counts() == (4, 1, 3, 0)
+    review(speech, "turn")  # the whole turn; the first sentence keeps its finer mark
+    assert counts() == (4, 1, 3, 1)
+    review([ids[0], ids[3]], "turn")
+    assert counts() == (4, 1, 3, 3)
+    review(speech, "turn", reviewed=False)  # clearing the turn lowers its beads to paragraph level
+    assert counts() == (4, 0, 3, 2)
 
 
 def test_excluded_block_sits_after_previous_bead(client, db_path):

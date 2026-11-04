@@ -43,6 +43,8 @@ export interface BookSummary {
   target_lang: string
   bead_count: number
   reviewed_count: number
+  turn_count: number
+  turn_reviewed_count: number
 }
 
 export interface BookSegment {
@@ -58,7 +60,13 @@ export interface BookBead {
   id: number
   confidence: number
   method: string
+  /** Reviewed at the sentence level. */
   reviewed: boolean
+  /** The finest level the bead was reviewed at, or null. */
+  review_level: 'sentence' | 'turn' | 'paragraph' | null
+  /** Whether the boundary after the bead is a turn / paragraph boundary (the last bead: both). */
+  turn_end: boolean
+  paragraph_end: boolean
   source: BookSegment[]
   target: BookSegment[]
 }
@@ -165,8 +173,8 @@ export const booksApi = {
   splitBead: (id: string, beadId: number, sourceAt: number | null, targetAt: number | null) =>
     booksPost(`/books/${id}/beads/${beadId}/split`, { source_at: sourceAt, target_at: targetAt }),
 
-  setReviewed: (id: string, beadIds: number[], reviewed: boolean) =>
-    booksPost(`/books/${id}/reviewed`, { bead_ids: beadIds, reviewed }),
+  setReviewed: (id: string, beadIds: number[], reviewed: boolean, level?: 'sentence' | 'turn' | 'paragraph') =>
+    booksPost(`/books/${id}/reviewed`, { bead_ids: beadIds, reviewed, ...(level ? { level } : {}) }),
 
   excludeBlock: (id: string, blockId: number) => booksPost(`/books/${id}/blocks/${blockId}/exclude`),
 

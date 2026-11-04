@@ -1,25 +1,26 @@
 <script setup lang="ts">
-// One bead as a row (source left, target right). The selection is injected, not passed as props, and each row
+// One unit (a bead at sentence level) as a row (source left, target right). The selection is injected, not passed as props, and each row
 // derives its own share of it in computeds: moving the selection re-renders the two rows whose share changed, and
 // not the parent's 10,000-row list (PLAN.md, "Segment editing", scale tripwire).
 import { computed, inject, watch } from 'vue'
-import type { BookBead, BookSegment, Side } from '@/api/client'
+import type { BookSegment, Side } from '@/api/client'
+import type { Unit } from '@/levels'
 import { selectionKey } from '@/selection'
 import { isProblem } from '@/review'
 
-const props = defineProps<{ bead: BookBead; multi: boolean }>()
+const props = defineProps<{ unit: Unit; multi: boolean }>()
 
 const selection = inject(selectionKey)!
-const current = computed(() => selection.currentRow[props.bead.id] === true)
+const current = computed(() => selection.currentRow[props.unit.id] === true)
 const currentSide = computed<Side | null>(() => (current.value ? selection.currentSide.value : null))
 const currentSegmentId = computed(() => (current.value ? selection.currentSegmentId.value : null))
 const editingSegmentId = computed(() => (current.value ? selection.editingSegmentId.value : null))
-const problem = computed(() => isProblem(props.bead, props.multi))
-const inRun = computed(() => selection.inRun[props.bead.id] === true)
-const cutSegmentId = computed(() => selection.cutRow[props.bead.id] ?? null)
+const problem = computed(() => isProblem(props.unit, props.multi))
+const inRun = computed(() => selection.inRun[props.unit.id] === true)
+const cutSegmentId = computed(() => selection.cutRow[props.unit.id] ?? null)
 
 const emit = defineEmits<{
-  select: [beadId: number, side: Side, segmentId: number | null, extend: boolean]
+  select: [unitId: number, side: Side, segmentId: number | null, extend: boolean]
   edit: [segmentId: number]
   save: [segmentId: number, text: string]
   cancel: []
@@ -90,19 +91,19 @@ function blocks(segments: BookSegment[]): CellBlock[] {
 }
 
 const cells = computed(() =>
-  (['source', 'target'] as const).map((side) => ({ side, blocks: blocks(props.bead[side]) })),
+  (['source', 'target'] as const).map((side) => ({ side, blocks: blocks(props.unit[side]) })),
 )
 </script>
 
 <template>
   <!-- A1's grid: gutter mark | source | target | meta. Every state changes colours only, never the row's height. -->
-  <div :data-bead-id="bead.id" :data-current="current" :data-side="current ? currentSide : undefined"
-    :data-reviewed="bead.reviewed" :data-problem="problem" :data-in-run="inRun" data-testid="bead-row"
+  <div :data-bead-id="unit.id" :data-current="current" :data-side="current ? currentSide : undefined"
+    :data-reviewed="unit.reviewed" :data-problem="problem" :data-in-run="inRun" data-testid="bead-row"
     class="relative grid grid-cols-[40px_minmax(0,1fr)_minmax(0,1fr)_96px] border-b border-row-rule scroll-mt-7"
     :class="[current ? 'outline-[1.5px] outline-accent -outline-offset-[1.5px]' : '', inRun ? 'bg-run' : '']">
     <!-- The 3 px left border is always there, only recoloured for a run: paint-only (render rule 2). -->
     <div class="flex justify-center pt-[11px] border-l-[3px]" :class="inRun ? 'border-accent' : 'border-transparent'">
-      <svg v-if="bead.reviewed" aria-label="Reviewed" role="img" width="14" height="14" viewBox="0 0 14 14"
+      <svg v-if="unit.reviewed" aria-label="Reviewed" role="img" width="14" height="14" viewBox="0 0 14 14"
         class="text-reviewed" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
         stroke-linejoin="round"><path d="M2.5 7.5l3 3 6-7" /></svg>
       <svg v-else-if="problem" aria-label="Problem" role="img" width="12" height="12" viewBox="0 0 12 12"
@@ -114,7 +115,7 @@ const cells = computed(() =>
         cell.side === 'target' ? 'border-l border-row-rule' : '',
         current && currentSide === cell.side ? 'bg-current-side' : '',
       ]"
-      @mousedown="onCellMouseDown" @click="emit('select', bead.id, cell.side, null, $event.shiftKey)">
+      @mousedown="onCellMouseDown" @click="emit('select', unit.id, cell.side, null, $event.shiftKey)">
       <span v-if="cell.blocks.length === 0" class="font-ui text-[12.5px] italic text-absent">Not in this edition</span>
       <div v-for="block in cell.blocks" :key="block.blockId" :data-block-kind="block.kind"
         :class="block.kind === 'heading' ? 'font-semibold' : ''">
@@ -138,7 +139,7 @@ const cells = computed(() =>
               cutSegmentId === seg.segment_id ? 'border-dashed' : '',
               seg.original !== null ? 'underline decoration-dotted decoration-muted underline-offset-[3px]' : '',
             ]"
-            @click.stop="emit('select', bead.id, cell.side, seg.segment_id, $event.shiftKey)"
+            @click.stop="emit('select', unit.id, cell.side, seg.segment_id, $event.shiftKey)"
             @dblclick.stop="emit('edit', seg.segment_id)">{{ seg.text }}</span>
         </template>
       </div>
@@ -147,7 +148,7 @@ const cells = computed(() =>
     <div :data-testid="problem ? 'problem-badge' : undefined"
       class="pt-[10px] pr-3 text-right font-code text-[11px] whitespace-nowrap"
       :class="problem ? 'text-problem font-medium' : current ? 'text-muted' : 'text-transparent'">
-      {{ bead.source.length }}:{{ bead.target.length }} · {{ bead.confidence.toFixed(2) }}
+      {{ unit.source.length }}:{{ unit.target.length }} · {{ unit.confidence.toFixed(2) }}
     </div>
   </div>
 </template>

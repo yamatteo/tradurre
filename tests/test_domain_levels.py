@@ -74,9 +74,23 @@ def test_source_empty_bead(conn):
     assert _ends(conn, ids) == [(False, False), (False, False), (True, True), (True, True), (True, True)]
 
 
+def test_source_empty_beads_at_the_start(conn):
+    # the start of the book is a paragraph break: each leading source-empty bead is its own unit
+    ids = _book(conn, [("paragraph", ["— Un.", "Deux."], False)],
+                [([], [0]), ([], [0]), ([0], [0]), ([1], [0])])
+    assert _ends(conn, ids) == [(True, True), (True, True), (False, False), (True, True)]
+
+
+def test_source_empty_beads_at_the_end(conn):
+    # the last source-bearing bead ends the unit; each trailing source-empty bead is its own unit
+    ids = _book(conn, [("paragraph", ["— Un.", "Deux."], False)],
+                [([0], [0]), ([1], [0]), ([], [0]), ([], [0])])
+    assert _ends(conn, ids) == [(False, False), (True, True), (True, True), (True, True)]
+
+
 def test_source_empty_bead_first_and_last(conn):
     ids = _book(conn, [("paragraph", ["Un."], False)], [([], [0]), ([0], [0]), ([], [0])])
-    assert _ends(conn, ids) == [(False, False), (False, False), (True, True)]
+    assert _ends(conn, ids) == [(True, True), (True, True), (True, True)]
 
 
 def test_excluded_block_is_ignored(conn):

@@ -20,6 +20,7 @@ export const SHORTCUTS = [
   { id: 'next-problem', group: 'Move around', label: 'Next problem', display: ['P'], key: 'p' },
   { id: 'previous-problem', group: 'Move around', label: 'Previous problem', display: ['Shift+P'], key: 'P' },
   { id: 'next-unreviewed', group: 'Move around', label: 'Next unreviewed bead', display: ['N'], key: 'n' },
+  { id: 'level', group: 'Move around', label: 'Sentences / turns / paragraphs', display: ['L'], key: 'l' },
   { id: 'show-keys', group: 'Move around', label: 'Show this list', display: ['H'], key: 'h' },
   { id: 'reviewed', group: 'Review', label: 'Mark reviewed / unreviewed', display: ['R'], key: 'r' },
   { id: 'reviewed-up-to-here', group: 'Review', label: 'Mark everything up to here reviewed', display: ['Shift+R'], key: 'R' },

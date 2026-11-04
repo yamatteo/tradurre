@@ -10,6 +10,7 @@ import KeysPanel from '@/components/KeysPanel.vue'
 import MoreMenu from '@/components/MoreMenu.vue'
 import OriginalPopover from '@/components/OriginalPopover.vue'
 import { SHORTCUTS, type KeyedId } from '@/keys'
+import { buildUnits, LEVELS, LEVEL_LABELS, RANK, unitNoun, type Level, type Unit } from '@/levels'
 import { originalKey, selectionKey, statusKey } from '@/selection'
 import { isProblem } from '@/review'
 
@@ -37,35 +38,59 @@ const showOriginal = ref(false)
 provide(originalKey, showOriginal)
 const busy = ref(false)
 
+// The level of the rows (SPEC §3.3 "Level"): the book always opens at turns.
+const level = ref<Level>('turn')
 const currentBeadId = ref<number | null>(null)
 const currentSide = ref<Side>('source')
 const currentSegmentId = ref<number | null>(null)
 const editingSegmentId = ref<number | null>(null)
-const currentRow = shallowReactive<Record<number, true>>({})
-watch(currentBeadId, (id, old) => {
-  if (old !== null && old !== undefined) delete currentRow[old]
-  if (id !== null) currentRow[id] = true
-}, { flush: 'sync' })
 provide(statusKey, status)
 watch(currentSegmentId, () => (showOriginal.value = false))
 
-const reviewedCount = computed(() => book.value?.beads.filter((b) => b.reviewed).length ?? 0)
-const problemCount = computed(() => book.value?.beads.filter((b) => isProblem(b, showMulti.value)).length ?? 0)
+// The units at the level, rebuilt when the book or the level changes; a unit made of the same bead objects as before
+// is the same object, so only changed rows re-render (see `reconcile`).
+let lastUnits = new Map<number, Unit>()
+const units = computed<Unit[]>(() => {
+  const built = book.value ? buildUnits(book.value.beads, level.value, lastUnits) : []
+  lastUnits = new Map(built.map((u) => [u.id, u]))
+  return built
+})
+const unitIndex = computed(() => new Map(units.value.map((u, i) => [u.id, i])))
+/** Bead id → index of the unit holding it. */
+const beadUnitIndex = computed(() => {
+  const map = new Map<number, number>()
+  units.value.forEach((u, i) => u.beads.forEach((b) => map.set(b.id, i)))
+  return map
+})
 const beadIndex = computed(() => new Map(book.value?.beads.map((b, i) => [b.id, i]) ?? []))
 const currentBead = computed<BookBead | null>(() => {
   const i = currentBeadId.value === null ? undefined : beadIndex.value.get(currentBeadId.value)
   return i === undefined ? null : book.value!.beads[i]!
 })
+const currentUnit = computed<Unit | null>(() => {
+  const i = currentBeadId.value === null ? undefined : beadUnitIndex.value.get(currentBeadId.value)
+  return i === undefined ? null : units.value[i]!
+})
+const currentUnitId = computed(() => currentUnit.value?.id ?? null)
+const currentRow = shallowReactive<Record<number, true>>({})
+watch(currentUnitId, (id, old) => {
+  if (old !== null && old !== undefined) delete currentRow[old]
+  if (id !== null) currentRow[id] = true
+}, { flush: 'sync' })
 
-// The selected run (SPEC §3.3 "Reviewed marks"): the beads from the anchor to the current bead, both included. A run
-// exists when the anchor is set and differs from the current bead. `inRun` is updated by difference, like
+const reviewedCount = computed(() => units.value.filter((u) => u.reviewed).length)
+const problemCount = computed(() => units.value.filter((u) => isProblem(u, showMulti.value)).length)
+const noun = computed(() => unitNoun(level.value))
+
+// The selected run (SPEC §3.3 "Reviewed marks"): the units from the anchor to the current unit, both included. A run
+// exists when the anchor is set and differs from the current unit. `inRun` is updated by difference, like
 // `currentRow`, so a Shift+arrow wakes only the rows whose membership changed (Stage 2 scale rule).
 const runAnchorId = ref<number | null>(null)
 const inRun = shallowReactive<Record<number, true>>({})
 const runRange = computed<[number, number] | null>(() => {
-  if (runAnchorId.value === null || currentBeadId.value === null || runAnchorId.value === currentBeadId.value) return null
-  const a = beadIndex.value.get(runAnchorId.value)
-  const c = beadIndex.value.get(currentBeadId.value)
+  if (runAnchorId.value === null || currentUnitId.value === null || runAnchorId.value === currentUnitId.value) return null
+  const a = unitIndex.value.get(runAnchorId.value)
+  const c = unitIndex.value.get(currentUnitId.value)
   if (a === undefined || c === undefined) return null
   return [Math.min(a, c), Math.max(a, c)]
 })
@@ -76,48 +101,54 @@ const runBounds = computed(() => {
 watch(runRange, (range, old) => {
   // A new run, or a run grown or shrunk, replaces the message with its summary (BookStatus.vue).
   if (range?.[0] !== old?.[0] || range?.[1] !== old?.[1]) status.value = ''
-  const ids = new Set(range ? book.value!.beads.slice(range[0], range[1] + 1).map((b) => b.id) : [])
+  const ids = new Set(range ? units.value.slice(range[0], range[1] + 1).map((u) => u.id) : [])
   for (const key of Object.keys(inRun)) if (!ids.has(Number(key))) delete inRun[Number(key)]
   for (const id of ids) if (!inRun[id]) inRun[id] = true
 }, { flush: 'sync' })
 
-// The sentence cut with Ctrl+X (SPEC §3.3), waiting for a Ctrl+V in the neighbouring bead. `cutRow` (bead id →
+// The sentence cut with Ctrl+X (SPEC §3.3), waiting for a Ctrl+V in the neighbouring bead. `cutRow` (unit id →
 // segment id) is updated by difference, like `currentRow`: a cut wakes only its own row.
 const cut = shallowRef<{ beadId: number; side: Side; segmentId: number } | null>(null)
 const cutRow = shallowReactive<Record<number, number>>({})
-watch(cut, (c, old) => {
-  if (old) delete cutRow[old.beadId]
-  if (c) cutRow[c.beadId] = c.segmentId
+const cutKey = computed(() => {
+  const c = cut.value
+  const i = c ? beadUnitIndex.value.get(c.beadId) : undefined
+  return c && i !== undefined ? `${units.value[i]!.id}:${c.segmentId}` : null
+})
+watch(cutKey, (key, old) => {
+  if (old) delete cutRow[Number(old.split(':')[0])]
+  if (key) cutRow[Number(key.split(':')[0])] = Number(key.split(':')[1])
 }, { flush: 'sync' })
-provide(selectionKey, { currentRow, currentBeadId, currentSide, currentSegmentId, editingSegmentId, inRun, runBounds, cutRow, book })
+provide(selectionKey, { currentRow, currentBeadId, currentUnit, currentSide, currentSegmentId, editingSegmentId, inRun, runBounds, cutRow, book, units, level })
 
-function runBeads(): BookBead[] {
+function runUnits(): Unit[] {
   const range = runRange.value
-  return range ? book.value!.beads.slice(range[0], range[1] + 1) : []
+  return range ? units.value.slice(range[0], range[1] + 1) : []
 }
 
 function clearRun() {
   runAnchorId.value = null
 }
 
-type Item = { type: 'bead'; bead: BookBead } | { type: 'excluded'; block: BookExcludedBlock }
+type Item = { type: 'unit'; unit: Unit } | { type: 'excluded'; block: BookExcludedBlock }
 
-/** Rows in display order: beads, and with "Show excluded" each excluded block right after its bead. */
+/** Rows in display order: units, and with "Show excluded" each excluded block right after the unit holding its bead. */
 const items = computed<Item[]>(() => {
   if (!book.value) return []
-  const beads: Item[] = book.value.beads.map((bead) => ({ type: 'bead', bead }))
-  if (!showExcluded.value) return beads
+  const rows: Item[] = units.value.map((unit) => ({ type: 'unit', unit }))
+  if (!showExcluded.value) return rows
   const after = new Map<number | null, BookExcludedBlock[]>()
   for (const block of book.value.excluded) {
-    const list = after.get(block.after_bead_id) ?? []
+    const key = block.after_bead_id === null ? null : (units.value[beadUnitIndex.value.get(block.after_bead_id) ?? -1]?.id ?? null)
+    const list = after.get(key) ?? []
     list.push(block)
-    after.set(block.after_bead_id, list)
+    after.set(key, list)
   }
   const out: Item[] = (after.get(null) ?? []).map((block) => ({ type: 'excluded', block }))
-  for (const item of beads) {
+  for (const item of rows) {
     out.push(item)
-    if (item.type === 'bead') {
-      for (const block of after.get(item.bead.id) ?? []) out.push({ type: 'excluded', block })
+    if (item.type === 'unit') {
+      for (const block of after.get(item.unit.id) ?? []) out.push({ type: 'excluded', block })
     }
   }
   return out
@@ -130,70 +161,95 @@ function say(message: string) {
   statusTimer = window.setTimeout(() => (status.value = ''), 5000)
 }
 
-function firstSegment(bead: BookBead, side: Side): number | null {
-  return bead[side][0]?.segment_id ?? null
-}
-
-/** Select a bead, side and segment. `extend` (Shift) grows the run from its anchor; any other change of bead clears it. */
-function select(beadId: number, side: Side, segmentId: number | null, extend = false) {
+/** Select a unit, side and segment (default: the side's first segment of the unit); the current bead becomes the one
+ * holding that segment. `extend` (Shift) grows the run from its anchor; any other change of unit clears it. */
+function select(unitId: number, side: Side, segmentId: number | null, extend = false) {
+  const unit = units.value[unitIndex.value.get(unitId) ?? -1]
+  if (!unit) return
   if (extend) {
-    if (runAnchorId.value === null) runAnchorId.value = currentBeadId.value
-  } else if (beadId !== currentBeadId.value) {
+    if (runAnchorId.value === null) runAnchorId.value = currentUnitId.value
+  } else if (unitId !== currentUnitId.value) {
     clearRun()
   }
-  currentBeadId.value = beadId
+  const segment = (segmentId === null ? unit[side][0] : unit[side].find((s) => s.segment_id === segmentId)) ?? null
+  currentBeadId.value = beadOfSegment(unit, side, segment?.segment_id ?? null)
   currentSide.value = side
-  const bead = book.value!.beads[beadIndex.value.get(beadId)!]!
-  currentSegmentId.value = segmentId ?? firstSegment(bead, side)
+  currentSegmentId.value = segment?.segment_id ?? null
   nextTick(() => {
-    document.querySelector(`[data-testid="bead-row"][data-bead-id="${beadId}"]`)?.scrollIntoView({ block: 'nearest' })
+    document.querySelector(`[data-testid="bead-row"][data-bead-id="${unitId}"]`)?.scrollIntoView({ block: 'nearest' })
   })
 }
 
-function moveBead(delta: number, extend = false) {
-  const beads = book.value?.beads
-  if (!beads?.length) return
-  const i = currentBeadId.value === null ? -1 : beadIndex.value.get(currentBeadId.value)!
-  const next = Math.min(Math.max(i + delta, 0), beads.length - 1)
-  select(beads[next]!.id, currentSide.value, null, extend)
+/** The unit's bead holding the segment, else its first bead. */
+function beadOfSegment(unit: Unit, side: Side, segmentId: number | null): number {
+  return (unit.beads.find((b) => b[side].some((s) => s.segment_id === segmentId)) ?? unit.beads[0]!).id
 }
 
+function moveBead(delta: number, extend = false) {
+  if (!units.value.length) return
+  const i = currentUnitId.value === null ? -1 : unitIndex.value.get(currentUnitId.value)!
+  const next = Math.min(Math.max(i + delta, 0), units.value.length - 1)
+  select(units.value[next]!.id, currentSide.value, null, extend)
+}
+
+/** Tab / Shift+Tab: the next or previous segment of the side in the unit, crossing its beads. */
 function moveSegment(delta: number) {
-  const bead = currentBead.value
-  if (!bead) return
-  const segments = bead[currentSide.value]
+  const unit = currentUnit.value
+  if (!unit) return
+  const segments = unit[currentSide.value]
   const i = segments.findIndex((s) => s.segment_id === currentSegmentId.value)
   const next = segments[i + delta]
-  if (next) currentSegmentId.value = next.segment_id
+  if (next) {
+    currentBeadId.value = beadOfSegment(unit, currentSide.value, next.segment_id)
+    currentSegmentId.value = next.segment_id
+  }
 }
 
 function nextUnreviewed() {
-  const beads = book.value?.beads
-  if (!beads?.length) return
-  const start = currentBeadId.value === null ? -1 : beadIndex.value.get(currentBeadId.value)!
-  for (let k = 1; k <= beads.length; k++) {
-    const bead = beads[(start + k) % beads.length]!
-    if (!bead.reviewed) {
-      select(bead.id, currentSide.value, null)
+  if (!units.value.length) return
+  const start = currentUnitId.value === null ? -1 : unitIndex.value.get(currentUnitId.value)!
+  for (let k = 1; k <= units.value.length; k++) {
+    const unit = units.value[(start + k) % units.value.length]!
+    if (!unit.reviewed) {
+      select(unit.id, currentSide.value, null)
       return
     }
   }
-  say('Every bead is reviewed')
+  say(`Every ${noun.value} is reviewed`)
 }
 
-/** Jump to the next (delta 1) or previous (delta -1) problem bead, wrapping around like `n`. */
+/** Jump to the next (delta 1) or previous (delta -1) problem unit, wrapping around like `n`. */
 function nextProblem(delta: 1 | -1) {
-  const beads = book.value?.beads
-  if (!beads?.length) return
-  const start = currentBeadId.value === null ? (delta > 0 ? -1 : 0) : beadIndex.value.get(currentBeadId.value)!
-  for (let k = 1; k <= beads.length; k++) {
-    const bead = beads[(((start + delta * k) % beads.length) + beads.length) % beads.length]!
-    if (isProblem(bead, showMulti.value)) {
-      select(bead.id, currentSide.value, null)
+  const all = units.value
+  if (!all.length) return
+  const start = currentUnitId.value === null ? (delta > 0 ? -1 : 0) : unitIndex.value.get(currentUnitId.value)!
+  for (let k = 1; k <= all.length; k++) {
+    const unit = all[(((start + delta * k) % all.length) + all.length) % all.length]!
+    if (isProblem(unit, showMulti.value)) {
+      select(unit.id, currentSide.value, null)
       return
     }
   }
   say('No problems left')
+}
+
+/** `L`, or the control in the top bar: the rows become units of another level. The current bead stays (and so its
+ * unit); the run and the cut go. */
+function setLevel(next: Level) {
+  if (next === level.value) return
+  clearRun()
+  cut.value = null
+  level.value = next
+  const id = currentUnitId.value
+  if (id !== null) {
+    nextTick(() => {
+      document.querySelector(`[data-testid="bead-row"][data-bead-id="${id}"]`)?.scrollIntoView({ block: 'nearest' })
+    })
+  }
+}
+
+function cycleLevel() {
+  setLevel(LEVELS[(LEVELS.indexOf(level.value) + 1) % LEVELS.length]!)
 }
 
 /** Reuse the old objects for unchanged beads and excluded blocks, so only changed rows re-render. */
@@ -209,8 +265,8 @@ function reconcile(old: Book, next: Book): Book {
 }
 
 /**
- * Send one correction and show its result. The current bead stays if it still exists, else the bead now at its
- * old index (clamped); `selectIndex` overrides that (after a split). Errors go to the status line. A successful
+ * Send one correction and show its result. The current bead (and so its unit) stays if it still exists, else the
+ * unit now at the old unit's index (clamped); `selectIndex`, a bead index, overrides that (after a split). Errors go to the status line. A successful
  * correction clears the selected run, except the review marks for the run (`keepRun`), and keeps the cut sentence
  * only while it is still the first or last of its side in a bead; a refused one changes nothing, so it keeps both.
  * Resolves to whether it succeeded.
@@ -223,7 +279,7 @@ async function correct(request: (id: string) => Promise<Book>, selectIndex?: num
     const next = await request(old.id)
     if (!keepRun) clearRun()
     // The selection is read now, not before the request: the translator may have moved meanwhile.
-    const oldIndex = currentBeadId.value === null ? 0 : (beadIndex.value.get(currentBeadId.value) ?? 0)
+    const oldIndex = currentUnitId.value === null ? 0 : (unitIndex.value.get(currentUnitId.value) ?? 0)
     const side = currentSide.value
     const segmentId = currentSegmentId.value
     book.value = reconcile(old, next)
@@ -233,11 +289,12 @@ async function correct(request: (id: string) => Promise<Book>, selectIndex?: num
       currentBeadId.value = null
       return true
     }
-    let i = selectIndex ?? beadIndex.value.get(currentBeadId.value ?? -1) ?? oldIndex
-    i = Math.min(Math.max(i, 0), beads.length - 1)
-    const bead = beads[i]!
-    const keep = bead[side].some((s) => s.segment_id === segmentId)
-    select(bead.id, side, keep ? segmentId : null)
+    let index: number
+    if (selectIndex !== undefined) index = beadUnitIndex.value.get(beads[Math.min(Math.max(selectIndex, 0), beads.length - 1)]!.id)!
+    else index = beadUnitIndex.value.get(currentBeadId.value ?? -1) ?? Math.min(oldIndex, units.value.length - 1)
+    const unit = units.value[index]!
+    const keep = unit[side].some((s) => s.segment_id === segmentId)
+    select(unit.id, side, keep ? segmentId : null)
     return true
   } catch (e) {
     say((e as Error).message)
@@ -248,21 +305,40 @@ async function correct(request: (id: string) => Promise<Book>, selectIndex?: num
 }
 
 function currentSegment() {
-  return currentBead.value?.[currentSide.value].find((s) => s.segment_id === currentSegmentId.value) ?? null
+  return currentUnit.value?.[currentSide.value].find((s) => s.segment_id === currentSegmentId.value) ?? null
+}
+
+/** The current bead, when the correction acts on a bead and the current unit is that single bead; else says so. */
+function singleBead(): BookBead | null {
+  const bead = currentBead.value
+  if (!bead) return null
+  if (currentUnit.value!.beads.length > 1) {
+    say('Switch to sentences (L) for this correction')
+    return null
+  }
+  return bead
 }
 
 function runCorrection(action: Correction) {
-  const bead = currentBead.value
-  if (!bead) return
+  const unit = currentUnit.value
+  if (!unit) return
   const side = currentSide.value
   switch (action) {
-    case 'move-previous':
-      return correct((id) => booksApi.move(id, bead.id, side, 'previous'))
-    case 'move-next':
-      return correct((id) => booksApi.move(id, bead.id, side, 'next'))
-    case 'merge':
-      return correct((id) => booksApi.mergeNext(id, bead.id))
+    case 'move-previous': {
+      const bead = singleBead()
+      return bead && correct((id) => booksApi.move(id, bead.id, side, 'previous'))
+    }
+    case 'move-next': {
+      const bead = singleBead()
+      return bead && correct((id) => booksApi.move(id, bead.id, side, 'next'))
+    }
+    case 'merge': {
+      const bead = singleBead()
+      return bead && correct((id) => booksApi.mergeNext(id, bead.id))
+    }
     case 'split': {
+      const bead = singleBead()
+      if (!bead) return
       const at = currentSegmentId.value
       const index = beadIndex.value.get(bead.id)!
       return correct(
@@ -275,30 +351,33 @@ function runCorrection(action: Correction) {
     case 'join':
       return joinNext()
     case 'reviewed': {
-      const run = runBeads()
-      if (!run.length) return correct((id) => booksApi.setReviewed(id, [bead.id], !bead.reviewed))
+      const run = runUnits()
+      const lv = level.value
+      if (!run.length) return correct((id) => booksApi.setReviewed(id, unit.beads.map((b) => b.id), !unit.reviewed, lv))
       // A run: mark all if any is unreviewed, else clear all; one request, one undo.
-      const flag = run.some((b) => !b.reviewed)
-      return correct((id) => booksApi.setReviewed(id, run.map((b) => b.id), flag), undefined, true)
+      const flag = run.some((u) => !u.reviewed)
+      return correct((id) => booksApi.setReviewed(id, run.flatMap((u) => u.beads.map((b) => b.id)), flag, lv), undefined, true)
     }
     case 'up-to-here':
       return reviewUpToHere()
     case 'exclude': {
       const segment = currentSegment()
-      if (!segment) return say(`The bead has no ${side} segment`)
+      if (!segment) return say(`The ${noun.value} has no ${side} segment`)
       return correct((id) => booksApi.excludeBlock(id, segment.block_id))
     }
   }
 }
 
-/** `R`: mark every bead from the first to the current one reviewed; the run, if any, is kept. */
+/** `Shift+R`: mark every unit from the first to the current one reviewed at the level; the run, if any, is kept. */
 async function reviewUpToHere() {
-  const bead = currentBead.value
-  if (!bead) return
-  const ids = book.value!.beads.slice(0, beadIndex.value.get(bead.id)! + 1).filter((b) => !b.reviewed).map((b) => b.id)
-  if (!ids.length) return say('Already reviewed up to here')
-  if (await correct((id) => booksApi.setReviewed(id, ids, true), undefined, true)) {
-    say(`Reviewed up to here (${ids.length} bead${ids.length === 1 ? '' : 's'})`)
+  const unit = currentUnit.value
+  if (!unit) return
+  const lv = level.value
+  const todo = units.value.slice(0, unitIndex.value.get(unit.id)! + 1).filter((u) => !u.reviewed)
+  if (!todo.length) return say('Already reviewed up to here')
+  const ids = todo.flatMap((u) => u.beads.filter((b) => (b.review_level === null ? 0 : RANK[b.review_level]) < RANK[lv]).map((b) => b.id))
+  if (await correct((id) => booksApi.setReviewed(id, ids, true, lv), undefined, true)) {
+    say(`Reviewed up to here (${todo.length} ${unitNoun(lv, todo.length)})`)
   }
 }
 
@@ -309,13 +388,13 @@ function startEditing(segmentId: number | null = currentSegmentId.value) {
 
 /** Opened by a double-click: select the segment first (its bead and side are the current ones). */
 function editSegment(segmentId: number) {
-  if (currentBead.value) select(currentBead.value.id, currentSide.value, segmentId)
+  if (currentUnit.value) select(currentUnit.value.id, currentSide.value, segmentId)
   startEditing(segmentId)
 }
 
 function segmentText(segmentId: number): string | undefined {
   for (const side of ['source', 'target'] as const) {
-    const seg = currentBead.value?.[side].find((s) => s.segment_id === segmentId)
+    const seg = currentUnit.value?.[side].find((s) => s.segment_id === segmentId)
     if (seg) return seg.text
   }
 }
@@ -380,9 +459,10 @@ async function copySentence() {
 
 /** Ctrl+X: mark the current sentence as cut (nothing changes yet), if it is at an edge of its bead; Ctrl+V moves it. */
 function cutSentence() {
-  const bead = currentBead.value
   const segment = currentSegment()
-  if (!bead || !segment) return
+  if (!segment) return
+  const bead = singleBead()
+  if (!bead) return
   const side = currentSide.value
   const segments = bead[side]
   if (segment !== segments[0] && segment !== segments[segments.length - 1]) {
@@ -397,6 +477,7 @@ function cutSentence() {
 async function pasteSentence() {
   const c = cut.value
   if (!c) return say('Nothing cut')
+  if (!singleBead()) return
   const from = beadIndex.value.get(c.beadId)
   const here = currentBeadId.value === null ? undefined : beadIndex.value.get(currentBeadId.value)
   const segments = from === undefined ? [] : book.value!.beads[from]![c.side]
@@ -421,12 +502,13 @@ function isTextEntry(target: HTMLElement | null): boolean {
 const handlers: Record<KeyedId, (event: KeyboardEvent) => void> = {
   'previous-bead': () => moveBead(-1),
   'next-bead': () => moveBead(1),
-  'source-side': () => currentBead.value && select(currentBead.value.id, 'source', null),
-  'target-side': () => currentBead.value && select(currentBead.value.id, 'target', null),
+  'source-side': () => currentUnit.value && select(currentUnit.value.id, 'source', null),
+  'target-side': () => currentUnit.value && select(currentUnit.value.id, 'target', null),
   'next-sentence': (event) => moveSegment(event.shiftKey ? -1 : 1),
   'next-problem': () => nextProblem(1),
   'previous-problem': () => nextProblem(-1),
   'next-unreviewed': nextUnreviewed,
+  level: cycleLevel,
   'show-keys': () => (showKeys.value = true),
   reviewed: () => runCorrection('reviewed'),
   'reviewed-up-to-here': () => runCorrection('up-to-here'),
@@ -566,14 +648,14 @@ async function restoreOriginal() {
   if (await correct((id) => booksApi.restoreOriginal(id, segment.segment_id))) say('Original restored (Ctrl+Z to undo)')
 }
 
-/** "Re-align the selection" (SPEC §3.3): the selected run, or the current bead without one; the new beads start
+/** "Re-align the selection" (SPEC §3.3): the beads of the selected run, or of the current unit without one; the new beads start
  * unreviewed, the run is cleared and the first new bead becomes current. */
 async function realign() {
   showMore.value = false
   const bead = currentBead.value
   if (!bead || !book.value) return
-  const run = runBeads()
-  const stretch = run.length ? run : [bead]
+  const run = runUnits()
+  const stretch = (run.length ? run : [currentUnit.value!]).flatMap((u) => u.beads)
   const n = stretch.length
   const before = book.value.beads.length
   const first = beadIndex.value.get(stretch[0]!.id)!
@@ -596,12 +678,12 @@ onMounted(async () => {
     book.value = await booksApi.getBook(props.id)
     // `?bead=<id>` (from a search result) opens the book at that bead, centred.
     const wanted = route.query.bead === undefined ? undefined : Number(route.query.bead)
-    const found = wanted === undefined ? undefined : beadIndex.value.get(wanted)
-    const first = book.value.beads[found ?? 0]
+    const found = wanted === undefined ? undefined : beadUnitIndex.value.get(wanted)
+    const first = units.value[found ?? 0]
     if (first) select(first.id, 'source', null)
     if (found !== undefined) {
       nextTick(() => {
-        document.querySelector(`[data-testid="bead-row"][data-bead-id="${wanted}"]`)?.scrollIntoView({ block: 'center' })
+        document.querySelector(`[data-testid="bead-row"][data-bead-id="${first!.id}"]`)?.scrollIntoView({ block: 'center' })
       })
     } else if (wanted !== undefined) {
       say('That bead no longer exists: the book changed since the search')
@@ -634,6 +716,13 @@ onBeforeUnmount(() => {
         <span class="shrink-0 w-px h-4 bg-bar-rule" />
         <h1 class="min-w-0 truncate text-[13.5px] font-semibold" data-testid="book-title">{{ book.title }}</h1>
         <span class="flex-1" />
+        <div data-testid="level" role="group" aria-label="Level" title="Sentences / turns / paragraphs (L)"
+          class="shrink-0 flex items-center gap-0.5">
+          <button v-for="l in LEVELS" :key="l" type="button" :data-level="l" :aria-pressed="level === l" @click="setLevel(l)"
+            class="h-7 px-2 rounded text-ink hover:bg-hover" :class="level === l ? 'bg-hover font-semibold' : ''">
+            {{ LEVEL_LABELS[l] }}
+          </button>
+        </div>
         <label class="shrink-0 flex items-center gap-1.5 cursor-pointer text-muted">
           <input v-model="showExcluded" type="checkbox" data-testid="show-excluded" class="accent-accent" />
           Show excluded
@@ -644,9 +733,9 @@ onBeforeUnmount(() => {
         </label>
         <span class="shrink-0 w-px h-4 bg-bar-rule" />
         <div class="shrink-0 flex items-center gap-2 text-muted">
-          <span data-testid="book-progress">Reviewed {{ reviewedCount }} / {{ book.beads.length }}</span>
+          <span data-testid="book-progress">Reviewed {{ reviewedCount }} / {{ units.length }}</span>
           <span class="w-[84px] h-1 rounded-full bg-bar-rule overflow-hidden">
-            <span class="block h-full bg-progress" :style="{ width: `${book.beads.length ? (100 * reviewedCount) / book.beads.length : 0}%` }" />
+            <span class="block h-full bg-progress" :style="{ width: `${units.length ? (100 * reviewedCount) / units.length : 0}%` }" />
           </span>
         </div>
         <span class="shrink-0 w-px h-4 bg-bar-rule" />
@@ -738,8 +827,8 @@ onBeforeUnmount(() => {
             <span class="px-4">Target · {{ book.target_lang.toUpperCase() }}</span>
             <span />
           </div>
-          <template v-for="item in items" :key="item.type === 'bead' ? `b${item.bead.id}` : `x${item.block.block_id}`">
-            <BeadRow v-if="item.type === 'bead'" :bead="item.bead" :multi="showMulti"
+          <template v-for="item in items" :key="item.type === 'unit' ? `b${item.unit.id}` : `x${item.block.block_id}`">
+            <BeadRow v-if="item.type === 'unit'" :unit="item.unit" :multi="showMulti"
               @select="select" @edit="editSegment" @save="saveEdit" @cancel="cancelEdit"
               @split="splitEdit" />
             <!-- One row per excluded block and side (user, 2026-10-04): never paired across sides. -->
@@ -769,7 +858,7 @@ onBeforeUnmount(() => {
       <!-- Both texts sit in fixed, size-contained boxes: their changes are laid out alone, not with the bead list. -->
       <div class="shrink-0 relative h-[26px] border-t border-bar-rule text-[12px] text-muted">
         <BookStatus />
-        <BookPosition :book="book" />
+        <BookPosition />
       </div>
       <KeysPanel v-if="showKeys" @close="showKeys = false" />
       <OriginalPopover :book="book" @restore="restoreOriginal" @close="showOriginal = false" />

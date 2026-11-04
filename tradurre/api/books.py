@@ -203,7 +203,22 @@ def list_books(db: sqlite3.Connection = Depends(get_db)):
         ORDER BY {BOOK_ORDER}
         """
     ).fetchall()
-    return [dict(r) for r in rows]
+    return [{**r, **_turn_counts(db, r["id"])} for r in map(dict, rows)]
+
+
+def _turn_counts(db: sqlite3.Connection, book_id: str) -> dict[str, int]:
+    """A book's units at the turn level, and those reviewed at that level or finer (every bead's level >= turn)."""
+    ends = unit_ends(db, book_id)
+    levels = db.execute("SELECT id, review_level FROM beads WHERE project_id = ? ORDER BY ord", (book_id,))
+    turns = reviewed = 0
+    unit_ok = True
+    for bead_id, review_level in levels:
+        unit_ok = unit_ok and review_level >= LEVEL_RANKS["turn"]
+        if ends[bead_id][0]:
+            turns += 1
+            reviewed += unit_ok
+            unit_ok = True
+    return {"turn_count": turns, "turn_reviewed_count": reviewed}
 
 
 def _book_row(db: sqlite3.Connection, book_id: str) -> sqlite3.Row:

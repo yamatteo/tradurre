@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// The second bar's review group or corrections group, for the current bead and side. The selection is injected
+// The second bar's review group or corrections group, for the current unit and side. The selection is injected
 // (like in BeadRow.vue), so moving it re-renders these buttons and not the book view's 10,000-row list.
 import { computed, inject } from 'vue'
 import type { Book } from '@/api/client'
@@ -12,12 +12,12 @@ const props = defineProps<{ book: Book; disabled: boolean; group: 'review' | 'co
 const emit = defineEmits<{ correct: [action: Correction] }>()
 
 const selection = inject(selectionKey)!
-const bead = computed(() => props.book.beads.find((b) => b.id === selection.currentBeadId.value) ?? null)
-/** Whether `r` marks (true) or clears (false): with a run, it marks if any bead of the run is unreviewed. */
+const unit = selection.currentUnit
+/** Whether `r` marks (true) or clears (false): with a run, it marks if any unit of the run is unreviewed. */
 const marks = computed(() => {
   const run = selection.runBounds.value
-  if (run) return props.book.beads.slice(run.first - 1, run.last).some((b) => !b.reviewed)
-  return !bead.value?.reviewed
+  if (run) return selection.units.value.slice(run.first - 1, run.last).some((u) => !u.reviewed)
+  return !unit.value?.reviewed
 })
 
 const actions = computed<{ action: Correction; label: string; key: string; testid?: string }[]>(() =>
@@ -41,7 +41,7 @@ const actions = computed<{ action: Correction; label: string; key: string; testi
 <template>
   <div class="flex items-center gap-0.5" :data-testid="group === 'corrections' ? 'bead-actions' : undefined">
     <button v-for="a in actions" :key="a.action" type="button" :data-action="a.action" :data-testid="a.testid" :title="`${a.label} (${a.key})`"
-      :disabled="disabled || !bead" @click="emit('correct', a.action)"
+      :disabled="disabled || !unit" @click="emit('correct', a.action)"
       class="h-7 px-2 flex items-center gap-1.5 rounded text-ink hover:bg-hover disabled:opacity-40 disabled:hover:bg-transparent disabled:cursor-not-allowed">
       {{ a.label }} <kbd>{{ a.key }}</kbd>
     </button>
