@@ -275,8 +275,68 @@ def _classify(lines: list[_Line], sizes: list[tuple[float, float]], body_size: f
     return kinds
 
 
-def _join_lines(texts: list[str]) -> str:
-    """Join a block's lines: soft hyphens vanish, a hard hyphen after a letter is kept, otherwise one space."""
+_LETTERS = re.compile(r"[^\W\d_]+")
+_HYPHENATED = re.compile(r"[^\W\d_]+(?:-[^\W\d_]+)+")
+
+
+@dataclass
+class _Lexicon:
+    """What a book shows of its own spelling: its words, and the pairs it writes with a hyphen (all case-folded).
+    `soft` is set when some line ends in a soft hyphen: the book marks its line breaks with U+00AD, so a hard
+    hyphen at a line end is a real one unless the book spells the joined word elsewhere."""
+
+    words: set[str] = field(default_factory=set)
+    pairs: set[tuple[str, str]] = field(default_factory=set)
+    soft: bool = False
+
+
+# In a book without soft hyphens, a line-end hard hyphen is a split word unless it is followed by one of these.
+_PARTICLES = frozenset("là ci t je tu il elle on nous vous ils elles moi toi lui leur y en ce même".split())
+
+
+def _book_lexicon(blocks: list[list[str]]) -> _Lexicon:
+    """The words and hyphen pairs found inside lines. The last word of a line that ends with a hyphen, and the
+    first word of the line after it, don't count: the break may have split them."""
+    lexicon = _Lexicon()
+    for lines in blocks:
+        after_hyphen = False
+        for line in lines:
+            text = line.strip()
+            ends = bool(re.search(r"[^\W\d_][-\u00ad]$", text))
+            if text.endswith("\u00ad"):
+                lexicon.soft = True
+            last_to = len(text) - (1 if ends else 0)
+            for m in _LETTERS.finditer(text):
+                if after_hyphen and m.start() == 0:
+                    continue
+                if ends and m.end() == last_to:
+                    continue
+                lexicon.words.add(m.group().casefold())
+            for m in _HYPHENATED.finditer(text):
+                if (after_hyphen and m.start() == 0) or (ends and m.end() == last_to):
+                    continue
+                parts = m.group().casefold().split("-")
+                lexicon.pairs.update(zip(parts, parts[1:]))
+            after_hyphen = ends
+    return lexicon
+
+
+def _splits_a_word(out: str, text: str, lexicon: _Lexicon) -> bool:
+    """Does the hard hyphen ending `out` split a word? In a soft-hyphen book: one the book spells without it
+    elsewhere. In any other book: any, unless the book writes the pair with a hyphen or a particle follows."""
+    left = re.search(r"([^\W\d_]+)-$", out)
+    right = _LETTERS.match(text)
+    if not left or not right:
+        return False
+    a, b = left.group(1).casefold(), right.group().casefold()
+    if (a, b) in lexicon.pairs:
+        return False
+    return a + b in lexicon.words if lexicon.soft else b not in _PARTICLES
+
+
+def _join_lines(texts: list[str], lexicon: _Lexicon | None = None) -> str:
+    """Join a block's lines: soft hyphens vanish, a hard hyphen after a letter is kept (unless the `lexicon` shows
+    it splits a word the book spells without it), otherwise one space."""
     out = ""
     for text in texts:
         text = text.rstrip()
@@ -285,6 +345,8 @@ def _join_lines(texts: list[str]) -> str:
         elif out.endswith("\u00ad"):
             out = out[:-1] + text.lstrip()
         elif re.search(r"[^\W\d_]-$", out):
+            if lexicon is not None and _splits_a_word(out, text.lstrip(), lexicon):
+                out = out[:-1]
             out += text.lstrip()
         else:
             out += " " + text.lstrip()
@@ -354,9 +416,10 @@ def _extract_pdf(content: bytes) -> Extraction:
         else:
             blocks[-1][1].append(line)
 
+    lexicon = _book_lexicon([[line.text for line in block_lines] for _, block_lines in blocks])
     extracted = []
     for kind, block_lines in blocks:
-        text = _clean(apply_resolution(_join_lines([line.text for line in block_lines]), mapping))
+        text = _clean(apply_resolution(_join_lines([line.text for line in block_lines], lexicon), mapping))
         if text:
             extracted.append(ExtractedBlock(kind, text, block_lines[0].page + 1))
     return Extraction(extracted, warnings)

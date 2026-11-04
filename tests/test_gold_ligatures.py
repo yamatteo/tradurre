@@ -191,3 +191,19 @@ def test_femur_gold_counts():
     skipped = sum(k for _, _, k in positions.values())
     assert (slips, real) == (825, 41)
     assert skipped > 0
+
+
+def test_positions_do_not_depend_on_hyphens():
+    original = ["Un glor-bat fi nal.", "Th ing of ten."]
+    corrected = ["Un glor-bat final.", "Thing of ten."]
+    gold = _gold(original, corrected)
+    assert ligature_positions(gold)["source"] == ligature_positions(_gold([t.replace("-", "") for t in original], [t.replace("-", "") for t in corrected]))["source"]
+    total = score_ligatures(gold, _predicted(["Un glorbat final.", "Thing of ten."])).total
+    assert (total.slips_closed, total.slips_open) == (2, 0)
+    assert (total.real_kept, total.real_joined) == (1, 0)
+
+
+def test_a_slip_before_a_hyphen_closed_by_the_translator_is_not_a_real_space():
+    gold = _gold(["Un glor - tat fi - nal."], ["Un glor - tat fi- nal."])
+    slips, real, _ = ligature_positions(gold)["source"]
+    assert (len(slips), len(real)) == (1, 0)

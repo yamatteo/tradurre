@@ -399,3 +399,23 @@ def test_a_cut_inside_an_edited_segment_fails():
     b, texts, kinds = cut_case(front_matter(original="kolo  mira senu"))
     with pytest.raises(tool.RebaseError, match="cut inside an edited segment"):
         tool.rebase(b, texts, kinds)
+
+
+# --- Hyphens are blind ---
+
+
+def test_a_gold_hyphen_the_extraction_lacks_still_matches_and_a_cut_after_it_lands_right():
+    # the gold keeps "tra-mouille" (line-end hyphen); the extraction joined it, and cuts after "tramou"
+    source = [blk("paragraph", False, ("tra-mouille senu.", 0)), blk("paragraph", False, ("luma", 1))]
+    b = bundle(source, [blk("paragraph", False, ("zoru", 0)), blk("paragraph", False, ("tuvo", 1))], 2)
+    texts = {"source": ["tramou", "illesenu.", "luma"], "target": ["zoru", "tuvo"]}
+    kinds = {"source": ["paragraph"] * 3, "target": ["paragraph"] * 2}
+    after, stats, _ = run(b, texts, kinds)
+    assert [s["text"] for s in after["documents"][0]["blocks"][0]["segments"]] == ["tra-mou"]
+    assert [s["text"] for s in after["documents"][0]["blocks"][1]["segments"]] == ["ille senu."]
+    assert stats["source"]["segment_split"] == 1
+
+
+def test_cut_counts_what_strip_keeps():
+    assert tool._cut("tra-mou ille", 6) == ("tra-mou", " ille")
+    assert tool._strip("tra-mou­ ille") == "tramouille"

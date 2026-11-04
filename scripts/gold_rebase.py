@@ -57,7 +57,7 @@ from tradurre.services.extract import EXCLUDED_KINDS, extract
 LIBRARY = Path(__file__).resolve().parent.parent / "library"
 ENTRY = "bundle.json"
 SIDES = ("source", "target")
-_SPACE = re.compile(r"\s+")
+_SPACE = re.compile(r"[\s\-\u00ad]+")  # white space and hyphens: a line-end hyphen may or may not be kept
 MAX_PAGE_NUMBER_CHARS = 3
 
 
@@ -102,11 +102,11 @@ def _gold_text(block: dict) -> str:
 
 
 def _cut(text: str, n: int) -> tuple[str, str]:
-    """`text` cut after its first `n` non-white-space characters (and no later): the white space that follows
-    them starts the second part."""
+    """`text` cut after its first `n` characters that `_strip` keeps (and no later): what follows them starts the
+    second part."""
     seen = 0
     for i, c in enumerate(text):
-        if not c.isspace():
+        if not _SPACE.fullmatch(c):
             seen += 1
             if seen == n:
                 return text[:i + 1], text[i + 1:]

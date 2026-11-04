@@ -325,8 +325,8 @@ class LigatureScore:
 
 
 def ligature_positions(gold: Layer) -> dict[str, tuple[list[int], list[int], int]]:
-    """Per side: the positions (in the side's non-whitespace character stream) of the gold's ligature slips and of
-    its real spaces, and the number of skipped segments. Needs corrected texts."""
+    """Per side: the positions (in the side's character stream of `_chars`: no whitespace, no hyphens) of the gold's
+    ligature slips and of its real spaces, and the number of skipped segments. Needs corrected texts."""
     if gold.corrected is None:
         raise ValueError("the gold has no corrected texts, so it has no ligature metric")
     result: dict[str, tuple[list[int], list[int], int]] = {}
@@ -336,22 +336,31 @@ def ligature_positions(gold: Layer) -> dict[str, tuple[list[int], list[int], int
         skipped = 0
         offset = 0
         for (original, _), text in zip(gold.side(side), gold.corrected[side]):
-            size = len(_SPACE.sub("", original))
+            size = _count(original)
             if _SPACE.sub("", text) != _SPACE.sub("", original):
                 skipped += 1
             else:
-                kept = {offset + n for n in _whitespace_runs(text)}
+                kept = {offset + n for n in _whitespace_runs(text, after_hyphen=False)}
                 for m in LIGATURE_GAP.finditer(original):
-                    pos = offset + len(_SPACE.sub("", original[: m.start(1)]))
+                    pos = offset + _count(original[: m.start(1)])
                     (real if pos in kept else slips).append(pos)
             offset += size
         result[side] = (slips, real, skipped)
     return result
 
 
-def _whitespace_runs(text: str) -> list[int]:
-    """For each whitespace run of `text`, the number of non-whitespace characters before it."""
-    return [len(_SPACE.sub("", text[: m.start()])) for m in _SPACE.finditer(text)]
+def _count(text: str) -> int:
+    """The number of characters of `text` that `_chars` keeps (no whitespace, no hyphens)."""
+    return len(_SPACE.sub("", text).translate(_HYPHENS))
+
+
+def _whitespace_runs(text: str, after_hyphen: bool = True) -> list[int]:
+    """For each whitespace run of `text`, the number of characters `_chars` keeps before it. With `after_hyphen`
+    false, a run right after a hyphen is left out: it sits on the far side of a hyphen from the gap before it."""
+    return [
+        _count(text[: m.start()]) for m in _SPACE.finditer(text)
+        if after_hyphen or not text[: m.start()].endswith(("-", "\u00ad"))
+    ]
 
 
 def _open_positions(segments: list[tuple[str, int | None]]) -> set[int]:
@@ -361,7 +370,7 @@ def _open_positions(segments: list[tuple[str, int | None]]) -> set[int]:
     for text, _ in segments:
         positions.add(offset)
         positions.update(offset + n for n in _whitespace_runs(text))
-        offset += len(_SPACE.sub("", text))
+        offset += _count(text)
     return positions
 
 
