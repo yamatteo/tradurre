@@ -8,6 +8,10 @@ doesn't change the gold. Scores are per non-whitespace character, so segmentatio
 - alignment: precision/recall/F1 of bead boundaries, counted on the characters both layers include; since a gold
   may be coarser than the pipeline (sentences grouped into beads), a predicted boundary inside a gold bead is
   counted apart (`inside_gold`), and `coarse_precision` accepts it.
+Alignment is also scored at nested levels, each a subset of the sentence-level boundaries, defined by the source
+side: a speech paragraph (a block whose first segment opens with a dialogue mark) is one turn; a paragraph is a
+block. `turn`: the predicted boundaries outside speech paragraphs against the gold as is; `paragraph`: both sets
+kept only at paragraph breaks. Needs the predicted layer's block ids (`Layer.blocks`).
 Characters are compared without whitespace, hyphens and soft hyphens.
 A layer read from a corrected bundle also carries the corrected texts; `score_ligatures` then measures how many of
 the ligature gaps (a space the PDF leaves after f/fi/fl/Th) the import closes, and how many real spaces it keeps.
@@ -33,6 +37,8 @@ class Layer:
     target: list[tuple[str, int | None]]
     reviewed: list[bool]
     corrected: dict[str, list[str]] | None = None  # per side, the current texts, parallel to source/target
+    # per side, the block id of each segment, parallel to source/target (not compared: the gold files omit it)
+    blocks: dict[str, list[int]] | None = field(default=None, compare=False)
 
     def side(self, side: str) -> list[tuple[str, int | None]]:
         return self.source if side == "source" else self.target
@@ -44,9 +50,10 @@ def read_layer(conn: sqlite3.Connection, book_id: str) -> Layer:
     beads = conn.execute("SELECT id, reviewed FROM beads WHERE project_id = ? ORDER BY ord", (book_id,)).fetchall()
     index = {row["id"]: k for k, row in enumerate(beads)}
     sides: dict[str, list[tuple[str, int | None]]] = {side: [] for side in SIDES}
+    blocks: dict[str, list[int]] = {side: [] for side in SIDES}
     rows = conn.execute(
         """
-        SELECT d.side, s.original_text, s.bead_id
+        SELECT d.side, s.original_text, s.bead_id, b.id AS block_id
         FROM segments s
         JOIN blocks b ON b.id = s.block_id
         JOIN documents d ON d.id = b.document_id
@@ -57,7 +64,8 @@ def read_layer(conn: sqlite3.Connection, book_id: str) -> Layer:
     )
     for r in rows:
         sides[r["side"]].append((r["original_text"], None if r["bead_id"] is None else index[r["bead_id"]]))
-    return Layer(sides["source"], sides["target"], [bool(row["reviewed"]) for row in beads])
+        blocks[r["side"]].append(r["block_id"])
+    return Layer(sides["source"], sides["target"], [bool(row["reviewed"]) for row in beads], None, blocks)
 
 
 def layer_to_json(layer: Layer) -> dict:
@@ -110,6 +118,16 @@ class Score:
     elsewhere: int = 0  # ... all the others
     coarse_precision: float = 1.0  # (on_gold + inside_gold) / predicted_boundaries
     exclusion_by_side: dict[str, tuple[float, float]] = field(default_factory=dict)  # side -> (precision, recall)
+    # Levels (need the predicted layer's blocks): the source side defines speech paragraphs and paragraph breaks.
+    turn_precision: float = 1.0  # predicted boundaries outside speech paragraphs, against the gold as is
+    turn_recall: float = 1.0
+    turn_f1: float = 1.0
+    turn_boundaries: int = 0  # predicted boundaries at turn level
+    gold_inside_speech: int = 0  # gold boundaries inside a speech paragraph
+    paragraph_precision: float = 1.0  # boundaries at paragraph breaks, both sets coarsened
+    paragraph_recall: float = 1.0
+    paragraph_f1: float = 1.0
+    paragraph_boundaries: tuple[int, int] = (0, 0)  # (gold, predicted)
 
 
 def _chars(segments: list[tuple[str, int | None]]) -> tuple[str, list[int | None]]:
@@ -128,6 +146,50 @@ def _check_same_text(gold: Layer, predicted: Layer) -> None:
     for side in SIDES:
         if _chars(gold.side(side))[0] != _chars(predicted.side(side))[0]:
             raise ValueError(f"the gold doesn't match the current extraction ({side})")
+
+
+SPEECH_OPENERS = "\u2014\u2013-\u00ab"  # em dash, en dash, hyphen, opening guillemet
+
+
+def is_speech(text: str) -> bool:
+    """Whether the text opens with a dialogue mark (its first non-whitespace character)."""
+    stripped = text.lstrip()
+    return bool(stripped) and stripped[0] in SPEECH_OPENERS
+
+
+def _source_blocks(predicted: Layer) -> tuple[list[int], set[int]]:
+    """The block id of each source character (as `_chars` counts them), and the ids of the speech blocks."""
+    ids: list[int] = []
+    speech: set[int] = set()
+    seen: set[int] = set()
+    for (text, _), block in zip(predicted.source, predicted.blocks["source"]):
+        if block not in seen:
+            seen.add(block)
+            if is_speech(text):
+                speech.add(block)
+        ids.extend([block] * len(_SPACE.sub("", text).translate(_HYPHENS)))
+    return ids, speech
+
+
+def level_boundaries(level: str, boundaries: set[tuple[int, int]], source_blocks: list[int],
+                     speech: set[int]) -> set[tuple[int, int]]:
+    """The boundaries (edges already removed) kept at a level; `source_blocks` is the block id of each common source
+    character. `sentence`: all. `turn`: not inside a speech paragraph. `paragraph`: only at a paragraph break."""
+    if level == "sentence":
+        return set(boundaries)
+    if level not in ("turn", "paragraph"):
+        raise ValueError(f"unknown level {level!r}")
+    kept = set()
+    for s, t in boundaries:
+        if 0 < s < len(source_blocks):
+            before, after = source_blocks[s - 1], source_blocks[s]
+            if level == "paragraph" and before != after:
+                kept.add((s, t))
+            elif level == "turn" and not (before == after and before in speech):
+                kept.add((s, t))
+        elif level == "turn":
+            kept.add((s, t))
+    return kept
 
 
 def _ratio(hits: int, total: int, other: int) -> float:
@@ -174,6 +236,9 @@ def score(gold: Layer, predicted: Layer) -> Score:
         both = [(g, p) for g, p in zip(gold_beads, predicted_beads) if g is not None and p is not None]
         common_gold[side] = [g for g, _ in both]
         common_predicted[side] = [p for _, p in both]
+        if predicted.blocks is not None and side == "source":
+            ids, speech = _source_blocks(predicted)
+            common_blocks = [b for b, g, p in zip(ids, gold_beads, predicted_beads) if g is not None and p is not None]
 
     excluded_gold = sum(g for g, _ in excluded_chars.values())
     excluded_predicted = sum(p for _, p in excluded_chars.values())
@@ -212,12 +277,32 @@ def score(gold: Layer, predicted: Layer) -> Score:
             runs.append((k, k))
     runs.sort(key=lambda run: run[0] - run[1])  # longest first; stable, so equal lengths stay in book order
 
+    levels: dict = {}
+    if predicted.blocks is not None:
+        turn_predicted = level_boundaries("turn", predicted_set, common_blocks, speech)
+        turn_hits = len(gold_set & turn_predicted)
+        turn_precision = _ratio(turn_hits, len(turn_predicted), len(gold_set))
+        turn_recall = _ratio(turn_hits, len(gold_set), len(turn_predicted))
+        paragraph_gold = level_boundaries("paragraph", gold_set, common_blocks, speech)
+        paragraph_predicted = level_boundaries("paragraph", predicted_set, common_blocks, speech)
+        paragraph_hits = len(paragraph_gold & paragraph_predicted)
+        paragraph_precision = _ratio(paragraph_hits, len(paragraph_predicted), len(paragraph_gold))
+        paragraph_recall = _ratio(paragraph_hits, len(paragraph_gold), len(paragraph_predicted))
+        levels = dict(
+            turn_precision=turn_precision, turn_recall=turn_recall, turn_f1=_f1(turn_precision, turn_recall),
+            turn_boundaries=len(turn_predicted),
+            gold_inside_speech=len(gold_set - level_boundaries("turn", gold_set, common_blocks, speech)),
+            paragraph_precision=paragraph_precision, paragraph_recall=paragraph_recall,
+            paragraph_f1=_f1(paragraph_precision, paragraph_recall),
+            paragraph_boundaries=(len(paragraph_gold), len(paragraph_predicted)),
+        )
+
     return Score(
         alignment_precision, alignment_recall, _f1(alignment_precision, alignment_recall),
         len(gold_set), len(predicted_set),
         exclusion_precision, exclusion_recall, _f1(exclusion_precision, exclusion_recall),
         excluded_chars, runs,
-        on_gold, inside_gold, elsewhere, coarse_precision, exclusion_by_side,
+        on_gold, inside_gold, elsewhere, coarse_precision, exclusion_by_side, **levels,
     )
 
 

@@ -81,6 +81,14 @@ def _print_score(gold: Layer, predicted: Layer, result: Score) -> None:
     print(f"alignment, coarse: precision {result.coarse_precision:.3f}  recall {result.alignment_recall:.3f}  "
           f"(boundaries predicted: {result.on_gold} on a gold boundary, {result.inside_gold} inside a gold bead, "
           f"{result.elsewhere} elsewhere)")
+    if predicted.blocks is not None:
+        print(f"alignment, turns: precision {result.turn_precision:.3f}  recall {result.turn_recall:.3f}  "
+              f"F1 {result.turn_f1:.3f}  (boundaries predicted: {result.turn_boundaries}; "
+              f"gold boundaries inside a speech paragraph: {result.gold_inside_speech})")
+        gold_p, predicted_p = result.paragraph_boundaries
+        print(f"alignment, paragraphs: precision {result.paragraph_precision:.3f}  "
+              f"recall {result.paragraph_recall:.3f}  F1 {result.paragraph_f1:.3f}  "
+              f"(boundaries: {gold_p} gold, {predicted_p} predicted)")
     print(f"exclusion: precision {result.exclusion_precision:.3f}  recall {result.exclusion_recall:.3f}  "
           f"F1 {result.exclusion_f1:.3f}")
     for side, (precision, recall) in result.exclusion_by_side.items():
