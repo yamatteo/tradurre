@@ -63,7 +63,7 @@ def db(tmp_path):
 
 def bead(conn, bead_id):
     """(source ids, target ids, method, confidence, reviewed), or None if the bead is gone."""
-    row = conn.execute("SELECT method, confidence, reviewed FROM beads WHERE id = ?", (bead_id,)).fetchone()
+    row = conn.execute("SELECT method, confidence, review_level = 3 FROM beads WHERE id = ?", (bead_id,)).fetchone()
     if row is None:
         return None
     sides = []

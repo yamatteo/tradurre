@@ -62,7 +62,8 @@ def append_beads(conn: sqlite3.Connection, project_id: str, beads: list[NewBead]
     bead_ids = []
     for bead in beads:
         bead_id = conn.execute(
-            "INSERT INTO beads (project_id, ord, confidence, method, reviewed) VALUES (?, ?, ?, ?, 0)",
+            # review_level takes its default, 0
+            "INSERT INTO beads (project_id, ord, confidence, method) VALUES (?, ?, ?, ?)",
             (project_id, next_ord, bead.confidence, bead.method),
         ).lastrowid
         conn.executemany(

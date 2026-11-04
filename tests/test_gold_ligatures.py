@@ -103,7 +103,7 @@ def test_score_is_unchanged_by_corrected_texts():
 
 # --- Bundles ---
 
-def _bundle(segments_by_side):
+def _bundle(segments_by_side, version=1, beads=({"reviewed": True}, {"reviewed": False})):
     """A tiny bundle; each side is a list of blocks, each a (excluded, [(text, original_text, bead)])."""
     documents = [
         {"side": side, "filename": f"{side}.txt", "format": "txt",
@@ -112,8 +112,8 @@ def _bundle(segments_by_side):
                     for excluded, segments in blocks]}
         for side, blocks in segments_by_side.items()
     ]
-    data = {"format": "tradurre-bundle", "version": 1, "documents": documents,
-            "beads": [{"reviewed": True}, {"reviewed": False}]}
+    data = {"format": "tradurre-bundle", "version": version, "documents": documents,
+            "beads": list(beads)}
     out = io.BytesIO()
     with zipfile.ZipFile(out, "w") as z:
         z.writestr("bundle.json", json.dumps(data))
@@ -130,6 +130,13 @@ def test_layer_from_bundle_round_trips_its_fields():
     assert layer.target == [("Cible.", 1)]
     assert layer.reviewed == [True, False]
     assert layer.corrected == {"source": ["Titre", "Un final."], "target": ["Cible."]}
+
+
+def test_layer_from_bundle_reads_version_2_review_levels():
+    data = _bundle({"source": [(False, [("Un.", "Un.", 0), ("Deux.", "Deux.", 1)])],
+                    "target": [(False, [("Uno.", "Uno.", 0), ("Due.", "Due.", 1)])]},
+                   version=2, beads=({"review_level": "paragraph"}, {"review_level": None}))
+    assert layer_from_bundle(data).reviewed == [True, False]
 
 
 # --- The script ---

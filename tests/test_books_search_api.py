@@ -78,7 +78,12 @@ def test_context(client, books):
     assert [(c["bead_id"], c["position"]) for c in ctx] == [(a, 1), (b, 2)]
     assert ctx[0]["source"] == "Le désœuvrement de l’homme."
     assert ctx[1]["target"] == "Partì senza una parola."
-    assert ctx[1]["reviewed"] is False
+    assert ctx[1]["reviewed"] is False and ctx[1]["review_level"] is None
+    client.post(f"/api/v2/books/{one}/reviewed", json={"bead_ids": [a], "reviewed": True, "level": "turn"})
+    ctx = client.get(f"/api/v2/books/{one}/beads/{b}/context", params={"around": 1}).json()
+    assert (ctx[0]["review_level"], ctx[0]["reviewed"]) == ("turn", False)
+    hit = client.get("/api/v2/search", params={"q": "désœuvrement", "book": one}).json()[0]
+    assert (hit["review_level"], hit["reviewed"]) == ("turn", False)
 
 
 def test_context_window(client):

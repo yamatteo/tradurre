@@ -149,12 +149,12 @@ def test_new_operation_drops_redo(db):
 def _mark(conn, bead_id, kind="streak", coalesce=True):
     with transaction(conn):
         rec = Recorder(conn)
-        rec.update("beads", bead_id, reviewed=1)
+        rec.update("beads", bead_id, review_level=3)
         return record(conn, "p1", kind, rec, coalesce=coalesce)
 
 
 def _reviewed(conn, bead_id):
-    return conn.execute("SELECT reviewed FROM beads WHERE id = ?", (bead_id,)).fetchone()[0]
+    return conn.execute("SELECT review_level = 3 FROM beads WHERE id = ?", (bead_id,)).fetchone()[0]
 
 
 def test_coalesce_same_kind(db):

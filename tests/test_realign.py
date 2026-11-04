@@ -49,7 +49,7 @@ def db(tmp_path):
             NewBead([s[3]], [t[3]], 0.8, "length"),
             NewBead([s[4]], [t[4]], 0.9, "length"),
         ])
-        conn.execute("UPDATE beads SET reviewed = 1 WHERE id IN (?, ?, ?)", (p, b, z))
+        conn.execute("UPDATE beads SET review_level = 3 WHERE id IN (?, ?, ?)", (p, b, z))
         o, = create_document(conn, "p2", "source", "x.txt", "txt", [NewBlock("paragraph", ["X."])])
         (other,) = append_beads(conn, "p2", [NewBead([o[0]], [], 0.5, "length")])
     yield conn, dict(s=s, t=t, P=p, A=a, B=b, C=c, Z=z, other=other)
@@ -60,7 +60,7 @@ def beads(conn):
     """[(source ids, target ids, method, reviewed)] of p1 in order."""
     out = []
     for bead_id, method, reviewed in conn.execute(
-        "SELECT id, method, reviewed FROM beads WHERE project_id = 'p1' ORDER BY ord"
+        "SELECT id, method, review_level = 3 FROM beads WHERE project_id = 'p1' ORDER BY ord"
     ).fetchall():
         sides = [[r[0] for r in conn.execute(
             "SELECT s.id FROM segments s JOIN blocks b ON b.id = s.block_id JOIN documents d ON d.id = b.document_id "
@@ -112,7 +112,7 @@ def test_realign_unchanged_is_refused_and_keeps_the_marks(db):
     stretch = [r[0] for r in conn.execute("SELECT id FROM beads WHERE project_id = 'p1' ORDER BY ord")][1:-1]  # not P, Z
     first, last = stretch[0], stretch[-1]
     with transaction(conn):
-        conn.execute("UPDATE beads SET reviewed = 1 WHERE id = ?", (first,))
+        conn.execute("UPDATE beads SET review_level = 3 WHERE id = ?", (first,))
     before = snapshot(conn)
     with pytest.raises(DomainError, match="The aligner gives the same beads; nothing changed"):
         with transaction(conn):

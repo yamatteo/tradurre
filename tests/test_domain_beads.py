@@ -8,7 +8,7 @@ from tradurre.domain.beads import (
     merge_with_next,
     move_first_to_previous,
     move_last_to_next,
-    set_reviewed,
+    set_review,
     split_bead,
 )
 from tradurre.domain.history import redo, transaction, undo
@@ -51,7 +51,7 @@ def db(tmp_path):
             NewBead([s2, s3], [t2], 0.6, "length"),
             NewBead([s4], [t3, t4], 0.5, "length"),
         ])
-        conn.execute("UPDATE beads SET reviewed = 1 WHERE id = ?", (a,))
+        conn.execute("UPDATE beads SET review_level = 3 WHERE id = ?", (a,))
         (x1,), = create_document(conn, "p2", "source", "x.txt", "txt", [NewBlock("paragraph", ["X."])])
         (other,) = append_beads(conn, "p2", [NewBead([x1], [], 0.5, "length")])
     ids = dict(s1=s1, s2=s2, s3=s3, s4=s4, t1=t1, t2=t2, t3=t3, t4=t4, A=a, B=b, C=c, other=other)
@@ -61,7 +61,7 @@ def db(tmp_path):
 
 def bead(conn, bead_id):
     """(source ids, target ids, method, confidence, reviewed), or None if the bead is gone."""
-    row = conn.execute("SELECT method, confidence, reviewed FROM beads WHERE id = ?", (bead_id,)).fetchone()
+    row = conn.execute("SELECT method, confidence, review_level = 3 FROM beads WHERE id = ?", (bead_id,)).fetchone()
     if row is None:
         return None
     sides = []
@@ -163,7 +163,7 @@ def test_merge_unreviewed(db):
 def test_merge_reviewed(db):
     conn, i = db
     with transaction(conn):
-        set_reviewed(conn, "p1", [i["B"]], True)
+        set_review(conn, "p1", [i["B"]], "sentence", True)
     run(conn, merge_with_next, i["A"])
     assert bead(conn, i["A"])[4] == 1
 
@@ -186,7 +186,7 @@ def test_split_both_sides_copies_reviewed(db):
     conn, i = db
     with transaction(conn):
         merge_with_next(conn, "p1", i["A"])  # A (s1, s2, s3 | t1, t2), unreviewed
-        set_reviewed(conn, "p1", [i["A"]], True)
+        set_review(conn, "p1", [i["A"]], "sentence", True)
     new = run(conn, split_bead, i["A"], i["s2"], i["t2"])
     assert bead(conn, i["A"]) == ([i["s1"]], [i["t1"]], "manual", 1.0, 1)
     assert bead(conn, new) == ([i["s2"], i["s3"]], [i["t2"]], "manual", 1.0, 1)
@@ -199,12 +199,12 @@ def test_split_refused(db):
     refused(conn, split_bead, i["B"], i["s4"], None)  # not B's segment
 
 
-def test_set_reviewed(db):
+def test_set_review(db):
     conn, i = db
-    run(conn, set_reviewed, [i["A"], i["B"]], True)
+    run(conn, set_review, [i["A"], i["B"]], "sentence", True)
     assert [bead(conn, b)[4] for b in (i["A"], i["B"], i["C"])] == [1, 1, 0]
     with transaction(conn):
-        assert set_reviewed(conn, "p1", [i["A"]], True) is None
+        assert set_review(conn, "p1", [i["A"]], "sentence", True) is None
 
 
 def test_other_project_refused(db):
@@ -213,4 +213,99 @@ def test_other_project_refused(db):
     refused(conn, move_last_to_next, i["other"], "source")
     refused(conn, merge_with_next, i["other"])
     refused(conn, split_bead, i["other"], None, None)
-    refused(conn, set_reviewed, [i["other"]], True)
+    refused(conn, set_review, [i["other"]], "sentence", True)
+
+
+def _level(conn, bead_id):
+    return conn.execute("SELECT review_level FROM beads WHERE id = ?", (bead_id,)).fetchone()[0]
+
+
+def _levels(conn, i):
+    return [_level(conn, i[k]) for k in ("A", "B", "C")]
+
+
+def _set(conn, bead_id, level):
+    with transaction(conn):
+        conn.execute("UPDATE beads SET review_level = ? WHERE id = ?", (level, bead_id))
+
+
+def test_marking_raises_and_keeps_finer_marks(db):
+    conn, i = db  # A is reviewed at sentence level (3)
+    ids = [i["A"], i["B"], i["C"]]
+    run(conn, set_review, ids, "paragraph", True)
+    assert _levels(conn, i) == [3, 1, 1]
+    run(conn, set_review, ids, "turn", True)
+    assert _levels(conn, i) == [3, 2, 2]
+    run(conn, set_review, ids, "sentence", True)
+    assert _levels(conn, i) == [3, 3, 3]
+
+
+def test_clearing_lowers_to_the_next_coarser_level(db):
+    conn, i = db
+    _set(conn, i["B"], 2)
+    _set(conn, i["C"], 1)
+    ids = [i["A"], i["B"], i["C"]]  # sentence, turn, paragraph
+    run(conn, set_review, ids, "sentence", False)
+    assert _levels(conn, i) == [2, 2, 1]
+    run(conn, set_review, ids, "turn", False)
+    assert _levels(conn, i) == [1, 1, 1]
+    run(conn, set_review, ids, "paragraph", False)
+    assert _levels(conn, i) == [0, 0, 0]
+
+
+def test_clearing_a_turn_lowers_sentence_reviewed_beads_to_paragraph(db):
+    conn, i = db
+    run(conn, set_review, [i["A"]], "turn", False)
+    assert _level(conn, i["A"]) == 1
+
+
+def test_clearing_a_level_the_bead_does_not_hold_changes_nothing(db):
+    conn, i = db
+    with transaction(conn):
+        assert set_review(conn, "p1", [i["B"]], "sentence", False) is None
+    _set(conn, i["B"], 1)
+    with transaction(conn):
+        assert set_review(conn, "p1", [i["B"]], "turn", False) is None
+    assert _level(conn, i["B"]) == 1
+
+
+def test_unknown_level_refused(db):
+    conn, i = db
+    with pytest.raises(ValueError):
+        with transaction(conn):
+            set_review(conn, "p1", [i["A"]], "chapter", True)
+
+
+def test_merge_keeps_the_lower_level(db):
+    conn, i = db
+    _set(conn, i["B"], 2)
+    run(conn, merge_with_next, i["A"])  # sentence + turn
+    assert _level(conn, i["A"]) == 2
+    _set(conn, i["C"], 0)
+    run(conn, merge_with_next, i["A"])  # turn + unreviewed
+    assert _level(conn, i["A"]) == 0
+
+
+def test_split_copies_the_level(db):
+    conn, i = db
+    _set(conn, i["B"], 2)
+    new = run(conn, split_bead, i["B"], i["s3"], None)
+    assert (_level(conn, i["B"]), _level(conn, new)) == (2, 2)
+
+
+def test_set_review_undo_redo(db):
+    conn, i = db
+    with transaction(conn):
+        set_review(conn, "p1", [i["A"], i["B"]], "turn", False)
+        set_review(conn, "p1", [i["B"], i["C"]], "paragraph", True)
+    assert _levels(conn, i) == [1, 1, 1]
+    with transaction(conn):
+        undo(conn, "p1")
+    assert _levels(conn, i) == [1, 0, 0]
+    with transaction(conn):
+        undo(conn, "p1")
+    assert _levels(conn, i) == [3, 0, 0]
+    with transaction(conn):
+        redo(conn, "p1")
+        redo(conn, "p1")
+    assert _levels(conn, i) == [1, 1, 1]

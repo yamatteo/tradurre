@@ -45,7 +45,7 @@ def conn(tmp_path):
             NewBead([s2], [t2], 0.7, "length"),
             NewBead([s3], [t3], 1.0, "manual"),
         ])
-        conn.execute("UPDATE beads SET reviewed = 1 WHERE id = ?", (beads[1],))
+        conn.execute("UPDATE beads SET review_level = 3 WHERE id = ?", (beads[1],))
         run_id = conn.execute(
             "INSERT INTO runs (project_id, kind, created_at, app_version, stats) "
             "VALUES ('p1', 'import', '2026-10-01', '0.1.0', '{\"beads\": 5}')"
@@ -123,7 +123,7 @@ def test_contents(conn):
     with zipfile.ZipFile(io.BytesIO(data)) as z:
         assert z.namelist() == ["bundle.json"]
     bundle = _json(data)
-    assert (bundle["format"], bundle["version"]) == ("tradurre-bundle", 1)
+    assert (bundle["format"], bundle["version"]) == ("tradurre-bundle", 2)
     assert bundle["book"] == {"title": "Livre", "source_lang": "fr", "target_lang": "it",
                               "created_at": "2026-10-01", "updated_at": "2026-10-02"}
     assert [d["side"] for d in bundle["documents"]] == ["source", "target"]
@@ -133,7 +133,7 @@ def test_contents(conn):
     ]
     assert source[1]["segments"] == [{"text": "Contrefeu", "original_text": "Contrefeu", "bead": None}]
     assert source[2]["segments"][1] == {"text": "Il marchait.", "original_text": "Il marcha.", "bead": 3}
-    assert [b["reviewed"] for b in bundle["beads"]] == [False, True, False, False, False]
+    assert [b["review_level"] for b in bundle["beads"]] == [None, "sentence", None, None, None]
     assert bundle["runs"] == [{"kind": "import", "created_at": "2026-10-01", "app_version": "0.1.0",
                                "stats": {"beads": 5}, "warnings": [{"side": "source", "message": "A warning."}]}]
 
@@ -165,7 +165,7 @@ def test_refused_not_a_bundle(conn):
 
 def test_refused_newer_version(conn):
     bundle = _json(export_bundle(conn, "p1"))
-    _refused(conn, _zip({**bundle, "version": 2}), r"needs a newer Tradurre \(version 2\)")
+    _refused(conn, _zip({**bundle, "version": 3}), r"needs a newer Tradurre \(version 3\)")
 
 
 def test_refused_bead_out_of_range(conn):
@@ -176,7 +176,7 @@ def test_refused_bead_out_of_range(conn):
 
 def test_refused_bead_without_segments(conn):
     bundle = _json(export_bundle(conn, "p1"))
-    bundle["beads"].append({"confidence": 0.5, "method": "length", "reviewed": False})
+    bundle["beads"].append({"confidence": 0.5, "method": "length", "review_level": None})
     _refused(conn, _zip(bundle), "I3")
 
 
@@ -199,3 +199,31 @@ def test_refused_value_the_schema_refuses(conn):
     bundle = _json(export_bundle(conn, "p1"))
     bundle["beads"][0]["method"] = "guess"
     _refused(conn, _zip(bundle), "Malformed bundle: CHECK constraint failed")
+
+
+def _levels(conn, book_id):
+    return [r[0] for r in conn.execute("SELECT review_level FROM beads WHERE project_id = ? ORDER BY ord", (book_id,))]
+
+
+def test_review_levels_round_trip(conn):
+    ids = [r[0] for r in conn.execute("SELECT id FROM beads WHERE project_id = 'p1' ORDER BY ord")]
+    with transaction(conn):
+        conn.execute("UPDATE beads SET review_level = 2 WHERE id = ?", (ids[0],))
+        conn.execute("UPDATE beads SET review_level = 1 WHERE id = ?", (ids[3],))
+    book_id = import_bundle(conn, export_bundle(conn, "p1"))
+    assert _levels(conn, book_id) == [2, 3, 0, 1, 0]
+
+
+def test_version_1_bundle_is_restored(conn):
+    bundle = _json(export_bundle(conn, "p1"))
+    bundle["version"] = 1
+    bundle["beads"] = [{"confidence": b["confidence"], "method": b["method"], "reviewed": b["review_level"] is not None}
+                       for b in bundle["beads"]]
+    book_id = import_bundle(conn, _zip(bundle))
+    assert _levels(conn, book_id) == [0, 3, 0, 0, 0]
+
+
+def test_refused_unknown_review_level(conn):
+    bundle = _json(export_bundle(conn, "p1"))
+    bundle["beads"][0]["review_level"] = "chapter"
+    _refused(conn, _zip(bundle), r"beads\[0\]\.review_level is not a level")

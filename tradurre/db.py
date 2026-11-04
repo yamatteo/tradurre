@@ -1,3 +1,4 @@
+import json
 import sqlite3
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -270,6 +271,29 @@ DELETE FROM projects WHERE NOT EXISTS (SELECT 1 FROM documents d WHERE d.project
 """)
 
 
+def _m007_review_level(conn: sqlite3.Connection) -> None:
+    """Per-level review marks (SPEC §2, "Levels"): `beads.reviewed` (0/1) becomes `review_level`, the finest level
+    a bead was reviewed at (0 none, 1 paragraph, 2 turn, 3 sentence). Old marks were sentence-level: 1 becomes 3.
+    The undo log's bead snapshots are rewritten the same way, so undo and redo keep working across the migration."""
+    conn.execute(
+        "ALTER TABLE beads ADD COLUMN review_level INTEGER NOT NULL DEFAULT 0 CHECK (review_level BETWEEN 0 AND 3)"
+    )
+    conn.execute("UPDATE beads SET review_level = 3 * reviewed")
+    for op_id, raw in conn.execute("SELECT id, changes FROM operations").fetchall():
+        changes = json.loads(raw)
+        touched = False
+        for change in changes:
+            if change[0] != "beads":
+                continue
+            for snapshot in change[2:4]:  # before, after
+                if snapshot is not None and "reviewed" in snapshot:
+                    snapshot["review_level"] = 3 * int(snapshot.pop("reviewed"))
+                    touched = True
+        if touched:
+            conn.execute("UPDATE operations SET changes = ? WHERE id = ?", (json.dumps(changes), op_id))
+    conn.execute("ALTER TABLE beads DROP COLUMN reviewed")
+
+
 # Applied in order; migration n sets PRAGMA user_version = n. Never edit an applied one.
 MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
     _m001_pairs,
@@ -278,6 +302,7 @@ MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
     _m004_bead_index,
     _m005_runs,
     _m006_drop_v1,
+    _m007_review_level,
 ]
 
 

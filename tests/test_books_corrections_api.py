@@ -290,3 +290,22 @@ def test_correction_moves_book_to_top_of_list(client, book):
     assert [b["id"] for b in client.get("/api/v2/books").json()] == [other_id, book_id]
     _ok(client, book_id, "reviewed", {"bead_ids": [data["beads"][0]["id"]], "reviewed": True})
     assert [b["id"] for b in client.get("/api/v2/books").json()] == [book_id, other_id]
+
+
+def test_reviewed_at_a_level(client, gap):
+    book_id, data = gap
+    ids = [b["id"] for b in data["beads"]]
+    result = _ok(client, book_id, "reviewed", {"bead_ids": ids[:2], "reviewed": True, "level": "paragraph"})
+    assert [(b["review_level"], b["reviewed"]) for b in result["beads"]] == [
+        ("paragraph", False), ("paragraph", False), (None, False), (None, False)]
+    result = _ok(client, book_id, "reviewed", {"bead_ids": ids[:1], "reviewed": True})  # sentence by default
+    assert [(b["review_level"], b["reviewed"]) for b in result["beads"]][:2] == [("sentence", True), ("paragraph", False)]
+    result = _ok(client, book_id, "reviewed", {"bead_ids": ids[:1], "reviewed": False, "level": "turn"})
+    assert result["beads"][0]["review_level"] == "paragraph"
+    assert _post(client, book_id, "reviewed", {"bead_ids": ids[:1], "reviewed": True, "level": "chapter"}).status_code == 422
+
+
+def test_unit_ends(client, gap):
+    _, data = gap
+    assert [(b["turn_end"], b["paragraph_end"]) for b in data["beads"]] == [
+        (True, True), (True, True), (True, False), (True, True)]

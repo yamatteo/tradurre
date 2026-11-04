@@ -7,6 +7,8 @@ out (by the triggers in `tradurre/db.py`), and queries must be folded the same w
 import re
 import sqlite3
 
+from tradurre.domain.levels import LEVEL_RANKS, level_name
+
 _LIGATURES = (("œ", "oe"), ("Œ", "OE"), ("æ", "ae"), ("Æ", "AE"))
 
 
@@ -137,8 +139,8 @@ def search_beads(
 
     results = []
     for bead_id, bead_project, source_hl, target_hl in conn.execute(sql, params).fetchall():
-        title, ord_, reviewed = conn.execute(
-            "SELECT p.title, b.ord, b.reviewed FROM beads b JOIN projects p ON p.id = b.project_id WHERE b.id = ?",
+        title, ord_, review_level = conn.execute(
+            "SELECT p.title, b.ord, b.review_level FROM beads b JOIN projects p ON p.id = b.project_id WHERE b.id = ?",
             (bead_id,),
         ).fetchone()
         position = conn.execute(
@@ -152,6 +154,7 @@ def search_beads(
             "position": position,
             "source": _unfold_highlight(texts["source"], source_hl),
             "target": _unfold_highlight(texts["target"], target_hl),
-            "reviewed": bool(reviewed),
+            "review_level": level_name(review_level),
+            "reviewed": review_level == LEVEL_RANKS["sentence"],
         })
     return results

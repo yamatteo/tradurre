@@ -8,6 +8,7 @@ import sqlite3
 
 from tradurre.domain import DomainError
 from tradurre.domain.history import Recorder, record
+from tradurre.domain.levels import level_rank
 from tradurre.domain.ordering import ord_after
 
 SIDES = ("source", "target")
@@ -51,8 +52,8 @@ def _corrected(rec: Recorder, bead_id: int) -> None:
     rec.update("beads", bead_id, method="manual", confidence=1.0)
 
 
-def _reviewed(conn: sqlite3.Connection, bead_id: int) -> int:
-    return conn.execute("SELECT reviewed FROM beads WHERE id = ?", (bead_id,)).fetchone()[0]
+def _review_level(conn: sqlite3.Connection, bead_id: int) -> int:
+    return conn.execute("SELECT review_level FROM beads WHERE id = ?", (bead_id,)).fetchone()[0]
 
 
 def _is_empty(conn: sqlite3.Connection, bead_id: int) -> bool:
@@ -101,14 +102,14 @@ def move_last_to_next(conn: sqlite3.Connection, project_id: str, bead_id: int, s
 
 
 def _merge(rec: Recorder, bead_id: int, next_id: int) -> None:
-    """Move `next_id`'s segments into `bead_id` and delete `next_id`; reviewed only if both were."""
+    """Move `next_id`'s segments into `bead_id` and delete `next_id`; keeps the lower review level of the two."""
     conn = rec.conn
-    reviewed = _reviewed(conn, bead_id) and _reviewed(conn, next_id)
+    review_level = min(_review_level(conn, bead_id), _review_level(conn, next_id))
     for side in SIDES:
         for seg_id in _segments(conn, next_id, side):
             rec.update("segments", seg_id, bead_id=bead_id)
     rec.delete("beads", next_id)
-    rec.update("beads", bead_id, method="manual", confidence=1.0, reviewed=reviewed)
+    rec.update("beads", bead_id, method="manual", confidence=1.0, review_level=review_level)
 
 
 def merge_with_next(conn: sqlite3.Connection, project_id: str, bead_id: int) -> int:
@@ -150,7 +151,7 @@ def split_bead(
         "ord": ord_after(rec, "beads", project_id, bead_id),
         "confidence": 1.0,
         "method": "manual",
-        "reviewed": _reviewed(conn, bead_id),
+        "review_level": _review_level(conn, bead_id),
     })
     for seg_id in moving:
         rec.update("segments", seg_id, bead_id=new_id)
@@ -159,14 +160,22 @@ def split_bead(
     return new_id
 
 
-def set_reviewed(
-    conn: sqlite3.Connection, project_id: str, bead_ids: list[int], reviewed: bool
+def set_review(
+    conn: sqlite3.Connection, project_id: str, bead_ids: list[int], level: str, reviewed: bool
 ) -> int | None:
-    """Set the reviewed flag on the beads, as one operation."""
+    """Mark the beads reviewed at `level`, or clear that mark, as one operation.
+
+    Marking raises each bead to at least that level's rank (a finer mark stays); clearing lowers it to the next
+    coarser level (clearing at paragraph leaves it unreviewed), since a unit can't stay reviewed at a level
+    once one of its beads is not reviewed there.
+    """
+    rank = level_rank(level)
     for bead_id in bead_ids:
         _check_bead(conn, project_id, bead_id)
     rec = Recorder(conn)
     for bead_id in bead_ids:
-        if _reviewed(conn, bead_id) != int(reviewed):
-            rec.update("beads", bead_id, reviewed=int(reviewed))
+        current = _review_level(conn, bead_id)
+        new = max(current, rank) if reviewed else min(current, rank - 1)
+        if new != current:
+            rec.update("beads", bead_id, review_level=new)
     return record(conn, project_id, "review", rec)

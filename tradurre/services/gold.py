@@ -2,7 +2,7 @@
 design v2).
 
 A layer is every segment of both editions in document order, as (original text, bead index or None if its block is
-excluded), plus each bead's reviewed mark. Original text, not edited text, so a text edit for extraction damage
+excluded), plus each bead's reviewed mark (at any level). Original text, not edited text, so a text edit for extraction damage
 doesn't change the gold. Scores are per non-whitespace character, so segmentation and whitespace don't matter:
 - exclusion: precision/recall of the excluded characters;
 - alignment: precision/recall/F1 of bead boundaries, counted on the characters both layers include; since a gold
@@ -22,6 +22,8 @@ import sqlite3
 from bisect import bisect_right
 from dataclasses import dataclass, field
 
+from tradurre.domain.levels import SPEECH_OPENERS, is_speech  # noqa: F401  (re-exported)
+from tradurre.services.bundle import _bead_review_rank
 from tradurre.services.bundle import _read as _read_bundle
 
 SIDES = ("source", "target")
@@ -47,7 +49,7 @@ class Layer:
 def read_layer(conn: sqlite3.Connection, book_id: str) -> Layer:
     if conn.execute("SELECT 1 FROM documents WHERE project_id = ?", (book_id,)).fetchone() is None:
         raise ValueError(f"book {book_id} not found")
-    beads = conn.execute("SELECT id, reviewed FROM beads WHERE project_id = ? ORDER BY ord", (book_id,)).fetchall()
+    beads = conn.execute("SELECT id, review_level FROM beads WHERE project_id = ? ORDER BY ord", (book_id,)).fetchall()
     index = {row["id"]: k for k, row in enumerate(beads)}
     sides: dict[str, list[tuple[str, int | None]]] = {side: [] for side in SIDES}
     blocks: dict[str, list[int]] = {side: [] for side in SIDES}
@@ -65,7 +67,7 @@ def read_layer(conn: sqlite3.Connection, book_id: str) -> Layer:
     for r in rows:
         sides[r["side"]].append((r["original_text"], None if r["bead_id"] is None else index[r["bead_id"]]))
         blocks[r["side"]].append(r["block_id"])
-    return Layer(sides["source"], sides["target"], [bool(row["reviewed"]) for row in beads], None, blocks)
+    return Layer(sides["source"], sides["target"], [row["review_level"] > 0 for row in beads], None, blocks)
 
 
 def layer_to_json(layer: Layer) -> dict:
@@ -98,7 +100,7 @@ def layer_from_bundle(data: bytes) -> Layer:
             for segment in block["segments"]:
                 sides[side].append((segment["original_text"], segment["bead"]))
                 corrected[side].append(segment["text"])
-    return Layer(sides["source"], sides["target"], [bool(b["reviewed"]) for b in bundle["beads"]], corrected)
+    return Layer(sides["source"], sides["target"], [_bead_review_rank(b, bundle["version"], f"beads[{k}]") > 0 for k, b in enumerate(bundle["beads"])], corrected)
 
 
 @dataclass
@@ -146,15 +148,6 @@ def _check_same_text(gold: Layer, predicted: Layer) -> None:
     for side in SIDES:
         if _chars(gold.side(side))[0] != _chars(predicted.side(side))[0]:
             raise ValueError(f"the gold doesn't match the current extraction ({side})")
-
-
-SPEECH_OPENERS = "\u2014\u2013-\u00ab"  # em dash, en dash, hyphen, opening guillemet
-
-
-def is_speech(text: str) -> bool:
-    """Whether the text opens with a dialogue mark (its first non-whitespace character)."""
-    stripped = text.lstrip()
-    return bool(stripped) and stripped[0] in SPEECH_OPENERS
 
 
 def _source_blocks(predicted: Layer) -> tuple[list[int], set[int]]:

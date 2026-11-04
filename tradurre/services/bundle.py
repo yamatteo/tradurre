@@ -18,9 +18,10 @@ from importlib.metadata import version
 from tradurre.domain.history import transaction
 from tradurre.domain.invariants import check_project
 from tradurre.domain.layer import GAP
+from tradurre.domain.levels import LEVEL_RANKS, level_name
 
 FORMAT = "tradurre-bundle"
-VERSION = 1
+VERSION = 2  # 2: beads carry `review_level` (a level name or null) instead of `reviewed`; 1 is still restored
 _NAME = "bundle.json"
 
 
@@ -35,9 +36,9 @@ def export_bundle(conn: sqlite3.Connection, book_id: str) -> bytes:
     bead_ids = [r["id"] for r in conn.execute("SELECT id FROM beads WHERE project_id = ? ORDER BY ord", (book_id,))]
     index = {bead_id: k for k, bead_id in enumerate(bead_ids)}
     beads = [
-        {"confidence": r["confidence"], "method": r["method"], "reviewed": bool(r["reviewed"])}
+        {"confidence": r["confidence"], "method": r["method"], "review_level": level_name(r["review_level"])}
         for r in conn.execute(
-            "SELECT confidence, method, reviewed FROM beads WHERE project_id = ? ORDER BY ord", (book_id,)
+            "SELECT confidence, method, review_level FROM beads WHERE project_id = ? ORDER BY ord", (book_id,)
         )
     ]
     documents = []
@@ -99,6 +100,19 @@ def _field(obj: object, key: str, kind: type | tuple[type, ...], path: str, null
     return value
 
 
+def _bead_review_rank(bead: object, found_version: int, path: str) -> int:
+    """The review rank (`beads.review_level`) of a bundle's bead: version 1 has a `reviewed` flag, which meant the
+    sentence level; version 2 a level name or null."""
+    if found_version < 2:
+        return LEVEL_RANKS["sentence"] if _field(bead, "reviewed", bool, path) else 0
+    level = _field(bead, "review_level", str, path, nullable=True)
+    if level is None:
+        return 0
+    if level not in LEVEL_RANKS:
+        raise BundleError(f"Malformed bundle: {path}.review_level is not a level")
+    return LEVEL_RANKS[level]
+
+
 def _read(data: bytes) -> dict:
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as z:
@@ -145,9 +159,9 @@ def import_bundle(conn: sqlite3.Connection, data: bytes) -> str:
             for k, bead in enumerate(beads):
                 path = f"beads[{k}]"
                 bead_ids.append(conn.execute(
-                    "INSERT INTO beads (project_id, ord, confidence, method, reviewed) VALUES (?, ?, ?, ?, ?)",
+                    "INSERT INTO beads (project_id, ord, confidence, method, review_level) VALUES (?, ?, ?, ?, ?)",
                     (book_id, k * GAP, _field(bead, "confidence", (int, float), path),
-                     _field(bead, "method", str, path), int(_field(bead, "reviewed", bool, path))),
+                     _field(bead, "method", str, path), _bead_review_rank(bead, bundle["version"], path)),
                 ).lastrowid)
             for d, doc in enumerate(documents):
                 path = f"documents[{d}]"

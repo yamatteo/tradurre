@@ -14,7 +14,7 @@ from tradurre.domain.beads import (
     merge_with_next,
     move_first_to_previous,
     move_last_to_next,
-    set_reviewed,
+    set_review,
     split_bead,
 )
 from tradurre.domain.blocks import exclude_block, include_block
@@ -89,7 +89,7 @@ def _pick(rng, conn):
     """Choose an operation and its arguments from the current database: (name, callable, args)."""
     name = rng.choice([
         "edit_text", "split_segment", "join_with_next", "move_first_to_previous", "move_last_to_next",
-        "merge_with_next", "split_bead", "set_reviewed", "exclude_block", "include_block", "replace_beads",
+        "merge_with_next", "split_bead", "set_review", "exclude_block", "include_block", "replace_beads",
         "undo", "redo",
     ])
     segments, beads, blocks = _segment_ids(conn), _bead_ids(conn), _block_ids(conn)
@@ -119,10 +119,10 @@ def _pick(rng, conn):
     if name == "split_bead":
         points = [rng.choice([None, *_segments(conn, bead, side)]) for side in SIDES]
         return name, split_bead, tuple([bead, *points])
-    if name == "set_reviewed":
+    if name == "set_review":
         flag = rng.random() < 0.5
         chosen = rng.sample(beads, rng.randint(1, min(3, len(beads))))
-        return name, set_reviewed, (chosen, flag)
+        return name, set_review, (chosen, rng.choice(["sentence", "turn", "paragraph"]), flag)
     # replace_beads
     start = beads.index(bead)
     run = beads[start:start + rng.randint(1, 3)]

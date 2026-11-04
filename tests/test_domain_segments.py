@@ -48,7 +48,7 @@ def db(tmp_path):
             NewBead([s2, s3], [t3], 0.7, "length"),
             NewBead([s4], [t4], 0.8, "anchor"),
         ])
-        conn.execute("UPDATE beads SET reviewed = 1 WHERE id IN (?, ?)", (a, b))
+        conn.execute("UPDATE beads SET review_level = 3 WHERE id IN (?, ?)", (a, b))
         (other, other2), = create_document(conn, "p2", "source", "x.txt", "txt", [
             NewBlock("paragraph", ["X.", "Y."]),
         ])
@@ -66,7 +66,7 @@ def seg(conn, segment_id):
 
 def bead(conn, bead_id):
     """(source ids, target ids, method, confidence, reviewed), or None if the bead is gone."""
-    row = conn.execute("SELECT method, confidence, reviewed FROM beads WHERE id = ?", (bead_id,)).fetchone()
+    row = conn.execute("SELECT method, confidence, review_level = 3 FROM beads WHERE id = ?", (bead_id,)).fetchone()
     if row is None:
         return None
     sides = []

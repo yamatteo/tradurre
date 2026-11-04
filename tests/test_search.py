@@ -32,7 +32,7 @@ def db(tmp_path):
             NewBlock("paragraph", ["L'ozio dell'uomo.", "Partì senza una parola."]),
         ])
         a, b = append_beads(conn, "p1", [NewBead([s1], [t1], 0.9, "anchor"), NewBead([s2], [t2], 0.9, "anchor")])
-        conn.execute("UPDATE beads SET reviewed = 1 WHERE id = ?", (b,))
+        conn.execute("UPDATE beads SET review_level = 3 WHERE id = ?", (b,))
         (u1,), = create_document(conn, "p2", "source", "fr.txt", "txt", [NewBlock("paragraph", ["Été chaud."])])
         (v1,), = create_document(conn, "p2", "target", "it.txt", "txt", [NewBlock("paragraph", ["Estate calda."])])
         (c,) = append_beads(conn, "p2", [NewBead([u1], [v1], 0.9, "anchor")])

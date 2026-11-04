@@ -1,7 +1,7 @@
 """Block exclude/include (SPEC §2, §3.3; PLAN.md, "Domain operations").
 
 Excluding never deletes text: the block's segments only leave the alignment. Exclude and include are text-layer
-decisions, so they never change an existing bead's method, confidence or reviewed flag. Callers own the
+decisions, so they never change an existing bead's method, confidence or review level. Callers own the
 transaction (`history.transaction`).
 """
 
@@ -71,7 +71,7 @@ def _include(rec: Recorder, conn: sqlite3.Connection, project_id: str, block: sq
                 "ord": ord_after(rec, "beads", project_id, p_bead),
                 "confidence": 0.0,
                 "method": "manual",
-                "reviewed": 0,
+                "review_level": 0,
             })
         for seg in segments:
             rec.update("segments", seg["id"], bead_id=bead_id)

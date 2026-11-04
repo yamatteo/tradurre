@@ -1,5 +1,6 @@
 """Tests for the schema migration mechanism in tradurre.db."""
 
+import json
 import sqlite3
 
 import pytest
@@ -14,6 +15,7 @@ from tradurre.db import (
     get_connection,
     init_db,
 )
+from tradurre.domain.history import redo, undo
 from tradurre.domain.invariants import check_project
 from tradurre.domain.layer import NewBead, NewBlock, append_beads, create_document
 from tradurre.domain.search import search_beads
@@ -130,11 +132,52 @@ def test_v5_to_v6_drops_v1_and_keeps_books(conn, monkeypatch):
 
     init_db(conn)
 
-    assert _user_version(conn) == 6
+    assert _user_version(conn) == len(MIGRATIONS)
     assert not _V1 & _tables(conn)
     assert [r[0] for r in conn.execute("SELECT id FROM projects")] == ["book"]
     assert check_project(conn, "book") == []
     assert [h["project_id"] for h in search_beads(conn, "partit")] == ["book"]
+
+
+def test_v6_to_v7_review_levels_and_operation_log(conn, monkeypatch):
+    monkeypatch.setattr(dbmod, "MIGRATIONS", MIGRATIONS[:6])
+    init_db(conn)
+    with conn:
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute(
+            "INSERT INTO projects (id, title, source_lang, target_lang, created_at, updated_at) "
+            "VALUES ('book', 'Livre', 'fr', 'it', 'now', 'now')"
+        )
+        (s1, s2), = create_document(conn, "book", "source", "fr.txt", "txt", [NewBlock("paragraph", ["Un.", "Deux."])])
+        (t1, t2), = create_document(conn, "book", "target", "it.txt", "txt", [NewBlock("paragraph", ["Uno.", "Due."])])
+        a, b = append_beads(conn, "book", [NewBead([s1], [t1], 0.9, "length"), NewBead([s2], [t2], 0.9, "length")])
+        # What the old set_reviewed recorded: bead b marked reviewed (a was reviewed before and stays so).
+        conn.execute("UPDATE beads SET reviewed = 1")
+        row = lambda id_, reviewed: {"id": id_, "project_id": "book", "ord": 0 if id_ == a else 1000,
+                                     "confidence": 0.9, "method": "length", "reviewed": reviewed}
+        conn.execute(
+            "INSERT INTO operations (project_id, kind, changes, created_at) VALUES ('book', 'review', ?, 'now')",
+            (json.dumps([["beads", b, row(b, 0), row(b, 1)]]),),
+        )
+    monkeypatch.setattr(dbmod, "MIGRATIONS", MIGRATIONS)
+
+    init_db(conn)
+
+    assert "reviewed" not in _columns(conn, "beads") and "review_level" in _columns(conn, "beads")
+    level = lambda id_: conn.execute("SELECT review_level FROM beads WHERE id = ?", (id_,)).fetchone()[0]
+    assert (level(a), level(b)) == (3, 3)
+    changes = json.loads(conn.execute("SELECT changes FROM operations").fetchone()[0])
+    assert [(c[2]["review_level"], c[3]["review_level"]) for c in changes] == [(0, 3)]
+    assert all("reviewed" not in snapshot for c in changes for snapshot in c[2:])
+    with conn:
+        conn.execute("BEGIN IMMEDIATE")
+        undo(conn, "book")
+    assert (level(a), level(b)) == (3, 0)
+    with conn:
+        conn.execute("BEGIN IMMEDIATE")
+        redo(conn, "book")
+    assert (level(a), level(b)) == (3, 3)
+    assert check_project(conn, "book") == []
 
 
 def test_failing_migration_rolls_back(conn, monkeypatch):

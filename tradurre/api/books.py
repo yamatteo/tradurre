@@ -21,10 +21,11 @@ from starlette.concurrency import run_in_threadpool
 
 from tradurre.db import get_db
 from tradurre.domain import DomainError, history
-from tradurre.domain.beads import merge_with_next, move_first_to_previous, move_last_to_next, set_reviewed, split_bead
+from tradurre.domain.beads import merge_with_next, move_first_to_previous, move_last_to_next, set_review, split_bead
 from tradurre.domain.blocks import exclude_block, exclude_range, include_block, include_range
 from tradurre.domain.history import transaction
 from tradurre.domain.invariants import check_project
+from tradurre.domain.levels import LEVEL_RANKS, level_name, unit_ends
 from tradurre.domain.search import BOOK_ORDER, END, START, _bead_text, count_beads, search_beads
 from tradurre.domain.segments import edit_text, join_with_next, restore_original, split_segment
 from tradurre.models import (
@@ -196,7 +197,7 @@ def list_books(db: sqlite3.Connection = Depends(get_db)):
         f"""
         SELECT p.id, p.title, p.source_lang, p.target_lang,
                (SELECT COUNT(*) FROM beads b WHERE b.project_id = p.id) AS bead_count,
-               (SELECT COUNT(*) FROM beads b WHERE b.project_id = p.id AND b.reviewed = 1) AS reviewed_count
+               (SELECT COUNT(*) FROM beads b WHERE b.project_id = p.id AND b.review_level = 3) AS reviewed_count
         FROM projects p
         WHERE EXISTS (SELECT 1 FROM documents d WHERE d.project_id = p.id)
         ORDER BY {BOOK_ORDER}
@@ -221,9 +222,10 @@ def _read_book(db: sqlite3.Connection, book_id: str) -> dict:
     book = dict(_book_row(db, book_id))
     beads = {
         r["id"]: {"id": r["id"], "confidence": r["confidence"], "method": r["method"],
-                  "reviewed": bool(r["reviewed"]), "source": [], "target": []}
+                  "reviewed": r["review_level"] == LEVEL_RANKS["sentence"],
+                  "review_level": level_name(r["review_level"]), "source": [], "target": []}
         for r in db.execute(
-            "SELECT id, confidence, method, reviewed FROM beads WHERE project_id = ? ORDER BY ord", (book_id,)
+            "SELECT id, confidence, method, review_level FROM beads WHERE project_id = ? ORDER BY ord", (book_id,)
         )
     }
     excluded: list[dict] = []
@@ -252,6 +254,9 @@ def _read_book(db: sqlite3.Connection, book_id: str) -> dict:
                                               "block_kind": r["kind"], "text": r["text"],
                                               "original": None if r["original_text"] == r["text"] else r["original_text"]})
             last_bead[side] = r["bead_id"]
+    for bead_id, (turn_end, paragraph_end) in unit_ends(db, book_id).items():
+        beads[bead_id]["turn_end"] = turn_end
+        beads[bead_id]["paragraph_end"] = paragraph_end
     undone = {r[0] for r in db.execute("SELECT DISTINCT undone FROM operations WHERE project_id = ?", (book_id,))}
     return {**book, "beads": list(beads.values()), "excluded": excluded,
             "can_undo": 0 in undone, "can_redo": 1 in undone}
@@ -290,6 +295,7 @@ def search(
         BookSearchResult(
             bead_id=hit["bead_id"], book_id=hit["project_id"], title=hit["title"], position=hit["position"],
             source=_spans(hit["source"]), target=_spans(hit["target"]), reviewed=hit["reviewed"],
+            review_level=hit["review_level"],
         )
         for hit in search_beads(db, q, side, project_id=book, limit=limit, offset=offset)
     ]
@@ -322,11 +328,11 @@ def bead_context(
         raise HTTPException(status_code=404, detail="Bead not found")
     ord_ = row["ord"]
     before = db.execute(
-        "SELECT id, ord, reviewed FROM beads WHERE project_id = ? AND ord < ? ORDER BY ord DESC LIMIT ?",
+        "SELECT id, ord, review_level FROM beads WHERE project_id = ? AND ord < ? ORDER BY ord DESC LIMIT ?",
         (book_id, ord_, around),
     ).fetchall()[::-1]
     rest = db.execute(
-        "SELECT id, ord, reviewed FROM beads WHERE project_id = ? AND ord >= ? ORDER BY ord LIMIT ?",
+        "SELECT id, ord, review_level FROM beads WHERE project_id = ? AND ord >= ? ORDER BY ord LIMIT ?",
         (book_id, ord_, around + 1),
     ).fetchall()
     beads = before + rest
@@ -337,7 +343,8 @@ def bead_context(
     for k, bead in enumerate(beads):
         texts = _bead_text(db, bead["id"])
         out.append(ContextBead(bead_id=bead["id"], position=first + k, source=texts["source"],
-                               target=texts["target"], reviewed=bool(bead["reviewed"])))
+                               target=texts["target"], reviewed=bead["review_level"] == LEVEL_RANKS["sentence"],
+                               review_level=level_name(bead["review_level"])))
     return out
 
 
@@ -476,7 +483,7 @@ def realign(book_id: str, body: BookRealignRequest, db: sqlite3.Connection = Dep
 
 @router.post("/books/{book_id}/reviewed", response_model=BookResponse)
 def reviewed(book_id: str, body: BookReviewedRequest, db: sqlite3.Connection = Depends(get_db)):
-    return _correct(db, book_id, lambda: set_reviewed(db, book_id, body.bead_ids, body.reviewed))
+    return _correct(db, book_id, lambda: set_review(db, book_id, body.bead_ids, body.level, body.reviewed))
 
 
 @router.post("/books/{book_id}/segments/{segment_id}/edit", response_model=BookResponse)

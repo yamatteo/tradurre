@@ -2,6 +2,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 
+ReviewLevel = Literal["sentence", "turn", "paragraph"]  # the finest level a bead was reviewed at
 
 # The books API (/api/v2; PLAN.md, "Book API: import and read")
 
@@ -34,7 +35,10 @@ class BookBead(BaseModel):
     id: int
     confidence: float
     method: str
-    reviewed: bool
+    reviewed: bool  # reviewed at the sentence level
+    review_level: ReviewLevel | None  # the finest level it was reviewed at
+    turn_end: bool  # a turn ends after this bead
+    paragraph_end: bool  # a paragraph ends after this bead
     source: list[BookSegment]
     target: list[BookSegment]
 
@@ -91,6 +95,7 @@ class BookSplitBeadRequest(BaseModel):
 class BookReviewedRequest(BaseModel):
     bead_ids: list[int]
     reviewed: bool
+    level: ReviewLevel = "sentence"
 
 
 class BookRealignRequest(BaseModel):
@@ -131,6 +136,7 @@ class BookSearchResult(BaseModel):
     source: list[BookSearchSpan]
     target: list[BookSearchSpan]
     reviewed: bool
+    review_level: ReviewLevel | None
 
 
 class ContextBead(BaseModel):
@@ -139,3 +145,4 @@ class ContextBead(BaseModel):
     source: str
     target: str
     reviewed: bool
+    review_level: ReviewLevel | None

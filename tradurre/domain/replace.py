@@ -82,7 +82,7 @@ def _replace(rec: Recorder, project_id: str, first: int | None, last: int | None
             "ord": ord_,
             "confidence": bead.confidence,
             "method": bead.method,
-            "reviewed": 0,
+            "review_level": 0,
         })
         for seg_id in bead.source + bead.target:
             rec.update("segments", seg_id, bead_id=bead_id)
