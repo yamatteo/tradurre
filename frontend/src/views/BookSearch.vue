@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// Search across every book, or one (SPEC §3.4; PLAN.md, "Search page"). The URL holds the state (`?q=&side=&book=`),
+// Search across every book, or one (SPEC §3.4; PLAN.md, "Search page"). The URL holds the state (`?q=&side=&whole=&book=`),
 // so Back from a book opens the same results again.
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -17,6 +17,7 @@ const router = useRouter()
 
 const query = ref('')
 const side = ref<SearchSide>('either')
+const whole = ref(false)
 const bookId = ref<string | null>(null)
 const books = ref<BookSummary[]>([])
 const bookTitle = computed(() => books.value.find((b) => b.id === bookId.value)?.title ?? '…')
@@ -60,8 +61,8 @@ async function run(offset = 0) {
   try {
     const book = bookId.value ?? undefined
     const [page, found] = await Promise.all([
-      booksApi.search(q, side.value, book, offset),
-      offset ? null : booksApi.searchCounts(q, side.value, book),
+      booksApi.search(q, side.value, book, offset, whole.value),
+      offset ? null : booksApi.searchCounts(q, side.value, book, whole.value),
     ])
     if (mine !== generation) return
     if (found) counts.value = found
@@ -80,6 +81,7 @@ function submit() {
     query: {
       ...(q ? { q } : {}),
       ...(side.value !== 'either' ? { side: side.value } : {}),
+      ...(whole.value ? { whole: '1' } : {}),
       ...(bookId.value ? { book: bookId.value } : {}),
     },
   })
@@ -107,6 +109,7 @@ onMounted(async () => {
   query.value = one(route.query.q) ?? ''
   const s = one(route.query.side)
   side.value = SIDES.some((o) => o.value === s) ? (s as SearchSide) : 'either'
+  whole.value = one(route.query.whole) === '1'
   bookId.value = one(route.query.book)
   input.value?.focus()
   run()
@@ -130,6 +133,10 @@ onMounted(async () => {
           class="h-9 px-2 bg-white border border-outline rounded focus:outline-none focus:border-accent">
           <option v-for="o in SIDES" :key="o.value" :value="o.value">{{ o.label }}</option>
         </select>
+        <label class="flex items-center gap-1.5 h-9 select-none">
+          <input v-model="whole" type="checkbox" data-testid="search-whole" />
+          Whole words
+        </label>
         <button type="submit" data-testid="search-submit"
           class="h-9 px-4 rounded bg-accent text-white font-medium hover:opacity-90">Search</button>
       </form>

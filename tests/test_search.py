@@ -215,3 +215,32 @@ def test_count_beads(grouped):
     assert count_beads(conn, "mot", side="target", project_id="pb") == [{"project_id": "pb", "title": "Brume", "count": 1}]
     assert count_beads(conn, "zanzibar") == []
     assert count_beads(conn, "") == []
+
+
+def test_fts_query_whole_words_has_no_prefix_star():
+    assert fts_query("bello", "source", whole_words=True) == 'source : ("bello")'
+    assert fts_query('"un bel" mot', "source", whole_words=True) == 'source : ("un" + "bel" "mot")'
+    assert fts_query("bello", "source") == 'source : ("bello" *)'
+
+
+def test_whole_words_against_the_index(tmp_path):
+    conn = get_connection(tmp_path / "words.db")
+    init_db(conn)
+    words = ["bella", "bello", "Bello", "bellò", "bellezza", "l’homme"]
+    with transaction(conn):
+        _add_project(conn, "w", "Words")
+        (srcs,) = create_document(conn, "w", "source", "fr.txt", "txt", [NewBlock("paragraph", [f"Un {w}." for w in words])])
+        (tgts,) = create_document(conn, "w", "target", "it.txt", "txt", [NewBlock("paragraph", ["x"] * len(words))])
+        beads = append_beads(conn, "w", [NewBead([s], [t], 0.9, "anchor") for s, t in zip(srcs, tgts)])
+    by_word = dict(zip(words, beads))
+
+    def found(q, whole):
+        got = {b["bead_id"] for b in search_beads(conn, q, "source", whole_words=whole)}
+        assert sum(c["count"] for c in count_beads(conn, q, "source", whole_words=whole)) == len(got)
+        return {w for w, b in by_word.items() if b in got}
+
+    assert found("bell", False) == {"bella", "bello", "Bello", "bellò", "bellezza"}
+    assert found("bell", True) == set()
+    assert found("bello", True) == {"bello", "Bello", "bellò"}
+    assert found("homme", True) == {"l’homme"}
+    conn.close()

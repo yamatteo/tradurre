@@ -206,17 +206,19 @@ export const booksApi = {
   /** Put the segment's original extracted text back. */
   restoreOriginal: (id: string, segmentId: number) => booksPost(`/books/${id}/segments/${segmentId}/restore`),
 
-  /** Beads matching `q` (word beginnings, case and accents folded), in every book or in `book`; 50 per page. */
-  search: (q: string, side: SearchSide = 'either', book?: string, offset = 0) => {
+  /** Beads matching `q` (word beginnings, or whole words with `whole`; case and accents folded), in every book or in `book`; 50 per page. */
+  search: (q: string, side: SearchSide = 'either', book?: string, offset = 0, whole = false) => {
     const params = new URLSearchParams({ q, side, offset: String(offset) })
     if (book) params.set('book', book)
+    if (whole) params.set('whole', 'true')
     return booksRequest<BookSearchResult[]>(`/search?${params}`)
   },
 
   /** The number of matching beads per book, books in the order `search` returns them. */
-  searchCounts: (q: string, side: SearchSide = 'either', book?: string) => {
+  searchCounts: (q: string, side: SearchSide = 'either', book?: string, whole = false) => {
     const params = new URLSearchParams({ q, side })
     if (book) params.set('book', book)
+    if (whole) params.set('whole', 'true')
     return booksRequest<BookSearchCount[]>(`/search/books?${params}`)
   },
 

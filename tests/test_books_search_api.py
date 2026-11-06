@@ -175,3 +175,16 @@ def test_context_turn_window_is_clipped_at_the_edges(client):
     assert [c["in_turn"] for c in ctx] == [False, False, True]
     ctx = _context(client, book, ids[2], around=10)
     assert [c["bead_id"] for c in ctx] == ids
+
+
+def test_whole_words_on_both_endpoints(client, books):
+    one, _ = books
+    assert len(client.get("/api/v2/search", params={"q": "désœuvr"}).json()) == 2
+    assert client.get("/api/v2/search", params={"q": "désœuvr", "whole": "true"}).json() == []
+    assert client.get("/api/v2/search/books", params={"q": "désœuvr", "whole": "true"}).json() == []
+    hits = client.get("/api/v2/search", params={"q": "DÉSŒUVRÉ", "whole": "true"}).json()
+    counts = client.get("/api/v2/search/books", params={"q": "DÉSŒUVRÉ", "whole": "true"}).json()
+    assert len(hits) == 1 and hits[0]["book_id"] != one
+    assert [(c["book_id"], c["count"]) for c in counts] == [(hits[0]["book_id"], 1)]
+    assert _joined(hits[0]["source"]) == "Un [désœuvré] passait."
+    assert len(client.get("/api/v2/search", params={"q": "homme", "whole": "true"}).json()) == 1

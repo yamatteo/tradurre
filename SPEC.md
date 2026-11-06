@@ -230,8 +230,9 @@ inside a project:
 
 - One query, matched against the source side, the target side, or either.
   Matching ignores case and accents, and a word matches every word it begins
-  (`désœuvr` finds `désœuvrement`, `désœuvré`); a phrase in quotes matches those
-  words in sequence.
+  (`désœuvr` finds `désœuvrement`, `désœuvré`), unless *Whole words* is on: then
+  a word matches only itself (case and accents still ignored); a phrase in
+  quotes matches those words in sequence.
 - Each result is a **bead** (the matched source and target text, with the match
   highlighted), plus the book title and the position in the book. A result also
   shows the level at which it was reviewed: as a sentence, only as part of its

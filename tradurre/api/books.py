@@ -299,6 +299,7 @@ def search(
     q: str = "",
     side: Literal["source", "target", "either"] = "either",
     book: str | None = None,
+    whole: bool = False,
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     db: sqlite3.Connection = Depends(get_db),
@@ -312,7 +313,7 @@ def search(
             source=_spans(hit["source"]), target=_spans(hit["target"]), reviewed=hit["reviewed"],
             review_level=hit["review_level"],
         )
-        for hit in search_beads(db, q, side, project_id=book, limit=limit, offset=offset)
+        for hit in search_beads(db, q, side, project_id=book, limit=limit, offset=offset, whole_words=whole)
     ]
 
 
@@ -321,6 +322,7 @@ def search_counts(
     q: str = "",
     side: Literal["source", "target", "either"] = "either",
     book: str | None = None,
+    whole: bool = False,
     db: sqlite3.Connection = Depends(get_db),
 ):
     """The number of beads matching `q` per book, in the order `/search` returns the books."""
@@ -328,7 +330,7 @@ def search_counts(
         _book_row(db, book)
     return [
         BookSearchCount(book_id=hit["project_id"], title=hit["title"], count=hit["count"])
-        for hit in count_beads(db, q, side, project_id=book)
+        for hit in count_beads(db, q, side, project_id=book, whole_words=whole)
     ]
 
 

@@ -25,21 +25,23 @@ _SIDES = ("source", "target", "either")
 START, END = "\x02", "\x03"
 
 
-def fts_query(text: str, side: str = "either") -> str | None:
+def fts_query(text: str, side: str = "either", whole_words: bool = False) -> str | None:
     """Turn what the translator typed into an FTS5 expression; None if there is nothing to search for.
 
     Quoted stretches are phrases, other words are terms, all of them required (SPEC §3.4). Each is split into
-    tokens, and every token matches the words it begins: `désœuvr` finds `désœuvrement`. With `either`, the whole
+    tokens, and every token matches the words it begins: `désœuvr` finds `désœuvrement`; with `whole_words` it
+    matches only itself. With `either`, the whole
     query must match one side; terms are never split across sides. Tokens are alphanumeric, so nothing the
     translator types (OR, NEAR, *, -, quotes) is ever parsed as FTS syntax.
     """
     if side not in _SIDES:
         raise ValueError(f"side must be 'source', 'target' or 'either', not {side!r}")
     phrases = []
+    star = "" if whole_words else " *"
     for phrase, word in _TERMS.findall(text):
         tokens = _TOKENS.findall(fold(phrase or word))
         if tokens:  # a stretch without letters or digits has nothing to match
-            phrases.append(" + ".join(f'"{token}" *' for token in tokens))
+            phrases.append(" + ".join(f'"{token}"{star}' for token in tokens))
     if not phrases:
         return None
     body = " ".join(phrases)
@@ -94,9 +96,11 @@ def _bead_text(conn: sqlite3.Connection, bead_id: int) -> dict[str, str]:
 BOOK_ORDER = "p.updated_at DESC, p.title"
 
 
-def count_beads(conn: sqlite3.Connection, text: str, side: str = "either", project_id: str | None = None) -> list[dict]:
+def count_beads(
+    conn: sqlite3.Connection, text: str, side: str = "either", project_id: str | None = None, whole_words: bool = False
+) -> list[dict]:
     """The number of matching beads per book with a match, in the order `search_beads` returns the books."""
-    query = fts_query(text, side)
+    query = fts_query(text, side, whole_words)
     if query is None:
         return []
     sql = (
@@ -114,14 +118,14 @@ def count_beads(conn: sqlite3.Connection, text: str, side: str = "either", proje
 
 def search_beads(
     conn: sqlite3.Connection, text: str, side: str = "either", project_id: str | None = None, limit: int = 50,
-    offset: int = 0,
+    offset: int = 0, whole_words: bool = False,
 ) -> list[dict]:
     """Beads matching the query, with the matches marked by START/END in their real text.
 
     Grouped by book, books in library order (most recently updated first, then by title, as `GET /books` lists
     them), beads in reading order inside each book (SPEC §3.4).
     """
-    query = fts_query(text, side)
+    query = fts_query(text, side, whole_words)
     if query is None:
         return []
     sql = (

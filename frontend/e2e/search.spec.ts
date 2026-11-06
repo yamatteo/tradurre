@@ -200,3 +200,25 @@ test('an unreviewed result in a multi-bead turn shows the whole turn as its cont
   await expect(context.nth(3)).not.toHaveClass(/text-muted/)
   await expect(context.nth(1)).toHaveClass(/text-muted/)
 })
+
+test('Whole words drops longer words, keeps the exact one, and lives in the URL', async ({ page, request }) => {
+  const t = tag()
+  await importBook(request, `Whole ${t}`, [`Un ${t}bello.`, `Un ${t}bellezza.`], [`Uno ${t}a.`, `Uno ${t}b.`])
+  const results = page.getByTestId('search-result')
+
+  await page.goto('/search')
+  await page.getByTestId('search-input').fill(`${t}bell`)
+  await page.keyboard.press('Enter')
+  await expect(results).toHaveCount(2)
+
+  await page.getByTestId('search-input').fill(`${t}bello`)
+  await page.getByTestId('search-whole').check()
+  await page.getByTestId('search-submit').click()
+  await expect(results).toHaveCount(1)
+  await expect(results.getByTestId('result-source').locator('mark')).toHaveText(`${t}bello`)
+  await expect(page).toHaveURL(/whole=1/)
+
+  await page.reload()
+  await expect(page.getByTestId('search-whole')).toBeChecked()
+  await expect(results).toHaveCount(1)
+})
