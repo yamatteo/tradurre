@@ -131,3 +131,47 @@ def test_same_updated_at_lists_in_title_order(client, db_path):
     conn.close()
     assert [b["id"] for b in client.get("/api/v2/books").json()] == [alpha, zeta]
     assert [c["book_id"] for c in client.get("/api/v2/search/books", params={"q": "mot"}).json()] == [alpha, zeta]
+
+
+def _turn_book(client):
+    """Five paragraphs, the third a speech paragraph of three sentences (one turn, three beads)."""
+    source = "\n\n".join(["Un.", "Deux.", "— Trois. Quatre. Cinq.", "Six.", "Sept."])
+    target = "\n\n".join(["Uno.", "Due.", "— Tre. Quattro. Cinque.", "Sei.", "Sette."])
+    book = _import(client, "Turns", source, target)
+    ids = _beads(client, book)
+    assert len(ids) == 7
+    return book, ids
+
+
+def _context(client, book, bead, around=1):
+    return client.get(f"/api/v2/books/{book}/beads/{bead}/context", params={"around": around}).json()
+
+
+def test_context_whole_turn_when_not_reviewed_as_sentence(client):
+    book, ids = _turn_book(client)
+    ctx = _context(client, book, ids[3])
+    assert [c["bead_id"] for c in ctx] == ids[1:6]
+    assert [c["position"] for c in ctx] == [2, 3, 4, 5, 6]
+    assert [c["in_turn"] for c in ctx] == [False, True, True, True, False]
+    # Reviewed as part of its turn: still the turn window.
+    client.post(f"/api/v2/books/{book}/reviewed", json={"bead_ids": ids[2:5], "reviewed": True, "level": "turn"})
+    ctx = _context(client, book, ids[3])
+    assert [c["bead_id"] for c in ctx] == ids[1:6]
+    assert [c["in_turn"] for c in ctx] == [False, True, True, True, False]
+    # Reviewed as a sentence: the old window, nothing in a turn.
+    client.post(f"/api/v2/books/{book}/reviewed", json={"bead_ids": [ids[3]], "reviewed": True})
+    ctx = _context(client, book, ids[3])
+    assert [c["bead_id"] for c in ctx] == ids[2:5]
+    assert not any(c["in_turn"] for c in ctx)
+
+
+def test_context_turn_window_is_clipped_at_the_edges(client):
+    book, ids = _turn_book(client)
+    ctx = _context(client, book, ids[0], around=2)
+    assert [c["bead_id"] for c in ctx] == ids[0:3]
+    assert [c["in_turn"] for c in ctx] == [True, False, False]
+    ctx = _context(client, book, ids[6], around=2)
+    assert [(c["bead_id"], c["position"]) for c in ctx] == [(i, k + 5) for k, i in enumerate(ids[4:])]
+    assert [c["in_turn"] for c in ctx] == [False, False, True]
+    ctx = _context(client, book, ids[2], around=10)
+    assert [c["bead_id"] for c in ctx] == ids

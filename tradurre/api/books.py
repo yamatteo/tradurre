@@ -338,10 +338,29 @@ def bead_context(
 ):
     """The bead and up to `around` beads on each side of it, in order (SPEC §3.4, context on demand)."""
     _book_row(db, book_id)
-    row = db.execute("SELECT ord FROM beads WHERE id = ? AND project_id = ?", (bead_id, book_id)).fetchone()
+    row = db.execute("SELECT ord, review_level FROM beads WHERE id = ? AND project_id = ?", (bead_id, book_id)).fetchone()
     if row is None:
         raise HTTPException(status_code=404, detail="Bead not found")
     ord_ = row["ord"]
+    in_turn: set[int] = set()
+    if (row["review_level"] or 0) < LEVEL_RANKS["sentence"]:
+        # Not reviewed as a sentence: the window is the bead's whole turn plus `around` beads beyond it.
+        ids = [r[0] for r in db.execute("SELECT id FROM beads WHERE project_id = ? ORDER BY ord", (book_id,))]
+        ends = unit_ends(db, book_id)
+        at = ids.index(bead_id)
+        start = at
+        while start > 0 and not ends[ids[start - 1]][0]:
+            start -= 1
+        stop = at
+        while stop < len(ids) - 1 and not ends[ids[stop]][0]:
+            stop += 1
+        in_turn = set(ids[start:stop + 1])
+        lo, hi = max(0, start - around), min(len(ids), stop + around + 1)
+        wanted = ids[lo:hi]
+        marks = ",".join("?" * len(wanted))
+        by_id = {r["id"]: r for r in db.execute(
+            f"SELECT id, ord, review_level FROM beads WHERE id IN ({marks})", wanted)}
+        return _context_rows(db, [by_id[i] for i in wanted], lo + 1, in_turn)
     before = db.execute(
         "SELECT id, ord, review_level FROM beads WHERE project_id = ? AND ord < ? ORDER BY ord DESC LIMIT ?",
         (book_id, ord_, around),
@@ -354,12 +373,16 @@ def bead_context(
     first = db.execute(
         "SELECT COUNT(*) FROM beads WHERE project_id = ? AND ord <= ?", (book_id, beads[0]["ord"])
     ).fetchone()[0]
+    return _context_rows(db, beads, first, in_turn)
+
+
+def _context_rows(db: sqlite3.Connection, beads, first: int, in_turn: set[int]) -> list[ContextBead]:
     out = []
     for k, bead in enumerate(beads):
         texts = _bead_text(db, bead["id"])
         out.append(ContextBead(bead_id=bead["id"], position=first + k, source=texts["source"],
                                target=texts["target"], reviewed=bead["review_level"] == LEVEL_RANKS["sentence"],
-                               review_level=level_name(bead["review_level"])))
+                               review_level=level_name(bead["review_level"]), in_turn=bead["id"] in in_turn))
     return out
 
 

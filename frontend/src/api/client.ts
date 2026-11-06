@@ -132,6 +132,7 @@ export interface BookSearchResult {
   source: BookSearchSpan[]
   target: BookSearchSpan[]
   reviewed: boolean
+  review_level: 'sentence' | 'turn' | 'paragraph' | null
 }
 
 export type SearchSide = Side | 'either'
@@ -143,6 +144,8 @@ export interface ContextBead {
   source: string
   target: string
   reviewed: boolean
+  review_level: 'sentence' | 'turn' | 'paragraph' | null
+  in_turn: boolean
 }
 
 export const booksApi = {

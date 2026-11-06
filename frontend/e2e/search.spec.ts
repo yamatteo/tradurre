@@ -6,7 +6,7 @@ function tag() {
   return 'zq' + Math.random().toString(36).slice(2, 8).replace(/[0-9]/g, (d) => 'abcdefghij'[Number(d)]!)
 }
 
-async function importBook(request: APIRequestContext, title: string, source: string[], target: string[]) {
+async function importBook(request: APIRequestContext, title: string, source: string[], target: string[], beads?: number) {
   const res = await request.post('/api/v2/books', {
     multipart: {
       source: { name: 'fr.txt', mimeType: 'text/plain', buffer: Buffer.from(source.join('\n\n')) },
@@ -17,7 +17,7 @@ async function importBook(request: APIRequestContext, title: string, source: str
   expect(res.status()).toBe(201)
   const id: string = (await res.json()).id
   const book = await (await request.get(`/api/v2/books/${id}`)).json()
-  expect(book.beads.length).toBe(Math.max(source.length, target.length))
+  expect(book.beads.length).toBe(beads ?? Math.max(source.length, target.length))
   return { id, book }
 }
 
@@ -155,4 +155,48 @@ test('60 matches show 50, then More results shows all 60', async ({ page, reques
   await page.getByTestId('search-more').click()
   await expect(results).toHaveCount(60)
   await expect(page.getByTestId('search-more')).toHaveCount(0)
+})
+
+test('a result reviewed in its turn or paragraph says so; sentence and unreviewed results keep their badges', async ({ page, request }) => {
+  const t = tag()
+  const { id, book } = await importBook(request, `Levels ${t}`, [`Un ${t}.`, `Deux ${t}.`, `Trois ${t}.`], [`Uno ${t}.`, `Due ${t}.`, `Tre ${t}.`])
+  const ids: number[] = book.beads.map((b: { id: number }) => b.id)
+  for (const [bead, level] of [[ids[0], 'turn'], [ids[1], 'paragraph']] as const) {
+    const res = await request.post(`/api/v2/books/${id}/reviewed`, { data: { bead_ids: [bead], reviewed: true, level } })
+    expect(res.status()).toBe(200)
+  }
+  const res = await request.post(`/api/v2/books/${id}/reviewed`, { data: { bead_ids: [ids[2]], reviewed: true } })
+  expect(res.status()).toBe(200)
+
+  await page.goto(`/search?q=${t}`)
+  await expect(page.getByTestId('search-result')).toHaveCount(3)
+  const of = (bead: number) => page.locator(`[data-testid="search-result"][data-bead-id="${bead}"]`)
+  await expect(of(ids[0]).getByTestId('result-review-level')).toHaveText('Reviewed in its turn')
+  await expect(of(ids[0]).getByTestId('result-review-level')).toHaveAttribute('data-level', 'turn')
+  await expect(of(ids[1]).getByTestId('result-review-level')).toHaveText('Reviewed in its paragraph')
+  await expect(of(ids[1]).getByTestId('result-review-level')).toHaveAttribute('data-level', 'paragraph')
+  await expect(of(ids[2]).getByTestId('result-review-level')).toHaveCount(0)
+  await expect(of(ids[2]).getByTestId('result-unreviewed')).toHaveCount(0)
+  await expect(page.getByTestId('result-unreviewed')).toHaveCount(0)
+})
+
+test('an unreviewed result in a multi-bead turn shows the whole turn as its context', async ({ page, request }) => {
+  const t = tag()
+  const { book } = await importBook(request, `Turn ${t}`,
+    ['Un.', 'Deux.', `— Trois ${t}. Quatre. Cinq.`, 'Six.', 'Sept.'], ['Uno.', 'Due.', `— Tre ${t}. Quattro. Cinque.`, 'Sei.', 'Sette.'], 7)
+  const ids: number[] = book.beads.map((b: { id: number }) => b.id)
+  expect(ids.length).toBe(7)
+  await page.goto(`/search?q=${t}`)
+  const result = page.getByTestId('search-result')
+  await expect(result).toHaveCount(1)
+  await result.getByTestId('result-context').click()
+  const context = result.getByTestId('context-bead')
+  // The frontend asks for 2 beads around: the turn (beads 3 to 5) plus two on each side is the whole book.
+  await expect(context).toHaveCount(7)
+  for (let k = 0; k < 7; k++) await expect(context.nth(k)).toHaveAttribute('data-bead-id', String(ids[k]))
+  for (const k of [0, 1, 5, 6]) await expect(context.nth(k)).not.toHaveAttribute('data-in-turn', 'true')
+  for (const k of [2, 3, 4]) await expect(context.nth(k)).toHaveAttribute('data-in-turn', 'true')
+  await expect(context.nth(2)).toHaveClass(/bg-current-side/)
+  await expect(context.nth(3)).not.toHaveClass(/text-muted/)
+  await expect(context.nth(1)).toHaveClass(/text-muted/)
 })

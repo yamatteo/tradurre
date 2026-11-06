@@ -148,3 +148,4 @@ class ContextBead(BaseModel):
     target: str
     reviewed: bool
     review_level: ReviewLevel | None
+    in_turn: bool = False  # a bead of the matched bead's turn, when the context is the whole turn

@@ -161,8 +161,11 @@ onMounted(async () => {
           class="bg-list border border-bar-rule rounded-md">
           <div class="flex items-center gap-2 px-3 h-9 border-b border-row-rule text-[12.5px]">
             <span class="text-faint">bead {{ r.position }}</span>
-            <span v-if="!r.reviewed" data-testid="result-unreviewed"
+            <span v-if="!r.review_level" data-testid="result-unreviewed"
               class="px-1.5 rounded-full bg-pill text-pill-ink text-[11px] font-medium">Not reviewed</span>
+            <span v-else-if="r.review_level === 'turn' || r.review_level === 'paragraph'" data-testid="result-review-level"
+              :data-level="r.review_level"
+              class="px-1.5 rounded-full border border-outline text-muted text-[11px] font-medium">Reviewed in its {{ r.review_level }}</span>
             <span class="flex-1" />
             <button type="button" data-testid="result-context" :aria-expanded="contexts.has(r.bead_id)"
               class="h-7 px-2 rounded text-ink hover:bg-hover" :class="contexts.has(r.bead_id) ? 'bg-hover' : ''"
@@ -181,7 +184,8 @@ onMounted(async () => {
           <div v-if="contexts.has(r.bead_id)" data-testid="result-context-beads" class="border-t border-row-rule">
             <div v-for="c in contexts.get(r.bead_id)" :key="c.bead_id" data-testid="context-bead" :data-bead-id="c.bead_id"
               class="grid grid-cols-2 gap-4 px-3 py-1.5 font-text text-[14px] leading-relaxed"
-              :class="c.bead_id === r.bead_id ? 'bg-current-side' : 'text-muted'">
+              :data-in-turn="c.in_turn ? 'true' : undefined"
+              :class="c.bead_id === r.bead_id ? 'bg-current-side' : c.in_turn ? '' : 'text-muted'">
               <p>{{ c.source }}</p>
               <p>{{ c.target }}</p>
             </div>
