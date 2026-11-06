@@ -270,7 +270,7 @@ test('Ctrl+X cuts a sentence and Ctrl+V in the previous bead moves it there, in 
   await page.keyboard.press('Control+x')
   await expect(page.getByText('Il pleuvait.')).toHaveAttribute('data-cut', 'true')
   await expect(page.getByTestId('status')).toHaveText(
-    'Sentence cut: go to the previous or next bead and press Ctrl+V (Esc cancels)')
+    'Sentence cut: go to the previous or next turn and press Ctrl+V (Esc cancels)')
   await page.keyboard.press('ArrowUp')  // B
   await page.keyboard.press('Control+v')
   await expect.poll(() => rows(page)).toEqual(B_MERGED)
@@ -289,7 +289,7 @@ test('Ctrl+V away from the neighbouring bead is refused and Esc cancels the cut'
   await page.keyboard.press('ArrowUp')  // A
   await page.keyboard.press('Control+v')
   await expect(page.getByTestId('status')).toHaveText(
-    'A sentence can only move to the edge of the neighbouring bead: the text order never changes')
+    'A sentence can only move to the edge of the neighbouring turn: the text order never changes')
   await expect.poll(() => rows(page)).toEqual(ORIGINAL)
   await expect(page.getByText('Il pleuvait.')).toHaveAttribute('data-cut', 'true')
   await page.keyboard.press('Escape')
@@ -317,7 +317,7 @@ test('Ctrl+X refuses a sentence in the middle of its bead', async ({ page, reque
   await page.getByText('Marie arriva.').click()
   await page.keyboard.press('Control+x')
   await expect(page.getByTestId('status')).toHaveText(
-    'Only the first or last sentence of a bead can move to a neighbouring bead')
+    'Only the first or last sentence of a turn can move to a neighbouring turn')
   await expect(cutSpans(page)).toHaveCount(0)
 })
 

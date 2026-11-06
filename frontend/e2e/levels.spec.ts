@@ -162,19 +162,141 @@ test('n goes to the next unit not reviewed at the level', async ({ page, request
   await expect(page.getByTestId('status')).toHaveText('Every turn is reviewed')
 })
 
-test('a bead correction on a multi-bead turn is refused; editing a sentence inside it works', async ({ page, request }) => {
-  const { id, beads } = await importBook(request, 'Refused')
-  const [, s1] = beads
+// The beads as [source sentences, target sentences], in order, from the API.
+async function shape(request: APIRequestContext, id: string) {
+  const book = await getBook(request, id)
+  return book.beads.map((b: { source: { text: string }[]; target: { text: string }[] }) => [
+    b.source.map((s) => s.text),
+    b.target.map((s) => s.text),
+  ])
+}
+
+const N1 = 'Marie arriva dans la vallée.'
+const S1 = '— Zorbe lunai tu vanet.'
+const S2 = 'Il pleuvait sur la route.'
+const N2 = 'Paul partit sans un mot.'
+const T = ['Maria arrivò nella valle.', '— Zorba lunai tu vanet.', 'Pioveva sulla strada.', 'Paolo partì senza una parola.']
+const ORIGINAL = [[[N1], [T[0]]], [[S1], [T[1]]], [[S2], [T[2]]], [[N2], [T[3]]]]
+
+async function openAtSpeechTurn(page: Page, request: APIRequestContext, title: string) {
+  const { id, beads } = await importBook(request, title)
   await open(page, id)
   await page.keyboard.press('ArrowDown')
-  await expect(current(page)).toHaveAttribute('data-bead-id', String(s1!.id))
+  await expect(current(page)).toHaveAttribute('data-bead-id', String(beads[1]!.id))
+  return { id, beads }
+}
+
+test('Alt+Down on a multi-bead turn moves its last sentence into the next unit; Ctrl+Z undoes it', async ({ page, request }) => {
+  const { id } = await openAtSpeechTurn(page, request, 'Turn move next')
+  await page.keyboard.press('Tab')
+  await page.keyboard.press('Alt+ArrowDown')
+  await expect.poll(() => shape(request, id)).toEqual([
+    [[N1], [T[0]]], [[S1], [T[1]]], [[], [T[2]]], [[S2, N2], [T[3]]],
+  ])
+  await page.keyboard.press('Control+z')
+  await expect.poll(() => shape(request, id)).toEqual(ORIGINAL)
+})
+
+test('Alt+Up on a multi-bead turn moves its first sentence into the previous unit; Ctrl+Z undoes it', async ({ page, request }) => {
+  const { id } = await openAtSpeechTurn(page, request, 'Turn move previous')
+  await page.keyboard.press('Alt+ArrowUp')
+  await expect.poll(() => shape(request, id)).toEqual([
+    [[N1, S1], [T[0]]], [[], [T[1]]], [[S2], [T[2]]], [[N2], [T[3]]],
+  ])
+  await page.keyboard.press('Control+z')
+  await expect.poll(() => shape(request, id)).toEqual(ORIGINAL)
+})
+
+test('a move is refused when the unit edge bead has no sentence on the side', async ({ page, request }) => {
+  const { id } = await openAtSpeechTurn(page, request, 'Turn move refused')
+  await page.keyboard.press('ArrowRight')
+  await page.keyboard.press('Tab')
+  await page.keyboard.press('Alt+ArrowDown')
+  await expect.poll(async () => (await shape(request, id))[2][1]).toEqual([])
+  await page.keyboard.press('Alt+ArrowDown')
+  await expect(page.getByTestId('status')).toHaveText("The turn's last bead has no target sentence: switch to sentences (L)")
+})
+
+test('M on a multi-bead turn merges its last bead with the next unit; Ctrl+Z undoes it', async ({ page, request }) => {
+  const { id } = await openAtSpeechTurn(page, request, 'Turn merge')
   await page.keyboard.press('m')
-  await expect(page.getByTestId('status')).toHaveText('Switch to sentences (L) for this correction')
-  expect((await getBook(request, id)).beads).toHaveLength(4)
+  await expect.poll(() => shape(request, id)).toEqual([
+    [[N1], [T[0]]], [[S1], [T[1]]], [[S2, N2], [T[2], T[3]]],
+  ])
+  await page.keyboard.press('Control+z')
+  await expect.poll(() => shape(request, id)).toEqual(ORIGINAL)
+})
+
+test('S on a source sentence where a bead crosses a turn break splits there; Ctrl+Z undoes it', async ({ page, request }) => {
+  const { id } = await openAtSpeechTurn(page, request, 'Turn split')
+  await page.keyboard.press('m')
+  await expect.poll(async () => (await shape(request, id)).length).toBe(3)
+  await page.keyboard.press('Tab')
+  await page.keyboard.press('Tab')
+  await expect(page.getByTestId('position')).toHaveText(/sentence 3 of 3$/)
+  await page.keyboard.press('s')
+  await expect.poll(async () => (await shape(request, id)).length).toBe(4)
+  expect(await shape(request, id)).toEqual([
+    [[N1], [T[0]]], [[S1], [T[1]]], [[S2], [T[2], T[3]]], [[N2], []],
+  ])
+  await page.keyboard.press('Control+z')
+  await expect.poll(async () => (await shape(request, id)).length).toBe(3)
+})
+
+test('S inside a speech paragraph, or on the target side, is refused', async ({ page, request }) => {
+  const { id } = await openAtSpeechTurn(page, request, 'Turn split refused')
+  // Sentence level: merge the two sentences of the speech paragraph into one bead.
+  await page.keyboard.press('l')
+  await page.keyboard.press('l')
+  await expect(page.getByTestId('bead-row')).toHaveCount(4)
+  await page.keyboard.press('m')
+  await expect.poll(async () => (await shape(request, id)).length).toBe(3)
+  await page.keyboard.press('l')
+  await expect(level(page, 'turn')).toHaveAttribute('aria-pressed', 'true')
+  await page.keyboard.press('Tab')
+  await expect(page.getByTestId('position')).toHaveText(/sentence 2 of 2$/)
+  await page.keyboard.press('s')
+  await expect(page.getByTestId('status')).toHaveText(
+    'A turn can be split only at a source break that a bead crosses: switch to sentences (L) to split here',
+  )
+  await page.keyboard.press('ArrowRight')
+  await page.keyboard.press('Tab')
+  await page.keyboard.press('s')
+  await expect(page.getByTestId('status')).toHaveText(
+    'A turn can be split only at a source break that a bead crosses: switch to sentences (L) to split here',
+  )
+  expect((await shape(request, id)).length).toBe(3)
+})
+
+test('a sentence cut at a unit edge and pasted at the neighbouring unit moves; Ctrl+Z undoes it', async ({ page, request }) => {
+  const { id, beads } = await openAtSpeechTurn(page, request, 'Turn cut paste')
+  await page.keyboard.press('Tab')
+  await page.keyboard.press('Control+x')
+  await page.keyboard.press('ArrowDown')
+  await expect(current(page)).toHaveAttribute('data-bead-id', String(beads[3]!.id))
+  await page.keyboard.press('Control+v')
+  await expect.poll(() => shape(request, id)).toEqual([
+    [[N1], [T[0]]], [[S1], [T[1]]], [[], [T[2]]], [[S2, N2], [T[3]]],
+  ])
+  await page.keyboard.press('Control+z')
+  await expect.poll(() => shape(request, id)).toEqual(ORIGINAL)
+  // The other way: the next unit's first sentence into the turn.
+  await page.keyboard.press('Control+x')
+  await page.keyboard.press('ArrowUp')
+  await page.keyboard.press('Control+v')
+  await expect.poll(() => shape(request, id)).toEqual([
+    [[N1], [T[0]]], [[S1], [T[1]]], [[S2, N2], [T[2]]], [[], [T[3]]],
+  ])
+  await page.keyboard.press('Control+z')
+  await expect.poll(() => shape(request, id)).toEqual(ORIGINAL)
+})
+
+test('editing a sentence inside a multi-bead turn still works', async ({ page, request }) => {
+  const { id } = await openAtSpeechTurn(page, request, 'Turn edit')
   await page.keyboard.press('Tab')
   await page.keyboard.press('Enter')
   const editor = page.getByTestId('segment-editor')
-  await expect(editor).toHaveValue('Il pleuvait sur la route.')
+  await expect(editor).toHaveValue(S2)
   await editor.fill('Il pleuvait sur le chemin.')
   await page.keyboard.press('Enter')
   await expect.poll(async () => (await getBook(request, id)).beads[2].source[0].text).toBe('Il pleuvait sur le chemin.')

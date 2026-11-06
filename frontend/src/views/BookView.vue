@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, provide, ref, shallowReactive, shallowRef, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { booksApi, type Book, type BookBead, type BookExcludedBlock, type BookRun, type Side } from '@/api/client'
+import { booksApi, type Book, type BookBead, type BookSegment, type BookExcludedBlock, type BookRun, type Side } from '@/api/client'
 import BeadActions, { type Correction } from '@/components/BeadActions.vue'
 import BeadRow from '@/components/BeadRow.vue'
 import BookPosition from '@/components/BookPosition.vue'
@@ -10,7 +10,7 @@ import KeysPanel from '@/components/KeysPanel.vue'
 import MoreMenu from '@/components/MoreMenu.vue'
 import OriginalPopover from '@/components/OriginalPopover.vue'
 import { SHORTCUTS, type KeyedId } from '@/keys'
-import { buildUnits, LEVELS, LEVEL_LABELS, RANK, unitNoun, type Level, type Unit } from '@/levels'
+import { buildUnits, isBlank, isSpeech, LEVELS, LEVEL_LABELS, RANK, unitNoun, type Level, type Unit } from '@/levels'
 import { originalKey, selectionKey, statusKey } from '@/selection'
 import { isProblem } from '@/review'
 
@@ -308,15 +308,44 @@ function currentSegment() {
   return currentUnit.value?.[currentSide.value].find((s) => s.segment_id === currentSegmentId.value) ?? null
 }
 
-/** The current bead, when the correction acts on a bead and the current unit is that single bead; else says so. */
-function singleBead(): BookBead | null {
-  const bead = currentBead.value
-  if (!bead) return null
-  if (currentUnit.value!.beads.length > 1) {
-    say('Switch to sentences (L) for this correction')
+/** Whether each source block is a speech paragraph, as the backend decides it (see `isSpeech`); for the split rule. */
+const speechByBlock = computed(() => {
+  const map = new Map<number, boolean>()
+  for (const bead of book.value?.beads ?? []) {
+    for (const s of bead.source) if (!map.has(s.block_id) && !isBlank(s.text)) map.set(s.block_id, isSpeech(s.text))
+  }
+  return map
+})
+
+/** The bead at a unit's edge that a move acts on: the first for 'previous', the last for 'next'; null (and says why)
+ * when it has no segment on the side, at a coarser level (at sentences the backend decides, as ever). */
+function edgeBead(unit: Unit, side: Side, edge: 'previous' | 'next'): BookBead | null {
+  const bead = edge === 'previous' ? unit.beads[0]! : unit.beads[unit.beads.length - 1]!
+  if (unit.level !== 'sentence' && !bead[side].length) {
+    const which = edge === 'previous' ? 'first' : 'last'
+    say(`The ${noun.value}'s ${which} bead has no ${side === 'source' ? 'source' : 'target'} sentence: switch to sentences (L)`)
     return null
   }
   return bead
+}
+
+/** `S` at a coarser level: the bead and source segment to split at, or null (and says why). Only where a bead crosses
+ * a break of the level: before the segment, in the same bead, a paragraph break (another block) or, at turns, a
+ * non-speech block. */
+function coarseSplitPoint(): { bead: BookBead; segment: BookSegment } | null {
+  const bead = currentBead.value
+  const segment = currentSegment()
+  const refuse = () => {
+    say(`A ${noun.value} can be split only at a source break that a bead crosses: switch to sentences (L) to split here`)
+    return null
+  }
+  if (!bead || !segment || currentSide.value !== 'source') return refuse()
+  const i = bead.source.indexOf(segment)
+  if (i < 1) return refuse()
+  const before = bead.source[i - 1]!
+  const paragraphBreak = before.block_id !== segment.block_id
+  const breaks = paragraphBreak || (level.value === 'turn' && !speechByBlock.value.get(segment.block_id))
+  return breaks ? { bead, segment } : refuse()
 }
 
 function runCorrection(action: Correction) {
@@ -325,21 +354,30 @@ function runCorrection(action: Correction) {
   const side = currentSide.value
   switch (action) {
     case 'move-previous': {
-      const bead = singleBead()
+      const bead = edgeBead(unit, side, 'previous')
       return bead && correct((id) => booksApi.move(id, bead.id, side, 'previous'))
     }
     case 'move-next': {
-      const bead = singleBead()
+      const bead = edgeBead(unit, side, 'next')
       return bead && correct((id) => booksApi.move(id, bead.id, side, 'next'))
     }
     case 'merge': {
-      const bead = singleBead()
-      return bead && correct((id) => booksApi.mergeNext(id, bead.id))
+      const bead = unit.beads[unit.beads.length - 1]!
+      return correct((id) => booksApi.mergeNext(id, bead.id))
     }
     case 'split': {
-      const bead = singleBead()
-      if (!bead) return
-      const at = currentSegmentId.value
+      let bead: BookBead
+      let at: number | null
+      if (unit.level === 'sentence') {
+        if (!currentBead.value) return
+        bead = currentBead.value
+        at = currentSegmentId.value
+      } else {
+        const point = coarseSplitPoint()
+        if (!point) return
+        bead = point.bead
+        at = point.segment.segment_id
+      }
       const index = beadIndex.value.get(bead.id)!
       return correct(
         (id) => booksApi.splitBead(id, bead.id, side === 'source' ? at : null, side === 'target' ? at : null),
@@ -457,34 +495,38 @@ async function copySentence() {
   }
 }
 
-/** Ctrl+X: mark the current sentence as cut (nothing changes yet), if it is at an edge of its bead; Ctrl+V moves it. */
+/** Ctrl+X: mark the current sentence as cut (nothing changes yet), if it is at an edge of its unit; Ctrl+V moves it. */
 function cutSentence() {
   const segment = currentSegment()
-  if (!segment) return
-  const bead = singleBead()
-  if (!bead) return
+  const unit = currentUnit.value
+  if (!segment || !unit) return
   const side = currentSide.value
-  const segments = bead[side]
-  if (segment !== segments[0] && segment !== segments[segments.length - 1]) {
-    return say('Only the first or last sentence of a bead can move to a neighbouring bead')
+  const first = unit.beads[0]!
+  const last = unit.beads[unit.beads.length - 1]!
+  const bead = segment === first[side][0] ? first : segment === last[side][last[side].length - 1] ? last : null
+  if (!bead) {
+    return say(`Only the first or last sentence of a ${noun.value} can move to a neighbouring ${noun.value}`)
   }
   cut.value = { beadId: bead.id, side, segmentId: segment.segment_id }
   navigator.clipboard.writeText(segment.text).catch(() => {})  // the cut itself doesn't need the clipboard
-  say('Sentence cut: go to the previous or next bead and press Ctrl+V (Esc cancels)')
+  say(`Sentence cut: go to the previous or next ${noun.value} and press Ctrl+V (Esc cancels)`)
 }
 
-/** Ctrl+V: the cut sentence moves to the adjacent edge of the current bead, if that is its neighbour (SPEC §3.3). */
+/** Ctrl+V: the cut sentence moves across the bead boundary between its bead and the current unit's edge bead there,
+ * if the current unit lies right beside it (SPEC §3.3). */
 async function pasteSentence() {
   const c = cut.value
+  const unit = currentUnit.value
   if (!c) return say('Nothing cut')
-  if (!singleBead()) return
+  if (!unit) return
   const from = beadIndex.value.get(c.beadId)
-  const here = currentBeadId.value === null ? undefined : beadIndex.value.get(currentBeadId.value)
+  const first = beadIndex.value.get(unit.beads[0]!.id)
+  const last = beadIndex.value.get(unit.beads[unit.beads.length - 1]!.id)
   const segments = from === undefined ? [] : book.value!.beads[from]![c.side]
   let to: 'previous' | 'next' | null = null
-  if (from !== undefined && here === from - 1 && segments[0]?.segment_id === c.segmentId) to = 'previous'
-  else if (from !== undefined && here === from + 1 && segments[segments.length - 1]?.segment_id === c.segmentId) to = 'next'
-  if (!to) return say('A sentence can only move to the edge of the neighbouring bead: the text order never changes')
+  if (from !== undefined && last === from - 1 && segments[0]?.segment_id === c.segmentId) to = 'previous'
+  else if (from !== undefined && first === from + 1 && segments[segments.length - 1]?.segment_id === c.segmentId) to = 'next'
+  if (!to) return say(`A sentence can only move to the edge of the neighbouring ${noun.value}: the text order never changes`)
   const direction = to
   if (await correct((id) => booksApi.move(id, c.beadId, c.side, direction))) {
     cut.value = null  // the moved sentence is at an edge of its new bead: `keepCut` alone would keep it

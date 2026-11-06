@@ -18,6 +18,23 @@ export function unitNoun(level: Level, n = 1): string {
   return n === 1 ? noun : `${noun}s`
 }
 
+// Mirrors `is_speech` and `SPEECH_OPENERS` in tradurre/domain/levels.py: the two must stay in sync.
+const SPEECH_OPENERS = '—–-«'
+
+// Python's `str.isspace` set, not JS's `trim` set (they differ on U+FEFF, U+001C-U+001F and U+0085).
+const LEADING_SPACE = /^[\t\n\v\f\r\x1c-\x1f \x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+/
+
+/** Whether the text is empty or only whitespace (Python's `not text.strip()`). */
+export function isBlank(text: string): boolean {
+  return text.replace(LEADING_SPACE, '').length === 0
+}
+
+/** Whether the text opens with a dialogue mark (its first non-whitespace character). */
+export function isSpeech(text: string): boolean {
+  const stripped = text.replace(LEADING_SPACE, '')
+  return stripped.length > 0 && SPEECH_OPENERS.includes(stripped[0]!)
+}
+
 export function beadRank(bead: BookBead): number {
   return bead.review_level === null ? 0 : RANK[bead.review_level]
 }
